@@ -1,0 +1,16 @@
+name = "abflug-community"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+[[durable_objects.bindings]]
+name = "HUB"
+class_name = "Hub"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Hub"]
+
+# Optional: restrict access. Leave unset for "any key works".
+# [vars]
+# DEBUG = "1"   # logs request bodies (view in dashboard Logs)
+# ABFLUG_KEYS = "key1,key2"
