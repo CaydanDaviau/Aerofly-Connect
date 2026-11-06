@@ -1,100 +1,171 @@
 package cloud.abflug.revival;
 
+import android.Manifest;
 import android.app.Activity;
+import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.graphics.Typeface;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.net.HttpURLConnection;
-import java.net.URL;
-
-/**
- * Stage 0: proves the no-PC build pipeline works and that the phone can reach the Worker.
- * No sim link and no ATC yet.
- */
+/** Start screen (Pilot / Controller) and the Pilot screen. */
 public class MainActivity extends Activity {
 
+    private final Handler ui = new Handler();
+    private Runnable ticker;
     private TextView status;
+    private Button startStop;
+    private EditText callsignBox;
+    private int pad;
 
     @Override
-    protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
+    protected void onCreate(Bundle b) {
+        super.onCreate(b);
+        pad = (int) (24 * getResources().getDisplayMetrics().density);
+        showStart();
+    }
 
-        int pad = (int) (24 * getResources().getDisplayMetrics().density);
+    @Override
+    protected void onDestroy() {
+        stopTicker();
+        super.onDestroy();
+    }
+
+    @Override
+    public void onBackPressed() {
+        if (status != null) showStart(); else super.onBackPressed();
+    }
+
+    private LinearLayout column() {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setGravity(Gravity.CENTER_HORIZONTAL);
         root.setPadding(pad, pad * 2, pad, pad);
+        return root;
+    }
 
-        TextView title = new TextView(this);
-        title.setText("Abflug Revival");
-        title.setTextSize(28);
-        title.setTypeface(Typeface.DEFAULT_BOLD);
-        root.addView(title);
+    private TextView text(String s, int size, boolean bold) {
+        TextView t = new TextView(this);
+        t.setText(s);
+        t.setTextSize(size);
+        if (bold) t.setTypeface(Typeface.DEFAULT_BOLD);
+        return t;
+    }
 
-        TextView info = new TextView(this);
-        info.setText("Stage 0 - build " + BuildConfig.VERSION_NAME
-                + "\nSigning: " + (BuildConfig.RELEASE_KEY ? "release key" : "debug key (temporary)")
-                + "\nServer: " + BuildConfig.SERVER_URL);
-        info.setTextSize(14);
-        info.setPadding(0, pad / 2, 0, pad);
+    // ---------- Start screen ----------
+    private void showStart() {
+        stopTicker();
+        status = null;
+        LinearLayout root = column();
+        root.setGravity(Gravity.CENTER_HORIZONTAL);
+        root.addView(text("Abflug Revival", 28, true));
+        TextView info = text("Build " + BuildConfig.VERSION_NAME
+                + (BuildConfig.RELEASE_KEY ? "" : " (debug key)"), 13, false);
+        info.setPadding(0, pad / 4, 0, pad * 2);
         root.addView(info);
 
-        Button test = new Button(this);
-        test.setText("Test server connection");
-        test.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                checkServer();
+        Button pilot = new Button(this);
+        pilot.setText("Pilot");
+        pilot.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { showPilot(); }
+        });
+        root.addView(pilot);
+
+        Button ctl = new Button(this);
+        ctl.setText("Controller");
+        ctl.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                startActivity(new Intent(MainActivity.this, ControllerActivity.class));
             }
         });
-        root.addView(test);
-
-        status = new TextView(this);
-        status.setTextSize(16);
-        status.setPadding(0, pad, 0, 0);
-        status.setText("Not tested yet.");
-        root.addView(status);
-
+        root.addView(ctl);
         setContentView(root);
     }
 
-    private void checkServer() {
-        status.setText("Testing...");
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                String result;
-                long t0 = System.currentTimeMillis();
-                try {
-                    URL url = new URL(BuildConfig.SERVER_URL + "/api/health");
-                    HttpURLConnection c = (HttpURLConnection) url.openConnection();
-                    c.setConnectTimeout(8000);
-                    c.setReadTimeout(8000);
-                    c.setRequestProperty("X-API-Key", "stage0-test");
-                    int code = c.getResponseCode();
-                    BufferedReader r = new BufferedReader(new InputStreamReader(
-                            code < 400 ? c.getInputStream() : c.getErrorStream()));
-                    String body = r.readLine();
-                    r.close();
-                    result = "HTTP " + code + " in " + (System.currentTimeMillis() - t0) + " ms\n" + body;
-                } catch (Exception e) {
-                    result = "Failed: " + e;
-                }
-                final String shown = result;
-                runOnUiThread(new Runnable() {
-                    @Override
-                    public void run() {
-                        status.setText(shown);
-                    }
-                });
+    // ---------- Pilot screen ----------
+    private void showPilot() {
+        LinearLayout root = column();
+        root.addView(text("Pilot", 24, true));
+
+        TextView lbl = text("Callsign (optional)", 14, false);
+        lbl.setPadding(0, pad, 0, 0);
+        root.addView(lbl);
+
+        callsignBox = new EditText(this);
+        callsignBox.setSingleLine(true);
+        callsignBox.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS);
+        callsignBox.setText(Api.callsign(this));
+        root.addView(callsignBox);
+
+        startStop = new Button(this);
+        startStop.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { toggle(); }
+        });
+        root.addView(startStop);
+
+        status = text("", 14, false);
+        status.setPadding(0, pad, 0, 0);
+        status.setTypeface(Typeface.MONOSPACE);
+        status.setTextIsSelectable(true);
+        root.addView(status);
+
+        ScrollView sv = new ScrollView(this);
+        sv.addView(root);
+        setContentView(sv);
+        startTicker();
+    }
+
+    private void toggle() {
+        if (PilotService.running) {
+            Intent i = new Intent(this, PilotService.class);
+            i.setAction(PilotService.ACTION_STOP);
+            startService(i);
+        } else {
+            if (Build.VERSION.SDK_INT >= 33
+                    && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1);
             }
-        }).start();
+            Api.setCallsign(this, callsignBox.getText().toString().trim());
+            startForegroundService(new Intent(this, PilotService.class));
+        }
+    }
+
+    private void startTicker() {
+        stopTicker();
+        ticker = new Runnable() {
+            @Override public void run() {
+                refresh();
+                ui.postDelayed(this, 1000);
+            }
+        };
+        ticker.run();
+    }
+
+    private void stopTicker() {
+        if (ticker != null) ui.removeCallbacks(ticker);
+        ticker = null;
+    }
+
+    private void refresh() {
+        if (status == null) return;
+        boolean on = PilotService.running;
+        startStop.setText(on ? "Stop" : "Start");
+        callsignBox.setEnabled(!on);
+        String raw = PilotService.lastRaw;
+        if (raw.length() > 300) raw = raw.substring(0, 300) + "...";
+        status.setText("State: " + (on ? "flying" : "stopped")
+                + "\nSim link: " + PilotService.simState
+                + "\nServer: " + PilotService.serverState
+                + "\nUploads: " + PilotService.okCount + " ok / " + PilotService.failCount + " failed"
+                + "\nKey: " + Api.key(this)
+                + "\n\nLast sim line:\n" + (raw.isEmpty() ? "(none yet)" : raw));
     }
 }

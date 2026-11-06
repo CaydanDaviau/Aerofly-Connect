@@ -1,0 +1,129 @@
+package cloud.abflug.revival;
+
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.Service;
+import android.content.Context;
+import android.content.Intent;
+import android.os.IBinder;
+import android.os.PowerManager;
+
+import org.json.JSONObject;
+
+/** Foreground service: reads the sim every 3 s and uploads the position to the Worker. */
+public class PilotService extends Service {
+    static final String ACTION_STOP = "cloud.abflug.revival.STOP";
+    private static final long PERIOD_MS = 3000;
+
+    // Status read by the UI.
+    static volatile boolean running;
+    static volatile String simState = "-";
+    static volatile String serverState = "-";
+    static volatile String lastRaw = "";
+    static volatile int okCount, failCount;
+
+    private volatile boolean stopFlag;
+    private Thread worker;
+    private PowerManager.WakeLock wl;
+
+    @Override
+    public IBinder onBind(Intent i) { return null; }
+
+    @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {
+        if (intent != null && ACTION_STOP.equals(intent.getAction())) {
+            stopFlag = true;
+            if (worker == null) stopSelf();
+            return START_NOT_STICKY;
+        }
+        if (worker != null) return START_NOT_STICKY;
+
+        NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        nm.createNotificationChannel(new NotificationChannel("pilot", "Flight upload", NotificationManager.IMPORTANCE_LOW));
+        Notification n = new Notification.Builder(this, "pilot")
+                .setContentTitle("Abflug Revival")
+                .setContentText("Sharing your position")
+                .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+                .setOngoing(true)
+                .build();
+        startForeground(1, n);
+
+        PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+        wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "revival:upload");
+        wl.acquire();
+
+        okCount = 0; failCount = 0; lastRaw = "";
+        simState = "connecting..."; serverState = "-";
+        running = true;
+        final String key = Api.key(this);
+        final String callsign = Api.callsign(this).trim().toUpperCase();
+        worker = new Thread(new Runnable() {
+            @Override public void run() { loop(key, callsign); }
+        }, "pilot-loop");
+        worker.start();
+        return START_NOT_STICKY;
+    }
+
+    private void loop(String key, String callsign) {
+        SimLink sim = new SimLink();
+        boolean planSent = false;
+        try {
+            while (!stopFlag) {
+                long t0 = System.currentTimeMillis();
+
+                String raw = null;
+                try {
+                    if (!sim.isOpen()) sim.connect();
+                    raw = sim.readLine();
+                    lastRaw = raw;
+                    simState = "connected";
+                } catch (Exception e) {
+                    sim.close();
+                    simState = "no sim (" + e.getClass().getSimpleName() + ")";
+                }
+
+                JSONObject pos = raw == null ? null : SimLink.toPosition(raw);
+                if (raw != null && pos == null) simState = "connected, no valid position yet";
+
+                if (pos != null) {
+                    try {
+                        // Callsign lives in the flight plan; the app sends it once, so do we.
+                        if (!planSent) {
+                            JSONObject plan = new JSONObject();
+                            if (!callsign.isEmpty()) plan.put("callsign", callsign);
+                            int pc = Api.send("PUT", "/api/flightplan", plan.toString(), key);
+                            planSent = pc < 400;
+                        }
+                        int code = Api.send("PUT", "/api/position", pos.toString(), key);
+                        if (code < 400) { okCount++; serverState = "OK (HTTP " + code + ")"; }
+                        else { failCount++; serverState = "HTTP " + code; }
+                    } catch (Exception e) {
+                        failCount++;
+                        serverState = "error: " + e.getClass().getSimpleName();
+                    }
+                }
+
+                long wait = PERIOD_MS - (System.currentTimeMillis() - t0);
+                if (wait > 0) {
+                    try { Thread.sleep(wait); } catch (InterruptedException ie) { break; }
+                }
+            }
+        } finally {
+            sim.close();
+            try { Api.send("DELETE", "/api/position", null, key); } catch (Exception ignored) { }
+            running = false;
+            simState = "-";
+            if (wl != null && wl.isHeld()) wl.release();
+            stopForeground(true);
+            stopSelf();
+        }
+    }
+
+    @Override
+    public void onDestroy() {
+        stopFlag = true;
+        if (worker != null) worker.interrupt();
+        super.onDestroy();
+    }
+}
