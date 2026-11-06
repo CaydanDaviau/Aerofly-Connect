@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Abflug ATC Radar</title>
+<style>
+:root{--bg:#040704;--panel:#09110b;--fg:#3dff7a;--dim:#1b7a3d;--faint:#0f3a1f;--amber:#ffb000;--red:#ff4545;--cy:#7ae9ff}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:13px/1.35 ui-monospace,Menlo,Consolas,monospace}
+#app{display:flex;flex-direction:column;height:100dvh;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+#bar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:6px 10px;background:var(--panel);border-bottom:1px solid var(--dim)}
+#bar b{letter-spacing:.12em}
+#status{margin-left:auto;color:var(--dim)}
+#status.ok{color:var(--fg)}
+button,select,input{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--dim);border-radius:4px;padding:5px 8px}
+button{cursor:pointer}
+button:active{background:var(--faint)}
+input::placeholder{color:var(--dim)}
+#main{flex:1;min-height:0;display:flex;flex-direction:column}
+#scope{position:relative;flex:1 1 55%;min-height:200px;touch-action:none}
+#radar{position:absolute;inset:0;width:100%;height:100%;display:block}
+#strips{flex:1 1 45%;min-height:0;overflow:auto;border-top:1px solid var(--dim);padding:6px}
+@media (min-aspect-ratio:5/4){#main{flex-direction:row}#strips{flex:0 0 380px;border-top:0;border-left:1px solid var(--dim)}}
+.strip{border:1px solid var(--faint);border-left:4px solid var(--dim);border-radius:4px;padding:6px 8px;margin-bottom:6px;background:var(--panel)}
+.strip.sel{border-color:var(--cy);border-left-color:var(--cy)}
+.strip.twr{border-left-color:#ff7ae9}
+.strip.nocode{border-left-color:var(--amber)}
+.strip .h{display:flex;justify-content:space-between;gap:8px}
+.strip .cs{font-weight:700;font-size:14px}
+.strip .m{color:var(--dim)}
+.strip .route{color:var(--fg);word-break:break-word}
+.ok{color:var(--fg)}.warn{color:var(--amber)}.bad{color:var(--red)}
+.ctl{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;align-items:center}
+.ctl input{width:84px;text-align:center;letter-spacing:.2em}
+#toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:var(--panel);border:1px solid var(--fg);padding:8px 14px;border-radius:6px;opacity:0;transition:opacity .2s;pointer-events:none}
+#toast.on{opacity:1}
+#login{position:fixed;inset:0;background:rgba(0,0,0,.88);display:none;align-items:center;justify-content:center;padding:20px}
+#login div{background:var(--panel);border:1px solid var(--dim);padding:18px;border-radius:8px;max-width:360px;width:100%}
+#login input{width:100%;margin:10px 0}
+.empty{color:var(--dim);padding:10px}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="bar">
+    <b>ATC</b>
+    <select id="range" title="Range (nm)"></select>
+    <button id="ctrSel" title="Center scope on the selected aircraft">Center sel</button>
+    <input id="ll" size="16" placeholder="lat, lon" title="Center on coordinates">
+    <button id="llGo">Go</button>
+    <button id="keyBtn" title="Change API key">Key</button>
+    <span id="status">offline</span>
+  </div>
+  <div id="main">
+    <div id="scope"><canvas id="radar"></canvas></div>
+    <div id="strips"></div>
+  </div>
+</div>
+<div id="login"><div>
+  <b>Abflug ATC</b>
+  <p class="m">Enter your API key. It is stored only in this browser.</p>
+  <input id="keyIn" type="password" autocomplete="off" placeholder="API key">
+  <button id="keySave">Connect</button>
+  <p id="keyErr" class="bad"></p>
+</div></div>
+<div id="toast"></div>
+<script>
+(function(){
+var $=function(id){return document.getElementById(id)};
+var cv=$('radar'),g=cv.getContext('2d');
+var key='';try{key=localStorage.getItem('abflug_key')||''}catch(e){}
+var ac=[],sel=null,center={lat:0,lon:0},manual=false,centroidDone=false,nmpp=0.25,W=300,H=300;
+var trails={},ranges=[5,10,25,50,100,250,500,1000];
+
+function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
+function p3(n){n=Math.round(n);return (n<100?'0':'')+(n<10?'0':'')+n}
+function altStr(ft){if(ft==null||isNaN(ft))return '---';return ft>=18000?'FL'+p3(ft/100):'A'+p3(ft/100)}
+function isTwr(a){return /^ATC_/i.test(a.callsign||'')}
+function rel(a){var dy=(a.latitude-center.lat)*60,dx=(a.longitude-center.lon)*60*Math.cos(center.lat*Math.PI/180);
+  return{dx:dx,dy:dy,dist:Math.hypot(dx,dy),brg:(Math.atan2(dx,dy)*180/Math.PI+360)%360}}
+function proj(a){var r=rel(a);return[W/2+r.dx/nmpp,H/2-r.dy/nmpp]}
+function toast(t){var e=$('toast');e.textContent=t;e.className='on';clearTimeout(toast.t);toast.t=setTimeout(function(){e.className=''},2500)}
+
+/* ---------- ranges ---------- */
+$('range').innerHTML=ranges.map(function(r){return'<option value="'+r+'">'+r+' nm</option>'}).join('');
+$('range').value='50';
+function applyRange(){nmpp=Number($('range').value)/(Math.min(W,H)/2)}
+$('range').onchange=applyRange;
+
+/* ---------- canvas ---------- */
+function resize(){var r=cv.parentNode.getBoundingClientRect(),d=window.devicePixelRatio||1;
+  W=Math.max(100,r.width);H=Math.max(100,r.height);cv.width=W*d;cv.height=H*d;g.setTransform(d,0,0,d,0,0);draw()}
+window.addEventListener('resize',function(){var old=nmpp*Math.min(W,H)/2;resize();nmpp=old/(Math.min(W,H)/2);draw()});
+
+function draw(){
+  g.fillStyle='#040704';g.fillRect(0,0,W,H);
+  var maxR=Math.hypot(W,H)/2*nmpp,steps=[1,2,5,10,20,25,50,100,200,500,1000],step=steps[steps.length-1];
+  for(var i=0;i<steps.length;i++){if(steps[i]/nmpp>=55){step=steps[i];break}}
+  g.lineWidth=1;g.font='10px ui-monospace,monospace';g.textBaseline='bottom';
+  for(var r=step;r<=maxR;r+=step){var px=r/nmpp;
+    g.strokeStyle='#0f3a1f';g.beginPath();g.arc(W/2,H/2,px,0,6.2832);g.stroke();
+    g.fillStyle='#1b7a3d';g.fillText(r+'',W/2+3,H/2-px-1)}
+  g.strokeStyle='#0f3a1f';g.beginPath();g.moveTo(W/2,0);g.lineTo(W/2,H);g.moveTo(0,H/2);g.lineTo(W,H/2);g.stroke();
+  g.fillStyle='#1b7a3d';g.textBaseline='top';g.fillText('N',W/2+4,3);
+  g.fillStyle='#1b7a3d';g.fillText(step+' nm rings',6,H-14);
+  for(var k=0;k<ac.length;k++){var a=ac[k],id=a.icao_address,xy=proj(a),x=xy[0],y=xy[1];
+    if(x<-60||y<-40||x>W+60||y>H+40)continue;
+    var tw=isTwr(a),isSel=sel===id,asg=a.assigned_squawk;
+    var col=isSel?'#7ae9ff':tw?'#ff7ae9':!asg?'#ffb000':'#3dff7a';
+    var tr=trails[id]||[];g.strokeStyle=col;g.globalAlpha=.45;
+    for(var t=0;t<tr.length;t++){var q=proj(tr[t]);g.fillStyle=col;g.fillRect(q[0]-1,q[1]-1,2,2)}
+    g.globalAlpha=1;
+    if(tw){g.fillStyle=col;g.beginPath();g.moveTo(x,y-7);g.lineTo(x+6,y+5);g.lineTo(x-6,y+5);g.closePath();g.fill()}
+    else{g.strokeStyle=col;g.lineWidth=isSel?2:1.5;g.strokeRect(x-4,y-4,8,8);
+      var gs=Number(a.ground_speed)||0,hd=(Number(a.heading_true)||0)*Math.PI/180;
+      if(gs>3){var len=Math.min(60,(gs/60)/nmpp);g.beginPath();g.moveTo(x,y);g.lineTo(x+Math.sin(hd)*len,y-Math.cos(hd)*len);g.stroke()}}
+    g.fillStyle=col;g.font='11px ui-monospace,monospace';g.textBaseline='top';
+    g.fillText((a.callsign||id),x+9,y-12);
+    if(!tw)g.fillText(altStr(a.altitude_ft)+' '+Math.round(Number(a.ground_speed)||0)+'kt'+(asg?'  '+asg:''),x+9,y-1);
+    if(isSel){g.strokeStyle='#7ae9ff';g.lineWidth=1;g.beginPath();g.arc(x,y,13,0,6.2832);g.stroke()}
+  }
+}
+
+/* ---------- pan / zoom / select ---------- */
+var ptrs={},moved=false,startPt=null,pinch0=0,nmpp0=0;
+cv.addEventListener('pointerdown',function(e){cv.setPointerCapture(e.pointerId);ptrs[e.pointerId]={x:e.offsetX,y:e.offsetY};
+  moved=false;startPt={x:e.offsetX,y:e.offsetY};
+  var ids=Object.keys(ptrs);if(ids.length===2){var a=ptrs[ids[0]],b=ptrs[ids[1]];pinch0=Math.hypot(a.x-b.x,a.y-b.y);nmpp0=nmpp}});
+cv.addEventListener('pointermove',function(e){var p=ptrs[e.pointerId];if(!p)return;var ids=Object.keys(ptrs);
+  if(ids.length===2){ptrs[e.pointerId]={x:e.offsetX,y:e.offsetY};var a=ptrs[ids[0]],b=ptrs[ids[1]],d=Math.hypot(a.x-b.x,a.y-b.y);
+    if(pinch0>0){nmpp=Math.min(8,Math.max(0.01,nmpp0*pinch0/d));moved=true;draw()}return}
+  var dx=e.offsetX-p.x,dy=e.offsetY-p.y;if(Math.abs(e.offsetX-startPt.x)+Math.abs(e.offsetY-startPt.y)>6)moved=true;
+  if(!moved)return;
+  center.lon-=dx*nmpp/(60*Math.cos(center.lat*Math.PI/180));center.lat+=dy*nmpp/60;manual=true;
+  ptrs[e.pointerId]={x:e.offsetX,y:e.offsetY};draw()});
+cv.addEventListener('pointerup',function(e){var wasOne=Object.keys(ptrs).length===1;delete ptrs[e.pointerId];
+  if(!moved&&wasOne)pick(e.offsetX,e.offsetY)});
+cv.addEventListener('pointercancel',function(e){delete ptrs[e.pointerId]});
+cv.addEventListener('wheel',function(e){e.preventDefault();nmpp=Math.min(8,Math.max(0.01,nmpp*(e.deltaY>0?1.15:0.87)));draw()},{passive:false});
+function pick(x,y){var best=null,bd=26;
+  ac.forEach(function(a){var q=proj(a),d=Math.hypot(q[0]-x,q[1]-y);if(d<bd){bd=d;best=a}});
+  sel=best?best.icao_address:null;draw();renderStrips(true);
+  if(best){var el=document.querySelector('[data-id="'+best.icao_address+'"]');if(el)el.scrollIntoView({block:'nearest'})}}
+
+/* ---------- controls ---------- */
+$('ctrSel').onclick=function(){var a=ac.filter(function(x){return x.icao_address===sel})[0];
+  if(!a){toast('Select an aircraft first');return}center.lat=a.latitude;center.lon=a.longitude;manual=true;draw();renderStrips(true)};
+$('llGo').onclick=function(){var m=$('ll').value.match(/(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)/);
+  if(!m){toast('Use: lat, lon');return}center.lat=+m[1];center.lon=+m[2];manual=true;draw();renderStrips(true)};
+$('keyBtn').onclick=function(){showLogin('')};
+$('keySave').onclick=function(){var k=$('keyIn').value.trim();if(!k)return;key=k;try{localStorage.setItem('abflug_key',k)}catch(e){}
+  $('login').style.display='none';poll()};
+function showLogin(msg){$('keyErr').textContent=msg||'';$('keyIn').value='';$('login').style.display='flex'}
+
+/* ---------- strips ---------- */
+function renderStrips(force){
+  var f=document.activeElement;if(!force&&f&&f.id==='sqin')return;
+  var list=ac.map(function(a){return{a:a,r:rel(a)}}).sort(function(x,y){return x.r.dist-y.r.dist});
+  if(!list.length){$('strips').innerHTML='<div class="empty">No traffic.</div>';return}
+  $('strips').innerHTML=list.map(function(o){var a=o.a,r=o.r,id=a.icao_address,tw=isTwr(a),isSel=id===sel;
+    var asg=a.assigned_squawk||null,st=tw?'':(asg?'<span class="ok">SQ '+esc(asg)+'</span>':'<span class="warn">NO CODE &ndash; assign one</span>');
+    var route=[a.departure_airport,a.arrival_airport].filter(Boolean).map(esc).join(' &rarr; ');
+    var cruise=a.cruise_altitude||a.cruise_altitude_ft||a.cruise_alt||'';
+    var ctl=isSel&&!tw?'<div class="ctl"><input id="sqin" inputmode="numeric" maxlength="4" placeholder="'+(asg||'0000')+'" value="'+esc(asg||'')+'">'+
+      '<button data-act="set">Assign</button><button data-act="auto">Auto</button><button data-act="clear">Clear</button></div>':'';
+    return'<div class="strip'+(isSel?' sel':'')+(tw?' twr':(asg?'':' nocode'))+'" data-id="'+esc(id)+'">'+
+      '<div class="h"><span class="cs">'+esc(a.callsign||id)+(tw?' &#9650;':'')+'</span><span class="m">'+Math.round(r.dist)+' nm / '+p3(r.brg)+'&deg;</span></div>'+
+      (tw?'':'<div>'+altStr(a.altitude_ft)+' &middot; '+Math.round(Number(a.ground_speed)||0)+' kt &middot; HDG '+p3(Number(a.heading_true)||0)+'&deg; &middot; '+(Number(a.vertical_speed_ft_min)>100?'&uarr;':Number(a.vertical_speed_ft_min)<-100?'&darr;':'&rarr;')+'</div>')+
+      (tw?'':'<div>'+st+'</div>')+
+      (route||cruise?'<div class="route">'+route+(cruise?' &middot; cruise '+esc(cruise):'')+'</div>':'')+
+      (a.flightplan_route?'<div class="m">'+esc(a.flightplan_route)+'</div>':'')+ctl+'</div>'}).join('')}
+$('strips').addEventListener('click',function(e){
+  var btn=e.target.closest('button'),strip=e.target.closest('.strip');if(!strip)return;var id=strip.getAttribute('data-id');
+  if(btn){var act=btn.getAttribute('data-act'),v=($('sqin')||{}).value||'';
+    if(act==='set'){if(!/^[0-7]{4}$/.test(v)){toast('4 digits, each 0-7');return}assign(id,v)}
+    else if(act==='auto')assign(id,'');else if(act==='clear')clearSq(id);return}
+  if(e.target.id==='sqin')return;
+  sel=id;draw();renderStrips(true)});
+function api(path,opt){opt=opt||{};opt.headers=Object.assign({'X-API-Key':key},opt.headers||{});return fetch(path,opt)}
+function assign(id,sq){var body={icao_address:id};if(sq)body.squawk=sq;
+  api('/api/atc/squawk',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+   .then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j,s:r.status}})})
+   .then(function(o){toast(o.ok?'Assigned '+o.j.squawk:'Error: '+(o.j.error||o.s));poll(true)})
+   .catch(function(){toast('Network error')})}
+function clearSq(id){api('/api/atc/squawk?icao_address='+encodeURIComponent(id),{method:'DELETE'}).then(function(){toast('Cleared');poll(true)})}
+
+/* ---------- polling ---------- */
+function setStatus(t,ok){var s=$('status');s.textContent=t;s.className=ok?'ok':''}
+function poll(force){
+  if(!key){showLogin('');return}
+  if(document.hidden&&!force)return;
+  api('/api/traffic?lat=0&lon=0&radius_miles=13000').then(function(r){
+    if(r.status===401){key='';try{localStorage.removeItem('abflug_key')}catch(e){}showLogin('Invalid key');return null}
+    return r.json()}).then(function(j){if(!j)return;
+    ac=(j.aircraft||[]).filter(function(a){return isFinite(a.latitude)&&isFinite(a.longitude)&&a.icao_address});
+    ac.forEach(function(a){var t=trails[a.icao_address]=trails[a.icao_address]||[],l=t[t.length-1];
+      if(!l||Math.abs(l.latitude-a.latitude)+Math.abs(l.longitude-a.longitude)>0.0005){t.push({latitude:a.latitude,longitude:a.longitude});if(t.length>14)t.shift()}});
+    if(!manual){var tw=ac.filter(isTwr)[0];if(tw){center.lat=tw.latitude;center.lon=tw.longitude}
+      else if(!centroidDone&&ac.length){center.lat=ac.reduce(function(s,a){return s+a.latitude},0)/ac.length;
+        center.lon=ac.reduce(function(s,a){return s+a.longitude},0)/ac.length;centroidDone=true}}
+    setStatus(ac.length+' aircraft',true);draw();renderStrips()
+  }).catch(function(){setStatus('offline',false)})}
+document.addEventListener('visibilitychange',function(){if(!document.hidden)poll(true)});
+resize();applyRange();draw();poll(true);setInterval(poll,5000);
+})();
+</script>
+</body>
+</html>

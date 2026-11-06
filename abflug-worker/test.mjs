@@ -1,6 +1,6 @@
 import worker, { Hub } from "./src/index.js";
 const store = new Map();
-const ctx = { storage: { get: async k => store.get(k), put: async (k, v) => store.set(k, v) } };
+const ctx = { storage: { get: async k => store.get(k), put: async (k, v) => store.set(k, v), delete: async k => store.delete(k) } };
 let hub = new Hub(ctx);
 const env = { HUB: { idFromName: () => 1, get: () => ({ fetch: (r) => hub.fetch(r) }) } };
 const call = async (method, path, body, key = "abc") => {
@@ -27,3 +27,16 @@ const r3 = await worker.fetch(new Request("https://x/api/debug?key=pk"), env); c
 await call("PUT", "/api/flightplan", { callsign: "PEDRO1", departure_airport: "SBBR", cruise_altitude: 35000 }, "cs");
 await call("PUT", "/api/position", { latitude: 1, longitude: 2 }, "cs");
 console.log("callsign test:", (await call("GET", "/api/traffic?lat=1&lon=2&radius_miles=50")).includes('"callsign":"PEDRO1"'));
+
+// squawk assignment
+const tr = JSON.parse((await call("GET", "/api/traffic?lat=1&lon=2&radius_miles=50", null, "cs")).slice(4));
+const target = tr.aircraft.find(a => a.callsign === "PEDRO1").icao_address;
+console.log("assign:", await call("PUT", "/api/atc/squawk", { icao_address: target, squawk: "2314" }, "atc"));
+console.log("bad:", (await call("PUT", "/api/atc/squawk", { icao_address: target, squawk: "7700" }, "atc")).slice(0, 3));
+console.log("auto:", await call("PUT", "/api/atc/squawk", { icao_address: target }, "atc"));
+await call("PUT", "/api/atc/squawk", { icao_address: target, squawk: "2314" }, "atc");
+console.log("in traffic:", (await call("GET", "/api/traffic?lat=1&lon=2&radius_miles=50")).includes('"assigned_squawk":"2314"'));
+hub = new Hub(ctx);
+await call("PUT", "/api/position", { latitude: 1, longitude: 2 }, "cs");
+console.log("after restart:", (await call("GET", "/api/traffic?lat=1&lon=2&radius_miles=50")).includes('"assigned_squawk":"2314"'));
+console.log("unknown:", (await call("PUT", "/api/atc/squawk", { icao_address: "FFFFFF", squawk: "2000" }, "atc")).slice(0, 3));
