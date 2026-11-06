@@ -15,6 +15,14 @@ const normCallsign = cs => {
   return m ? "ATC_" + m[1].toUpperCase() : cs;
 };
 
+// How the Android app decides to draw a tower (TrafficClassification.detectControlTower):
+// callsign contains "ATC_" AND (airplane_model is a 3-4 char airport code OR airplane_livery is a function name).
+const towerFields = cs => {
+  const m = /^ATC_([A-Z0-9]+)$/.exec(cs || "");
+  if (!m) return null;
+  return { airplane_model: /^[A-Z0-9]{3,4}$/.test(m[1]) ? m[1] : "", airplane_livery: "TOWER", livery: "TOWER" };
+};
+
 const pick = (d, ...names) => {
   for (const n of names) if (d && d[n] !== undefined && d[n] !== null && d[n] !== "") return d[n];
   return undefined;
@@ -149,7 +157,10 @@ export class Hub {
         const pos = c.pos;
         if (!pos) continue;
         const d = haversineMi(lat, lon, pos.latitude, pos.longitude);
-        if (d <= rad) out.push({ ...pos, ...c.plan, callsign: normCallsign(c.plan.callsign ?? pos.callsign), assigned_squawk: c.assigned ? c.assigned.squawk : null, distance_miles: Math.round(d * 10) / 10 });
+        if (d <= rad) {
+          const callsign = normCallsign(c.plan.callsign ?? pos.callsign);
+          out.push({ ...pos, ...c.plan, callsign, ...towerFields(callsign), assigned_squawk: c.assigned ? c.assigned.squawk : null, distance_miles: Math.round(d * 10) / 10 });
+        }
       }
       for (const t of this.towers.values()) {
         const d = haversineMi(lat, lon, t.latitude, t.longitude);
@@ -157,7 +168,7 @@ export class Hub {
         out.push({ icao_address: hex6("tower:" + t.name), callsign: "ATC_" + t.name, latitude: t.latitude, longitude: t.longitude,
           altitude_ft: t.altitude_ft, altitude: t.altitude_ft, heading_true: 0, track: 0, ground_speed: 0, velocity_knots: 0,
           vertical_speed_ft_min: 0, vertical_speed: 0, squawk: "0000", squawk_code: "0000", airborne_flag: false,
-          timestamp: Math.floor(Date.now() / 1000), assigned_squawk: null, virtual_tower: true, distance_miles: Math.round(d * 10) / 10 });
+          timestamp: Math.floor(Date.now() / 1000), assigned_squawk: null, virtual_tower: true, ...towerFields("ATC_" + t.name), distance_miles: Math.round(d * 10) / 10 });
       }
       out.sort((a, b) => a.distance_miles - b.distance_miles);
       const truncated = out.length > MAX_TRAFFIC;
