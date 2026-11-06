@@ -8,6 +8,7 @@ plugins {
 // built with a different key cannot be installed over it).
 def ksFile = System.getenv("KEYSTORE_FILE")
 def hasReleaseKey = ksFile != null && !ksFile.isEmpty() && new File(ksFile).exists()
+def buildNumber = (System.getenv("BUILD_NUMBER") ?: "1").toInteger()
 
 android {
     namespace 'cloud.abflug.revival'
@@ -17,8 +18,8 @@ android {
         applicationId "cloud.abflug.revival"
         minSdk 26
         targetSdk 34
-        versionCode (System.getenv("BUILD_NUMBER") ?: "1").toInteger()
-        versionName "0.0." + (System.getenv("BUILD_NUMBER") ?: "1")
+        versionCode = buildNumber
+        versionName = "0.0." + buildNumber
         buildConfigField "String", "SERVER_URL", '"https://aeroflytest.caydanphoenix14.workers.dev"'
         buildConfigField "boolean", "RELEASE_KEY", hasReleaseKey.toString()
     }
