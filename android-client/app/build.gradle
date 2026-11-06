@@ -1,0 +1,52 @@
+plugins {
+    id 'com.android.application'
+}
+
+// Signing: the keystore is never stored in the repo. The workflow decodes it from
+// GitHub Secrets into a temp file and passes these environment variables.
+// Without them the build falls back to the debug key (installable, but an update
+// built with a different key cannot be installed over it).
+def ksFile = System.getenv("KEYSTORE_FILE")
+def hasReleaseKey = ksFile != null && !ksFile.isEmpty() && new File(ksFile).exists()
+
+android {
+    namespace 'cloud.abflug.revival'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "cloud.abflug.revival"
+        minSdk 26
+        targetSdk 34
+        versionCode (System.getenv("BUILD_NUMBER") ?: "1").toInteger()
+        versionName "0.0." + (System.getenv("BUILD_NUMBER") ?: "1")
+        buildConfigField "String", "SERVER_URL", '"https://aeroflytest.caydanphoenix14.workers.dev"'
+        buildConfigField "boolean", "RELEASE_KEY", hasReleaseKey.toString()
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    signingConfigs {
+        if (hasReleaseKey) {
+            release {
+                storeFile file(ksFile)
+                storePassword System.getenv("KEYSTORE_PASSWORD")
+                keyAlias System.getenv("KEY_ALIAS")
+                keyPassword System.getenv("KEY_PASSWORD")
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig hasReleaseKey ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
