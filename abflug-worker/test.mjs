@@ -24,3 +24,6 @@ await call("PUT", "/api/flightplan", { departure_airport: "SBBR" }, "pk");
 hub = new Hub(ctx);
 await call("PUT", "/api/position", { latitude: 1, longitude: 2 }, "pk");
 const r3 = await worker.fetch(new Request("https://x/api/debug?key=pk"), env); console.log("after restart:", (await r3.text()).includes("SBBR"));
+await call("PUT", "/api/flightplan", { callsign: "PEDRO1", departure_airport: "SBBR", cruise_altitude: 35000 }, "cs");
+await call("PUT", "/api/position", { latitude: 1, longitude: 2 }, "cs");
+console.log("callsign test:", (await call("GET", "/api/traffic?lat=1&lon=2&radius_miles=50")).includes('"callsign":"PEDRO1"'));

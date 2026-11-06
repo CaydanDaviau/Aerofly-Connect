@@ -118,8 +118,8 @@ export class Hub {
       let d = await request.json().catch(() => ({}));
       if (d.flightplan && typeof d.flightplan === "object") d = d.flightplan;
       const plan = {};
-      for (const k of ["departure_airport", "arrival_airport", "flightplan_route", "cruise_altitude", "cruise_altitude_ft", "route"])
-        if (k in d) plan[k] = d[k];
+      for (const [k, v] of Object.entries(d).slice(0, 30))
+        if (["string", "number", "boolean"].includes(typeof v)) plan[k] = typeof v === "string" ? v.slice(0, 500) : v;
       const c = this.clients.get(key) || {};
       c.plan = plan; c.seen = Date.now();
       await this.ctx.storage.put("plan:" + key, plan);
