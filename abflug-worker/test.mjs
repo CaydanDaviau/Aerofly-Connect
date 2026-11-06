@@ -1,6 +1,6 @@
 import worker, { Hub } from "./src/index.js";
 const store = new Map();
-const ctx = { storage: { get: async k => store.get(k), put: async (k, v) => store.set(k, v), delete: async k => store.delete(k) } };
+const ctx = { storage: { get: async k => store.get(k), put: async (k, v) => store.set(k, v), delete: async k => store.delete(k), list: async ({ prefix }) => new Map([...store].filter(([k]) => k.startsWith(prefix))) }, blockConcurrencyWhile: async f => f() };
 let hub = new Hub(ctx);
 const env = { HUB: { idFromName: () => 1, get: () => ({ fetch: (r) => hub.fetch(r) }) } };
 const call = async (method, path, body, key = "abc") => {
@@ -55,3 +55,14 @@ await call("PUT", "/api/position", { latitude: -15.8, longitude: -47.9, airplane
 const cl = JSON.parse((await call("GET", "/api/traffic?lat=-15.8&lon=-47.9&radius_miles=50")).slice(4)).aircraft;
 const show = n => { const a = cl.find(x => x.callsign === n); return a ? `${n}: model=${JSON.stringify(a.airplane_model)} livery=${JSON.stringify(a.airplane_livery)}` : n + " missing"; };
 console.log(show("ATC_SBGL")); console.log(show("PEDRO9"));
+
+// virtual towers
+console.log("tower put:", await call("PUT", "/api/atc/tower", { name: "sbbr", latitude: -15.871, longitude: -47.919 }, "ctl"));
+console.log("tower bad:", (await call("PUT", "/api/atc/tower", { name: "x", latitude: 999, longitude: 0 }, "ctl")).slice(0, 3));
+let tw = JSON.parse((await call("GET", "/api/traffic?lat=-15.8&lon=-47.9&radius_miles=50")).slice(4)).aircraft.find(a => a.callsign === "ATC_SBBR");
+console.log("tower in traffic:", !!tw, tw && tw.virtual_tower, "model=" + (tw && tw.airplane_model), "livery=" + (tw && tw.airplane_livery));
+console.log("tower far away hidden:", !(await call("GET", "/api/traffic?lat=40&lon=10&radius_miles=50")).includes("ATC_SBBR"));
+hub = new Hub(ctx); await new Promise(r => setTimeout(r, 0));   // mock does not block like the real DO
+console.log("tower survives restart:", (await call("GET", "/api/traffic?lat=-15.8&lon=-47.9&radius_miles=50")).includes("ATC_SBBR"));
+console.log("tower delete:", await call("DELETE", "/api/atc/tower?name=sbbr", null, "ctl"));
+console.log("tower gone:", !(await call("GET", "/api/traffic?lat=-15.8&lon=-47.9&radius_miles=50")).includes("ATC_SBBR"));

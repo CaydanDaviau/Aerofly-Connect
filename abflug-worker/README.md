@@ -16,3 +16,10 @@ Optional variables (Settings -> Variables): ABFLUG_KEYS="k1,k2" to restrict, DEB
   Type an airport code in the lat/lon box to jump to it.
 - Controllers who need a tower icon in the Android app use a `TWR-<ICAO>` callsign (the app refuses `ATC_`);
   the Worker presents it as `ATC_<ICAO>` and fills model/livery so the app draws a tower.
+
+## Virtual towers
+- Radar page -> Towers box -> airport code (e.g. SBBR) -> Open tower. No sim or app needed. The tower is stored on the
+  server for 24 h and listed to every player as `ATC_<code>` with model/livery set so the Android app draws a tower icon.
+  The position comes from the runway data (unknown code = scope center). Close removes it. The page refreshes the
+  towers it opened every 30 min while it is open.
+- API: `PUT /api/atc/tower {name, latitude, longitude}`, `DELETE /api/atc/tower?name=`.
