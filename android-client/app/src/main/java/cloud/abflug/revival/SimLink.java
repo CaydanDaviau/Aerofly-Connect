@@ -17,9 +17,9 @@ import java.net.Socket;
  */
 final class SimLink {
     // Indices after the optional header token is skipped.
-    // Verified by the user: lat|lon|alt ft|?(idx3, unknown)|heading|IAS|GS|VS ft/min.
+    // Verified: lat|lon|alt ft|true hdg (idx3)|magnetic hdg (idx4, not used)|IAS|GS|VS ft/min.
     // 99 = not sent by the sim (model, livery, squawk come from the app's own fields).
-    static final int F_LAT = 0, F_LON = 1, F_ALT_FT = 2, F_HDG = 4, F_GS = 6, F_VS = 7,
+    static final int F_LAT = 0, F_LON = 1, F_ALT_FT = 2, F_HDG = 3, F_GS = 6, F_VS = 7,
             F_SQUAWK = 99, F_MODEL = 99, F_LIVERY = 99;
 
     private Socket socket;
