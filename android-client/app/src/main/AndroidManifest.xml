@@ -21,6 +21,12 @@
             </intent-filter>
         </activity>
         <activity android:name=".ControllerActivity" android:exported="false" />
+        <activity
+            android:name=".MapActivity"
+            android:exported="false"
+            android:supportsPictureInPicture="true"
+            android:resizeableActivity="true"
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|keyboardHidden" />
         <service
             android:name=".PilotService"
             android:exported="false"

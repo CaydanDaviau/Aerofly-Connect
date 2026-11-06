@@ -22,6 +22,9 @@ public class PilotService extends Service {
     static volatile String serverState = "-";
     static volatile String lastRaw = "";
     static volatile int okCount, failCount;
+    // Last valid sim position, read by the map screen.
+    static volatile boolean hasPos;
+    static volatile double lastLat, lastLon, lastHdg, lastGs, lastAlt;
 
     private volatile boolean stopFlag;
     private Thread worker;
@@ -53,7 +56,7 @@ public class PilotService extends Service {
         wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "revival:upload");
         wl.acquire();
 
-        okCount = 0; failCount = 0; lastRaw = "";
+        okCount = 0; failCount = 0; lastRaw = ""; hasPos = false;
         simState = "connecting..."; serverState = "-";
         running = true;
         final String key = Api.key(this);
@@ -87,6 +90,9 @@ public class PilotService extends Service {
                 if (raw != null && pos == null) simState = "connected, no valid position yet";
 
                 if (pos != null) {
+                    lastLat = pos.optDouble("latitude"); lastLon = pos.optDouble("longitude");
+                    lastHdg = pos.optDouble("heading_true", 0); lastGs = pos.optDouble("ground_speed", 0);
+                    lastAlt = pos.optDouble("altitude_ft", 0); hasPos = true;
                     try {
                         // The sim sends no model/livery/squawk; the pilot types them in the app.
                         putIf(pos, "airplane_model", Api.field(this, "model"));

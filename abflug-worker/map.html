@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Abflug Revival map</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<style>
+html,body,#map{margin:0;height:100%;width:100%;background:#dde}
+body{font:13px system-ui,sans-serif}
+#bar{position:absolute;top:8px;left:8px;right:8px;display:flex;gap:6px;flex-wrap:wrap;pointer-events:none}
+#bar button,#bar .pill{pointer-events:auto;border:0;border-radius:18px;padding:8px 12px;background:rgba(20,24,30,.82);color:#fff;font:600 13px system-ui}
+#bar button.on{background:#1a73e8}
+#info{position:absolute;left:8px;bottom:22px;background:rgba(20,24,30,.82);color:#fff;border-radius:8px;padding:5px 9px;font:12px ui-monospace,monospace}
+body.pip #bar,body.pip #info{display:none}
+</style></head><body>
+<div id="map"></div>
+<div id="bar">
+  <button id="bFollow" class="on">Follow</button>
+  <button id="bHdg">North up</button>
+  <button id="bStyle">Map: Liberty</button>
+  <button id="bPip" style="display:none">PiP</button>
+</div>
+<div id="info">starting...</div>
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script>
+(function(){
+var P=new URLSearchParams(location.search), KEY=P.get('key')||'', BASE=location.origin;
+var STYLES=[['Liberty','https://tiles.openfreemap.org/styles/liberty'],['Positron','https://tiles.openfreemap.org/styles/positron'],['Bright','https://tiles.openfreemap.org/styles/bright']];
+var si=0; try{si=Math.min(STYLES.length-1,Math.max(0,parseInt(localStorage.getItem('rv_style')||'0',10)||0))}catch(e){}
+var own=null, follow=true, hdgUp=false, trails={}, lastTraffic=[], towers=[], ready=false;
+var info=document.getElementById('info');
+function setInfo(t){info.textContent=t}
+
+var map=new maplibregl.Map({container:'map',style:STYLES[si][1],center:[-47.92,-15.87],zoom:12,attributionControl:{compact:true},pitchWithRotate:false,dragRotate:true});
+document.getElementById('bStyle').textContent='Map: '+STYLES[si][0];
+map.on('dragstart',function(){ if(follow) setFollow(false) });
+
+// ---- icons (drawn, SDF so colour comes from data) ----
+function icon(draw,size){var c=document.createElement('canvas');c.width=c.height=size;var g=c.getContext('2d');g.fillStyle='#000';draw(g,size);return g.getImageData(0,0,size,size)}
+function planeShape(g,s){var k=s/64;g.save();g.scale(k,k);g.beginPath();
+  g.moveTo(32,3);g.quadraticCurveTo(36,6,36,18);g.lineTo(36,26);g.lineTo(60,40);g.lineTo(60,45);g.lineTo(36,38);g.lineTo(36,50);g.lineTo(45,57);g.lineTo(45,61);g.lineTo(32,57);
+  g.lineTo(19,61);g.lineTo(19,57);g.lineTo(28,50);g.lineTo(28,38);g.lineTo(4,45);g.lineTo(4,40);g.lineTo(28,26);g.lineTo(28,18);g.quadraticCurveTo(28,6,32,3);g.closePath();g.fill();g.restore()}
+function towerShape(g,s){var k=s/64;g.save();g.scale(k,k);
+  g.beginPath();g.moveTo(24,60);g.lineTo(28,26);g.lineTo(36,26);g.lineTo(40,60);g.closePath();g.fill();
+  g.beginPath();g.moveTo(18,12);g.lineTo(46,12);g.lineTo(50,26);g.lineTo(14,26);g.closePath();g.fill();
+  g.fillRect(30,4,4,8);g.restore()}
+function addIcons(){
+  if(!map.hasImage('plane'))map.addImage('plane',icon(planeShape,64),{sdf:true});
+  if(!map.hasImage('tower'))map.addImage('tower',icon(towerShape,64),{sdf:true});
+}
+
+// ---- layers (re-added after every style change) ----
+var EMPTY={type:'FeatureCollection',features:[]};
+function addLayers(){
+  addIcons();
+  ['trails','planes','towers','ownsrc'].forEach(function(id){ if(!map.getSource(id))map.addSource(id,{type:'geojson',data:EMPTY}) });
+  var halo={'text-halo-color':'#fff','text-halo-width':1.6};
+  if(!map.getLayer('trails'))map.addLayer({id:'trails',type:'line',source:'trails',layout:{'line-cap':'round','line-join':'round'},paint:{'line-color':['get','c'],'line-width':2.5,'line-opacity':.65}});
+  if(!map.getLayer('towers'))map.addLayer({id:'towers',type:'symbol',source:'towers',layout:{'icon-image':'tower','icon-size':.6,'icon-allow-overlap':true,'text-field':['get','label'],'text-font':['Noto Sans Bold'],'text-size':12,'text-offset':[0,1.6],'text-anchor':'top','text-allow-overlap':true},paint:{'icon-color':'#c2189a','text-color':'#7a0f62','text-halo-color':'#fff','text-halo-width':1.6}});
+  if(!map.getLayer('planes'))map.addLayer({id:'planes',type:'symbol',source:'planes',layout:{'icon-image':'plane','icon-size':.55,'icon-rotate':['get','h'],'icon-rotation-alignment':'map','icon-allow-overlap':true,'icon-ignore-placement':true,'text-field':['get','label'],'text-font':['Noto Sans Bold'],'text-size':12,'text-offset':[1.4,0],'text-anchor':'left','text-optional':true},paint:{'icon-color':'#e8710a','text-color':'#7a3600','text-halo-color':'#fff','text-halo-width':1.6}});
+  if(!map.getLayer('own'))map.addLayer({id:'own',type:'symbol',source:'ownsrc',layout:{'icon-image':'plane','icon-size':.65,'icon-rotate':['get','h'],'icon-rotation-alignment':'map','icon-allow-overlap':true,'icon-ignore-placement':true,'text-field':['get','label'],'text-font':['Noto Sans Bold'],'text-size':12,'text-offset':[1.6,0],'text-anchor':'left','text-optional':true},paint:{'icon-color':'#1a73e8','text-color':'#0b3d91','text-halo-color':'#fff','text-halo-width':1.6}});
+  ready=true; render();
+}
+map.on('style.load',addLayers);
+
+// ---- data ----
+function altStr(a){a=Number(a);if(!isFinite(a))return'';return a>=18000?'FL'+String(Math.round(a/100)).padStart(3,'0'):Math.round(a)+' ft'}
+function pt(lon,lat,props){return{type:'Feature',geometry:{type:'Point',coordinates:[lon,lat]},properties:props}}
+function render(){
+  if(!ready||!map.getSource('planes'))return;
+  var pl=[],tw=[],tr=[],compact=document.body.classList.contains('pip');
+  lastTraffic.forEach(function(a){
+    var id=a.icao_address||a.callsign;
+    if(a.virtual_tower){tw.push(pt(a.longitude,a.latitude,{label:a.callsign||'TWR'}));return}
+    if(a.self)return;
+    var sq=a.assigned_squawk||'';
+    var label=(a.callsign||id)+(compact?'':'\n'+altStr(a.altitude_ft)+(sq?'  '+sq:''));
+    pl.push(pt(a.longitude,a.latitude,{label:label,h:Number(a.heading_true)||0}));
+    var t=trails[id];if(t&&t.length>1)tr.push({type:'Feature',geometry:{type:'LineString',coordinates:t},properties:{c:'#e8710a'}});
+  });
+  map.getSource('planes').setData({type:'FeatureCollection',features:pl});
+  map.getSource('towers').setData({type:'FeatureCollection',features:tw});
+  var ow=[];
+  if(own){
+    ow.push(pt(own.lon,own.lat,{label:(own.callsign||'YOU')+(compact?'':'\n'+altStr(own.alt)),h:own.hdg||0}));
+    var ot=trails.__own;if(ot&&ot.length>1)tr.push({type:'Feature',geometry:{type:'LineString',coordinates:ot},properties:{c:'#1a73e8'}});
+  }
+  map.getSource('ownsrc').setData({type:'FeatureCollection',features:ow});
+  map.getSource('trails').setData({type:'FeatureCollection',features:tr});
+}
+function pushTrail(id,lon,lat){
+  var t=trails[id]||(trails[id]=[]),l=t[t.length-1];
+  if(!l||Math.abs(l[0]-lon)>1e-5||Math.abs(l[1]-lat)>1e-5){t.push([lon,lat]);if(t.length>150)t.shift()}
+}
+function followNow(){
+  if(!follow||!own)return;
+  var o={center:[own.lon,own.lat],duration:900,essential:true};
+  if(hdgUp)o.bearing=own.hdg||0;
+  map.easeTo(o);
+}
+
+// own plane: pushed by the Android app (sim data), also taken from traffic.self as a fallback
+window.setOwn=function(lat,lon,hdg,gs,alt,callsign){
+  own={lat:lat,lon:lon,hdg:hdg,gs:gs,alt:alt,callsign:callsign||''};
+  pushTrail('__own',lon,lat);render();followNow();
+};
+window.setPip=function(on){document.body.classList.toggle('pip',!!on);render();map.resize()};
+
+var firstFix=true, failures=0;
+function poll(){
+  var c=own?{lat:own.lat,lon:own.lon}:{lat:map.getCenter().lat,lon:map.getCenter().lng};
+  fetch(BASE+'/api/traffic?lat='+c.lat+'&lon='+c.lon+'&radius_miles=150',{headers:{'X-API-Key':KEY||'viewer'}})
+   .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json()})
+   .then(function(d){
+     failures=0;lastTraffic=d.aircraft||[];
+     lastTraffic.forEach(function(a){
+       if(a.virtual_tower)return;
+       var id=a.icao_address||a.callsign;
+       if(a.self){ if(!window.__appOwn){own={lat:a.latitude,lon:a.longitude,hdg:Number(a.heading_true)||0,alt:a.altitude_ft,callsign:a.callsign};pushTrail('__own',a.longitude,a.latitude);followNow()} }
+       else pushTrail(id,a.longitude,a.latitude);
+     });
+     if(firstFix&&own){firstFix=false;map.jumpTo({center:[own.lon,own.lat],zoom:13})}
+     var n=lastTraffic.filter(function(a){return !a.virtual_tower&&!a.self}).length;
+     setInfo(n+' aircraft'+(own?' · '+altStr(own.alt):'')+(KEY?'':' · view only'));
+     render();
+   }).catch(function(e){failures++;setInfo('server error: '+e.message)});
+}
+setInterval(poll,3000);poll();
+
+// ---- controls ----
+function setFollow(v){follow=v;document.getElementById('bFollow').classList.toggle('on',v);if(v)followNow()}
+document.getElementById('bFollow').onclick=function(){setFollow(!follow)};
+document.getElementById('bHdg').onclick=function(){hdgUp=!hdgUp;this.textContent=hdgUp?'Heading up':'North up';this.classList.toggle('on',hdgUp);if(!hdgUp)map.easeTo({bearing:0,duration:400});else followNow()};
+document.getElementById('bStyle').onclick=function(){
+  si=(si+1)%STYLES.length;try{localStorage.setItem('rv_style',String(si))}catch(e){}
+  this.textContent='Map: '+STYLES[si][0];ready=false;map.setStyle(STYLES[si][1]);
+};
+if(window.Android&&window.Android.pip){var b=document.getElementById('bPip');b.style.display='';b.onclick=function(){window.Android.pip()}}
+window.addEventListener('resize',function(){document.body.classList.toggle('pip',window.innerWidth<420&&window.innerHeight<420)});
+})();
+</script></body></html>

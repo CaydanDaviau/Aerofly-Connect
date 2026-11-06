@@ -111,6 +111,15 @@ public class MainActivity extends Activity {
         });
         root.addView(startStop);
 
+        Button map = new Button(this);
+        map.setText("Map");
+        map.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                startActivity(new Intent(MainActivity.this, MapActivity.class));
+            }
+        });
+        root.addView(map);
+
         status = text("", 14, false);
         status.setPadding(0, pad, 0, 0);
         status.setTypeface(Typeface.MONOSPACE);

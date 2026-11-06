@@ -1,6 +1,7 @@
 // Community backend for the Abflug Android client (v1.5.0) on Cloudflare Workers.
 // All state lives in one Durable Object (in memory, TTL-based).
 import ATC_HTML from "./atc.js";
+import MAP_HTML from "./map.js";
 const TTL_MS = 60_000;
 const ASSIGN_TTL_MS = 12 * 3600_000;
 const TOWER_TTL_MS = 24 * 3600_000;   // a virtual tower expires this long after it was last opened/refreshed
@@ -62,6 +63,8 @@ export default {
     const url = new URL(request.url);
     if (url.pathname === "/atc" || url.pathname === "/atc/")
       return new Response(ATC_HTML, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+    if (url.pathname === "/map" || url.pathname === "/map/")
+      return new Response(MAP_HTML, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
     if (!url.pathname.startsWith("/api/")) return json({ name: "abflug-community", ok: true });
     const key = (request.headers.get("X-API-Key") || (url.pathname === "/api/debug" ? url.searchParams.get("key") : "") || "").trim();
     if (url.pathname !== "/api/health" && url.pathname !== "/api/stats") {
@@ -167,13 +170,13 @@ export class Hub {
       const lon = parseFloat(q.get("lon") ?? q.get("lng") ?? q.get("longitude") ?? "0") || 0;
       const rad = parseFloat(q.get("radius_miles") ?? q.get("radius") ?? "250") || 250;
       let out = [];
-      for (const c of this.clients.values()) {
+      for (const [ck, c] of this.clients) {
         const pos = c.pos;
         if (!pos) continue;
         const d = haversineMi(lat, lon, pos.latitude, pos.longitude);
         if (d <= rad) {
           const callsign = normCallsign(c.plan.callsign ?? pos.callsign);
-          out.push({ ...pos, ...c.plan, callsign, ...towerFields(callsign), assigned_squawk: c.assigned ? c.assigned.squawk : null, distance_miles: Math.round(d * 10) / 10 });
+          out.push({ ...pos, ...c.plan, callsign, ...towerFields(callsign), assigned_squawk: c.assigned ? c.assigned.squawk : null, ...(ck === key ? { self: true } : {}), distance_miles: Math.round(d * 10) / 10 });
         }
       }
       for (const t of this.towers.values()) {
