@@ -13,3 +13,6 @@ console.log(await call("GET", "/api/traffic", null, null));
 console.log(await call("DELETE", "/api/position"));
 console.log(await call("GET", "/api/health", null, null));
 console.log(await call("GET", "/api/stats", null, null));
+await call("PUT", "/api/position", { latitude: 1, longitude: 2 }, "secretkey");
+const r = await worker.fetch(new Request("https://x/api/debug?key=secretkey"), env); console.log(r.status, (await r.text()).slice(0, 140));
+const r2 = await worker.fetch(new Request("https://x/api/debug"), env); console.log(r2.status);

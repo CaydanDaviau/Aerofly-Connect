@@ -25,7 +25,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (!url.pathname.startsWith("/api/")) return json({ name: "abflug-community", ok: true });
-    const key = (request.headers.get("X-API-Key") || "").trim();
+    const key = (request.headers.get("X-API-Key") || (url.pathname === "/api/debug" ? url.searchParams.get("key") : "") || "").trim();
     if (url.pathname !== "/api/health" && url.pathname !== "/api/stats") {
       const allowed = (env.ABFLUG_KEYS || "").split(",").map(s => s.trim()).filter(Boolean);
       if (!key || (allowed.length && !allowed.includes(key))) return json({ error: "invalid api key" }, 401);
@@ -50,7 +50,12 @@ export class Hub {
     const m = request.method, p = url.pathname;
     this.purge();
 
-    if (p !== "/api/stats") { const k = m + " " + p; this.counts[k] = (this.counts[k] || 0) + 1; }
+    if (m === "GET" && p === "/api/debug") {
+      const now = Date.now();
+      const mask = k => k.slice(0, 2) + "***" + k.slice(-1);
+      return json({ players: [...this.clients].map(([k, c]) => ({ key: mask(k), age_s: Math.round((now - c.seen) / 1000), position: c.pos || null, plan: c.plan || {} })) });
+    }
+    if (p !== "/api/stats" && p !== "/api/debug") { const k = m + " " + p; this.counts[k] = (this.counts[k] || 0) + 1; }
     if (m === "GET" && p === "/api/stats") {
       const secs = Math.max(1, (Date.now() - this.since) / 1000);
       const per_minute = {};
