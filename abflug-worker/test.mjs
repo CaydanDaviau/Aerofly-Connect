@@ -58,3 +58,13 @@ console.log("tower after restart:", !!tt);
 console.log("far away:", JSON.parse((await call("GET", "/api/traffic?lat=40&lon=0&radius_miles=50", null, "pilot")).slice(4)).aircraft.some(a => a.virtual_tower));
 await call("DELETE", "/api/atc/tower?name=SBBR", null, "atc");
 console.log("closed:", !JSON.parse((await call("GET", "/api/traffic?lat=-15.9&lon=-47.9&radius_miles=50", null, "pilot")).slice(4)).aircraft.some(a => a.virtual_tower));
+
+// tower classification fields expected by the Android app
+await call("PUT", "/api/atc/tower", { name: "SBBR", latitude: -15.871, longitude: -47.919 }, "ctl");
+await call("PUT", "/api/flightplan", { callsign: "TWR-SBGL" }, "twrpilot");
+await call("PUT", "/api/position", { latitude: -15.8, longitude: -47.9, airplane_model: "B777", airplane_livery: "Delta" }, "twrpilot");
+await call("PUT", "/api/flightplan", { callsign: "PEDRO9" }, "plain");
+await call("PUT", "/api/position", { latitude: -15.8, longitude: -47.9, airplane_model: "B738", airplane_livery: "Gol" }, "plain");
+const cl = JSON.parse((await call("GET", "/api/traffic?lat=-15.8&lon=-47.9&radius_miles=50")).slice(4)).aircraft;
+const show = n => { const a = cl.find(x => x.callsign === n); return a ? `${n}: model=${JSON.stringify(a.airplane_model)} livery=${JSON.stringify(a.airplane_livery)}` : n + " missing"; };
+console.log(show("ATC_SBBR")); console.log(show("ATC_SBGL")); console.log(show("PEDRO9"));
