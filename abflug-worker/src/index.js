@@ -26,7 +26,7 @@ export default {
     const url = new URL(request.url);
     if (!url.pathname.startsWith("/api/")) return json({ name: "abflug-community", ok: true });
     const key = (request.headers.get("X-API-Key") || "").trim();
-    if (url.pathname !== "/api/health") {
+    if (url.pathname !== "/api/health" && url.pathname !== "/api/stats") {
       const allowed = (env.ABFLUG_KEYS || "").split(",").map(s => s.trim()).filter(Boolean);
       if (!key || (allowed.length && !allowed.includes(key))) return json({ error: "invalid api key" }, 401);
     }
@@ -37,7 +37,7 @@ export default {
 };
 
 export class Hub {
-  constructor() { this.clients = new Map(); }
+  constructor() { this.clients = new Map(); this.since = Date.now(); this.counts = {}; }
 
   purge() {
     const now = Date.now();
@@ -49,6 +49,14 @@ export class Hub {
     const key = (request.headers.get("X-API-Key") || "").trim();
     const m = request.method, p = url.pathname;
     this.purge();
+
+    if (p !== "/api/stats") { const k = m + " " + p; this.counts[k] = (this.counts[k] || 0) + 1; }
+    if (m === "GET" && p === "/api/stats") {
+      const secs = Math.max(1, (Date.now() - this.since) / 1000);
+      const per_minute = {};
+      for (const [k, v] of Object.entries(this.counts)) per_minute[k] = Math.round((v / secs) * 600) / 10;
+      return json({ seconds_since_start: Math.round(secs), counts: this.counts, per_minute, total_per_hour: Math.round(Object.values(this.counts).reduce((a, b) => a + b, 0) / secs * 3600) });
+    }
 
     if (m === "GET" && p === "/api/health")
       return json({ status: "ok", active_clients: this.clients.size });
