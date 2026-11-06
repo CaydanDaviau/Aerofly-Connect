@@ -1,4 +1,0 @@
-android/.gradle/
-android/**/build/
-android/local.properties
-*.iml
