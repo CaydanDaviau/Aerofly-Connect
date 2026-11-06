@@ -10,3 +10,9 @@ Optional variables (Settings -> Variables): ABFLUG_KEYS="k1,k2" to restrict, DEB
   and the squawk the sim sends is ignored. Pilots are told the code by voice.
 - Towers: set the in-app callsign to `ATC_<ICAO>` and park at the airport; shown as a tower on every map.
 - After editing `atc.html` run `python3 build.py` to regenerate `src/atc.js`.
+
+## Virtual towers and runways
+- Radar page -> Towers box -> type an airport code (e.g. SBBR) -> Open tower. The tower is stored on the server
+  (24 h) and listed to every player as `ATC_<code>`, so no sim or app is needed. Close it from the same box.
+- The page loads OurAirports runway data in the browser (cached 30 days) and draws runways + identifiers.
+  Type an airport code in the lat/lon box to jump to it.

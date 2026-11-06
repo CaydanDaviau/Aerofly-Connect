@@ -1,6 +1,6 @@
 import worker, { Hub } from "./src/index.js";
 const store = new Map();
-const ctx = { storage: { get: async k => store.get(k), put: async (k, v) => store.set(k, v), delete: async k => store.delete(k) } };
+const ctx = { blockConcurrencyWhile: async f => { await f(); }, storage: { get: async k => store.get(k), put: async (k, v) => store.set(k, v), delete: async k => store.delete(k), list: async ({ prefix }) => new Map([...store].filter(([k]) => k.startsWith(prefix))) } };
 let hub = new Hub(ctx);
 const env = { HUB: { idFromName: () => 1, get: () => ({ fetch: (r) => hub.fetch(r) }) } };
 const call = async (method, path, body, key = "abc") => {
@@ -46,3 +46,15 @@ for (const [k, cs] of [["t1", "ATC-SBBR"], ["t2", "twr sbbr"], ["t3", "TWR_SBGL"
 }
 const nt = JSON.parse((await call("GET", "/api/traffic?lat=5&lon=5&radius_miles=10")).slice(4));
 console.log("callsigns:", nt.aircraft.map(a => a.callsign).join(" "));
+
+// virtual towers
+console.log("tower put:", await call("PUT", "/api/atc/tower", { name: "sbbr", latitude: -15.871, longitude: -47.919, altitude_ft: 3500 }, "atc"));
+console.log("tower bad:", (await call("PUT", "/api/atc/tower", { name: "x", latitude: 99, longitude: 0 }, "atc")).slice(0, 3));
+let tt = JSON.parse((await call("GET", "/api/traffic?lat=-15.9&lon=-47.9&radius_miles=50", null, "pilot")).slice(4)).aircraft.find(a => a.callsign === "ATC_SBBR");
+console.log("tower in traffic:", !!tt, tt && tt.icao_address, tt && tt.virtual_tower);
+hub = new Hub(ctx); await new Promise(r => setTimeout(r, 5));
+tt = JSON.parse((await call("GET", "/api/traffic?lat=-15.9&lon=-47.9&radius_miles=50", null, "pilot")).slice(4)).aircraft.find(a => a.callsign === "ATC_SBBR");
+console.log("tower after restart:", !!tt);
+console.log("far away:", JSON.parse((await call("GET", "/api/traffic?lat=40&lon=0&radius_miles=50", null, "pilot")).slice(4)).aircraft.some(a => a.virtual_tower));
+await call("DELETE", "/api/atc/tower?name=SBBR", null, "atc");
+console.log("closed:", !JSON.parse((await call("GET", "/api/traffic?lat=-15.9&lon=-47.9&radius_miles=50", null, "pilot")).slice(4)).aircraft.some(a => a.virtual_tower));
