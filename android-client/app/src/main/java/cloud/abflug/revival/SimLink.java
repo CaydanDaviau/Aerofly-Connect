@@ -17,8 +17,10 @@ import java.net.Socket;
  */
 final class SimLink {
     // Indices after the optional header token is skipped.
-    static final int F_LAT = 0, F_LON = 1, F_ALT_FT = 2, F_HDG = 3, F_GS = 4, F_VS = 5,
-            F_SQUAWK = 6, F_MODEL = 7, F_LIVERY = 8;
+    // Verified from a real line "-15.866903|-47.917995|3478|173|193|1|0|0" (lat|lon|alt ft|hdg|gs|?|?|?).
+    // 99 = field not present / unknown (reads as empty and is skipped).
+    static final int F_LAT = 0, F_LON = 1, F_ALT_FT = 2, F_HDG = 3, F_GS = 4, F_AIRBORNE = 5,
+            F_VS = 99, F_SQUAWK = 99, F_MODEL = 99, F_LIVERY = 99;
 
     private Socket socket;
     private BufferedReader in;
@@ -78,6 +80,8 @@ final class SimLink {
             if ((v = num(at(f, off + F_HDG))) != null) o.put("heading_true", Math.round(v));
             if ((v = num(at(f, off + F_GS))) != null) o.put("ground_speed", Math.round(v));
             if ((v = num(at(f, off + F_VS))) != null) o.put("vertical_speed_ft_min", Math.round(v));
+            String ab = at(f, off + F_AIRBORNE);
+            if (ab.equals("0") || ab.equals("1")) o.put("airborne_flag", ab.equals("1"));
             String sq = at(f, off + F_SQUAWK);
             if (sq.matches("\\d{4}")) o.put("squawk", sq);
             String m = at(f, off + F_MODEL), l = at(f, off + F_LIVERY);
