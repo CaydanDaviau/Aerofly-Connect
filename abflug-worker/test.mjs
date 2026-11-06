@@ -1,6 +1,6 @@
 import worker, { Hub } from "./src/index.js";
 const store = new Map();
-const ctx = { blockConcurrencyWhile: async f => { await f(); }, storage: { get: async k => store.get(k), put: async (k, v) => store.set(k, v), delete: async k => store.delete(k), list: async ({ prefix }) => new Map([...store].filter(([k]) => k.startsWith(prefix))) } };
+const ctx = { storage: { get: async k => store.get(k), put: async (k, v) => store.set(k, v), delete: async k => store.delete(k) } };
 let hub = new Hub(ctx);
 const env = { HUB: { idFromName: () => 1, get: () => ({ fetch: (r) => hub.fetch(r) }) } };
 const call = async (method, path, body, key = "abc") => {
@@ -47,44 +47,11 @@ for (const [k, cs] of [["t1", "ATC-SBBR"], ["t2", "twr sbbr"], ["t3", "TWR_SBGL"
 const nt = JSON.parse((await call("GET", "/api/traffic?lat=5&lon=5&radius_miles=10")).slice(4));
 console.log("callsigns:", nt.aircraft.map(a => a.callsign).join(" "));
 
-// virtual towers
-console.log("tower put:", await call("PUT", "/api/atc/tower", { name: "sbbr", latitude: -15.871, longitude: -47.919, altitude_ft: 3500 }, "atc"));
-console.log("tower bad:", (await call("PUT", "/api/atc/tower", { name: "x", latitude: 99, longitude: 0 }, "atc")).slice(0, 3));
-let tt = JSON.parse((await call("GET", "/api/traffic?lat=-15.9&lon=-47.9&radius_miles=50", null, "pilot")).slice(4)).aircraft.find(a => a.callsign === "ATC_SBBR");
-console.log("tower in traffic:", !!tt, tt && tt.icao_address, tt && tt.virtual_tower);
-hub = new Hub(ctx); await new Promise(r => setTimeout(r, 5));
-tt = JSON.parse((await call("GET", "/api/traffic?lat=-15.9&lon=-47.9&radius_miles=50", null, "pilot")).slice(4)).aircraft.find(a => a.callsign === "ATC_SBBR");
-console.log("tower after restart:", !!tt);
-console.log("far away:", JSON.parse((await call("GET", "/api/traffic?lat=40&lon=0&radius_miles=50", null, "pilot")).slice(4)).aircraft.some(a => a.virtual_tower));
-await call("DELETE", "/api/atc/tower?name=SBBR", null, "atc");
-console.log("closed:", !JSON.parse((await call("GET", "/api/traffic?lat=-15.9&lon=-47.9&radius_miles=50", null, "pilot")).slice(4)).aircraft.some(a => a.virtual_tower));
-
-// tower classification fields expected by the Android app
-await call("PUT", "/api/atc/tower", { name: "SBBR", latitude: -15.871, longitude: -47.919 }, "ctl");
+// tower fields for controllers who use a TWR- callsign (the app refuses ATC_)
 await call("PUT", "/api/flightplan", { callsign: "TWR-SBGL" }, "twrpilot");
 await call("PUT", "/api/position", { latitude: -15.8, longitude: -47.9, airplane_model: "B777", airplane_livery: "Delta" }, "twrpilot");
 await call("PUT", "/api/flightplan", { callsign: "PEDRO9" }, "plain");
 await call("PUT", "/api/position", { latitude: -15.8, longitude: -47.9, airplane_model: "B738", airplane_livery: "Gol" }, "plain");
 const cl = JSON.parse((await call("GET", "/api/traffic?lat=-15.8&lon=-47.9&radius_miles=50")).slice(4)).aircraft;
 const show = n => { const a = cl.find(x => x.callsign === n); return a ? `${n}: model=${JSON.stringify(a.airplane_model)} livery=${JSON.stringify(a.airplane_livery)}` : n + " missing"; };
-console.log(show("ATC_SBBR")); console.log(show("ATC_SBGL")); console.log(show("PEDRO9"));
-
-// tower broadcast
-console.log("msg set:", await call("PUT", "/api/atc/tower/message", { name: "SBBR", message: "  ATIS  A\n RWY 11L   QNH 1013 " }, "ctl"));
-const bt = () => JSON.parse(awaitedTraffic).aircraft.find(a => a.callsign === "ATC_SBBR");
-var awaitedTraffic = (await call("GET", "/api/traffic?lat=-15.8&lon=-47.9&radius_miles=50")).slice(4);
-console.log("livery:", JSON.stringify(bt().airplane_livery), "model:", bt().airplane_model);
-await call("PUT", "/api/atc/tower", { name: "SBBR", latitude: -15.871, longitude: -47.919 }, "ctl");   // re-register must keep message
-awaitedTraffic = (await call("GET", "/api/traffic?lat=-15.8&lon=-47.9&radius_miles=50")).slice(4);
-console.log("kept after re-register:", bt().airplane_livery.includes("ATIS"));
-await call("PUT", "/api/atc/tower/message", { name: "SBBR", message: "ABCD" }, "ctl");
-awaitedTraffic = (await call("GET", "/api/traffic?lat=-15.8&lon=-47.9&radius_miles=50")).slice(4);
-console.log("bare 4-char text:", JSON.stringify(bt().airplane_livery));
-await call("PUT", "/api/atc/tower/message", { name: "SBBR", message: "x".repeat(500) }, "ctl");
-awaitedTraffic = (await call("GET", "/api/traffic?lat=-15.8&lon=-47.9&radius_miles=50")).slice(4);
-console.log("long text length:", bt().airplane_livery.length);
-console.log("log:", (await call("GET", "/api/atc/tower/log?name=SBBR")).slice(0, 110));
-await call("PUT", "/api/atc/tower/message", { name: "SBBR", message: "" }, "ctl");
-awaitedTraffic = (await call("GET", "/api/traffic?lat=-15.8&lon=-47.9&radius_miles=50")).slice(4);
-console.log("cleared:", bt().airplane_livery);
-console.log("unknown tower:", (await call("PUT", "/api/atc/tower/message", { name: "NOPE", message: "hi" }, "ctl")).slice(0, 3));
+console.log(show("ATC_SBGL")); console.log(show("PEDRO9"));
