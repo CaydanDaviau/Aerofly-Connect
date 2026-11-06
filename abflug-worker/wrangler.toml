@@ -12,6 +12,6 @@ tag = "v1"
 new_sqlite_classes = ["Hub"]
 
 # Optional: restrict access. Leave unset for "any key works".
-# [vars]
-# DEBUG = "1"   # logs request bodies (view in dashboard Logs)
+[vars]
+DEBUG = "1"   # logs request bodies (view in dashboard Logs); remove when done
 # ABFLUG_KEYS = "key1,key2"
