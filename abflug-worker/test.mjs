@@ -12,3 +12,4 @@ console.log((await call("GET", "/api/traffic?lat=47&lon=8&radius_miles=100")).sl
 console.log(await call("GET", "/api/traffic", null, null));
 console.log(await call("DELETE", "/api/position"));
 console.log(await call("GET", "/api/health", null, null));
+console.log(await call("GET", "/api/stats", null, null));
