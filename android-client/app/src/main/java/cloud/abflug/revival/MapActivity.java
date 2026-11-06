@@ -35,6 +35,7 @@ public class MapActivity extends Activity {
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
+        pipOnStart = ACT_TOGGLE.equals(getIntent().getAction());
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         web = new WebView(this);
         WebSettings s = web.getSettings();
@@ -49,9 +50,24 @@ public class MapActivity extends Activity {
         web.loadUrl(BuildConfig.SERVER_URL + "/map?key=" + Api.key(this));
     }
 
+    private boolean pipOnStart;
+
+    @Override
+    protected void onNewIntent(android.content.Intent it) {
+        super.onNewIntent(it);
+        if (ACT_TOGGLE.equals(it.getAction())) finish();   // "Hide map"
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (pipOnStart) { pipOnStart = false; enterPip(); }   // "Show map": straight into PiP
+    }
+
     @Override
     protected void onStart() {
         super.onStart();
+        PilotService.mapShown = true; PilotService.refreshNotif(this);
         // Push our own plane (from the sim link) into the page once a second.
         feed = new Runnable() {
             @Override public void run() {
@@ -77,6 +93,7 @@ public class MapActivity extends Activity {
                 PilotService.lastGs, PilotService.lastAlt, cs), null);
     }
 
+    static final String ACT_TOGGLE = "cloud.abflug.revival.TOGGLE_MAP";
     private static final String ACT_ZOOM = "cloud.abflug.revival.ZOOM";
     private BroadcastReceiver zoomRx;
 
@@ -136,6 +153,7 @@ public class MapActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        PilotService.mapShown = false; PilotService.refreshNotif(this);
         ui.removeCallbacks(feed);
         if (zoomRx != null) { try { unregisterReceiver(zoomRx); } catch (Exception ignored) { } }
         web.destroy();

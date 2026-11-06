@@ -66,7 +66,7 @@ public class MainActivity extends Activity {
         status = null;
         LinearLayout root = column();
         root.setGravity(Gravity.CENTER_HORIZONTAL);
-        root.addView(text("Abflug Revival", 28, true));
+        root.addView(text("Aerofly Connect", 28, true));
         TextView info = text("Build " + BuildConfig.VERSION_NAME
                 + (BuildConfig.RELEASE_KEY ? "" : " (debug key)"), 13, false);
         info.setPadding(0, pad / 4, 0, pad * 2);

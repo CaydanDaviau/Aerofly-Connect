@@ -3,6 +3,7 @@ package cloud.abflug.revival;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
@@ -26,6 +27,31 @@ public class PilotService extends Service {
     static volatile boolean hasPos;
     static volatile double lastLat, lastLon, lastHdg, lastGs, lastAlt;
 
+    static volatile boolean mapShown;
+
+    /** Notification with Hide/Show map and Stop buttons. */
+    static Notification buildNotif(Context c) {
+        PendingIntent stop = PendingIntent.getService(c, 10,
+                new Intent(c, PilotService.class).setAction(ACTION_STOP),
+                PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+        PendingIntent map = PendingIntent.getActivity(c, 11,
+                new Intent(c, MapActivity.class).setAction(MapActivity.ACT_TOGGLE),
+                PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+        return new Notification.Builder(c, "pilot")
+                .setContentTitle("Aerofly Connect")
+                .setContentText("Sharing your position")
+                .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+                .setOngoing(true)
+                .addAction(new Notification.Action.Builder(null, mapShown ? "Hide map" : "Show map", map).build())
+                .addAction(new Notification.Action.Builder(null, "Stop", stop).build())
+                .build();
+    }
+
+    static void refreshNotif(Context c) {
+        if (!running) return;
+        ((NotificationManager) c.getSystemService(Context.NOTIFICATION_SERVICE)).notify(1, buildNotif(c));
+    }
+
     private volatile boolean stopFlag;
     private Thread worker;
     private PowerManager.WakeLock wl;
@@ -44,12 +70,7 @@ public class PilotService extends Service {
 
         NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         nm.createNotificationChannel(new NotificationChannel("pilot", "Flight upload", NotificationManager.IMPORTANCE_LOW));
-        Notification n = new Notification.Builder(this, "pilot")
-                .setContentTitle("Abflug Revival")
-                .setContentText("Sharing your position")
-                .setSmallIcon(android.R.drawable.ic_menu_mylocation)
-                .setOngoing(true)
-                .build();
+        Notification n = buildNotif(this);
         startForeground(1, n);
 
         PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
