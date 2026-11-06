@@ -5,6 +5,14 @@ const TTL_MS = 60_000;
 const ASSIGN_TTL_MS = 12 * 3600_000;
 const MAX_TRAFFIC = 500;
 
+// The Android app refuses callsigns starting with "ATC_". Controllers can use
+// "ATC-SBBR", "ATC SBBR" or "TWR-SBBR" instead; we present them as "ATC_SBBR".
+const normCallsign = cs => {
+  if (typeof cs !== "string") return cs;
+  const m = cs.trim().match(/^(?:ATC|TWR|TOWER)[-_ .]+([A-Za-z0-9]{2,8})$/i);
+  return m ? "ATC_" + m[1].toUpperCase() : cs;
+};
+
 const pick = (d, ...names) => {
   for (const n of names) if (d && d[n] !== undefined && d[n] !== null && d[n] !== "") return d[n];
   return undefined;
@@ -113,7 +121,7 @@ export class Hub {
         const pos = c.pos;
         if (!pos) continue;
         const d = haversineMi(lat, lon, pos.latitude, pos.longitude);
-        if (d <= rad) out.push({ ...pos, ...c.plan, assigned_squawk: c.assigned ? c.assigned.squawk : null, distance_miles: Math.round(d * 10) / 10 });
+        if (d <= rad) out.push({ ...pos, ...c.plan, callsign: normCallsign(c.plan.callsign ?? pos.callsign), assigned_squawk: c.assigned ? c.assigned.squawk : null, distance_miles: Math.round(d * 10) / 10 });
       }
       out.sort((a, b) => a.distance_miles - b.distance_miles);
       const truncated = out.length > MAX_TRAFFIC;

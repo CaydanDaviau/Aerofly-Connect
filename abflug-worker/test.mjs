@@ -40,3 +40,9 @@ hub = new Hub(ctx);
 await call("PUT", "/api/position", { latitude: 1, longitude: 2 }, "cs");
 console.log("after restart:", (await call("GET", "/api/traffic?lat=1&lon=2&radius_miles=50")).includes('"assigned_squawk":"2314"'));
 console.log("unknown:", (await call("PUT", "/api/atc/squawk", { icao_address: "FFFFFF", squawk: "2000" }, "atc")).slice(0, 3));
+for (const [k, cs] of [["t1", "ATC-SBBR"], ["t2", "twr sbbr"], ["t3", "TWR_SBGL"], ["t4", "ATCSBBR"], ["t5", "PEDRO1"]]) {
+  await call("PUT", "/api/flightplan", { callsign: cs }, k);
+  await call("PUT", "/api/position", { latitude: 5, longitude: 5 }, k);
+}
+const nt = JSON.parse((await call("GET", "/api/traffic?lat=5&lon=5&radius_miles=10")).slice(4));
+console.log("callsigns:", nt.aircraft.map(a => a.callsign).join(" "));
