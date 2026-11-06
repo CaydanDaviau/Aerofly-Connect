@@ -44,6 +44,15 @@ final class Api {
         prefs(c).edit().putString("callsign", cs).apply();
     }
 
+    /** Pilot form fields: dep, arr, model, livery, cruise, squawk, route. */
+    static String field(Context c, String name) {
+        return prefs(c).getString("f_" + name, "");
+    }
+
+    static void setField(Context c, String name, String v) {
+        prefs(c).edit().putString("f_" + name, v).apply();
+    }
+
     /** Returns HTTP status code; body is ignored. Throws on network failure. */
     static int send(String method, String path, String json, String key) throws Exception {
         HttpURLConnection c = (HttpURLConnection) new URL(BuildConfig.SERVER_URL + path).openConnection();

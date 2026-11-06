@@ -95,15 +95,15 @@ public class MainActivity extends Activity {
         LinearLayout root = column();
         root.addView(text("Pilot", 24, true));
 
-        TextView lbl = text("Callsign (optional)", 14, false);
-        lbl.setPadding(0, pad, 0, 0);
-        root.addView(lbl);
-
-        callsignBox = new EditText(this);
-        callsignBox.setSingleLine(true);
-        callsignBox.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS);
-        callsignBox.setText(Api.callsign(this));
-        root.addView(callsignBox);
+        callsignBox = addField(root, "Callsign", Api.callsign(this), true, false);
+        extra = new EditText[]{
+                addField(root, "Departure (ICAO)", Api.field(this, "dep"), true, false),
+                addField(root, "Arrival (ICAO)", Api.field(this, "arr"), true, false),
+                addField(root, "Aircraft model", Api.field(this, "model"), true, false),
+                addField(root, "Airline / livery", Api.field(this, "livery"), false, false),
+                addField(root, "Cruise alt (ft)", Api.field(this, "cruise"), false, true),
+                addField(root, "Squawk (4 digits)", Api.field(this, "squawk"), false, true),
+                addField(root, "Route (optional)", Api.field(this, "route"), true, false)};
 
         startStop = new Button(this);
         startStop.setOnClickListener(new View.OnClickListener() {
@@ -123,6 +123,22 @@ public class MainActivity extends Activity {
         startTicker();
     }
 
+    private EditText[] extra;
+    private static final String[] EXTRA_KEYS = {"dep", "arr", "model", "livery", "cruise", "squawk", "route"};
+
+    private EditText addField(LinearLayout root, String label, String value, boolean caps, boolean digits) {
+        TextView l = text(label, 13, false);
+        l.setPadding(0, pad / 2, 0, 0);
+        root.addView(l);
+        EditText e = new EditText(this);
+        e.setSingleLine(true);
+        e.setInputType(digits ? InputType.TYPE_CLASS_NUMBER
+                : InputType.TYPE_CLASS_TEXT | (caps ? InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS : 0));
+        e.setText(value);
+        root.addView(e);
+        return e;
+    }
+
     private void toggle() {
         if (PilotService.running) {
             Intent i = new Intent(this, PilotService.class);
@@ -134,6 +150,8 @@ public class MainActivity extends Activity {
                 requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1);
             }
             Api.setCallsign(this, callsignBox.getText().toString().trim());
+            for (int i = 0; i < extra.length; i++)
+                Api.setField(this, EXTRA_KEYS[i], extra[i].getText().toString().trim());
             startForegroundService(new Intent(this, PilotService.class));
         }
     }
@@ -159,13 +177,16 @@ public class MainActivity extends Activity {
         boolean on = PilotService.running;
         startStop.setText(on ? "Stop" : "Start");
         callsignBox.setEnabled(!on);
+        for (EditText e : extra) e.setEnabled(!on);
         String raw = PilotService.lastRaw;
         if (raw.length() > 300) raw = raw.substring(0, 300) + "...";
-        status.setText("State: " + (on ? "flying" : "stopped")
+        String shown = ("State: " + (on ? "flying" : "stopped")
                 + "\nSim link: " + PilotService.simState
                 + "\nServer: " + PilotService.serverState
                 + "\nUploads: " + PilotService.okCount + " ok / " + PilotService.failCount + " failed"
                 + "\nKey: " + Api.key(this)
                 + "\n\nLast sim line:\n" + (raw.isEmpty() ? "(none yet)" : raw));
+        // Skip identical text so a text selection is not cleared by the 1 s refresh.
+        if (!shown.equals(status.getText().toString())) status.setText(shown);
     }
 }
