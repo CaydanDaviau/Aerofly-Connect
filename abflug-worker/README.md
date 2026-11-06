@@ -8,16 +8,11 @@ Optional variables (Settings -> Variables): ABFLUG_KEYS="k1,k2" to restrict, DEB
 - Open `https://<your-worker>/atc` in any browser, enter an API key. Dark radar scope + flight strips.
 - Tap an aircraft (or its strip), then Assign / Auto / Clear a squawk. Codes are kept on the server for 12 h
   and the squawk the sim sends is ignored. Pilots are told the code by voice.
-- Towers: set the in-app callsign to `ATC_<ICAO>` and park at the airport; shown as a tower on every map.
+- Towers: a controller sets the in-app callsign to `TWR-<ICAO>` and parks at the airport (see Runways below).
 - After editing `atc.html` run `python3 build.py` to regenerate `src/atc.js`.
 
-## Virtual towers and runways
-- Radar page -> Towers box -> type an airport code (e.g. SBBR) -> Open tower. The tower is stored on the server
-  (24 h) and listed to every player as `ATC_<code>`, so no sim or app is needed. Close it from the same box.
-- The page loads OurAirports runway data in the browser (cached 30 days) and draws runways + identifiers.
+## Runways
+- The radar page loads OurAirports runway data in the browser (cached 30 days) and draws runways + identifiers.
   Type an airport code in the lat/lon box to jump to it.
-
-## Tower broadcast
-- Each virtual tower has a message box in the radar page's Towers section. Send sets a short text (max 120 chars);
-  pilots see it in Abflug when they tap the tower (it is carried in the tower's livery field). Clear removes it.
-- History keeps the last 20 messages per tower (tap one to reuse it). Re-opening a tower keeps its message.
+- Controllers who need a tower icon in the Android app use a `TWR-<ICAO>` callsign (the app refuses `ATC_`);
+  the Worker presents it as `ATC_<ICAO>` and fills model/livery so the app draws a tower.
