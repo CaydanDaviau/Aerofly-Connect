@@ -39,6 +39,10 @@ input::placeholder{color:var(--dim)}
 #login div{background:var(--panel);border:1px solid var(--dim);padding:18px;border-radius:8px;max-width:360px;width:100%}
 #login input{width:100%;margin:10px 0}
 .empty{color:var(--dim);padding:10px}
+.tw{border-top:1px solid var(--faint);margin-top:8px;padding-top:6px}
+.tw .ctl input{flex:1 1 100%;width:auto;text-align:left;letter-spacing:0}
+.hist div{cursor:pointer;padding:2px 0;color:var(--dim)}
+.hist div:hover{color:var(--fg)}
 #twList .row{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:6px}
 #rwStatus button{padding:1px 6px;font-size:11px}
 </style>
@@ -261,10 +265,32 @@ $('twOpen').onclick=function(){var name=$('twIcao').value.trim().toUpperCase();
     if(ap)toast('Tower '+j.callsign+' open');$('twIcao').value='';poll(true)})}).catch(function(){toast('Network error')})};
 function closeTower(name){api('/api/atc/tower?name='+encodeURIComponent(name),{method:'DELETE'}).then(function(){
   myTowers=myTowers.filter(function(x){return x.name!==name});saveTowers();toast('Tower closed');poll(true)})}
-$('twList').addEventListener('click',function(e){var b=e.target.closest('button');if(b)closeTower(b.getAttribute('data-name'))});
-function renderTowerBox(){var t=ac.filter(function(a){return a.virtual_tower});
-  $('twList').innerHTML=t.length?t.map(function(a){var n=String(a.callsign).replace(/^ATC_/,'');
-    return'<div class="row"><span>'+esc(a.callsign)+' <span class="m">virtual</span></span><button data-name="'+esc(n)+'">Close</button></div>'}).join(''):'<div class="m" style="margin-top:6px">No virtual towers open.</div>'}
+function twInput(n){return document.querySelector('#twList input[data-name="'+n+'"]')}
+function sendMsg(n,text){api('/api/atc/tower/message',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,message:text})})
+  .then(function(r){return r.json().then(function(j){if(!r.ok){toast('Error: '+(j.error||r.status));return}
+    toast(j.message?'Broadcast sent':'Broadcast cleared');var i=twInput(n);if(i){i.value=j.message;i.blur()}poll(true)})}).catch(function(){toast('Network error')})}
+function showHist(n){var box=document.getElementById('hist-'+n);if(!box)return;if(box.getAttribute('data-open')){box.innerHTML='';box.removeAttribute('data-open');return}
+  api('/api/atc/tower/log?name='+encodeURIComponent(n)).then(function(r){return r.json()}).then(function(j){
+    box.setAttribute('data-open','1');
+    box.innerHTML=(j.log&&j.log.length)?j.log.map(function(m){var d=new Date(m.at),hh=('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2);
+      return'<div data-text="'+esc(m.text)+'">'+hh+' '+esc(m.text)+'</div>'}).join(''):'<div>No messages yet.</div>'})}
+$('twList').addEventListener('click',function(e){
+  var h=e.target.closest('[data-text]');if(h){var i=h.parentNode.parentNode.querySelector('input');if(i)i.value=h.getAttribute('data-text');return}
+  var b=e.target.closest('button');if(!b)return;var n=b.getAttribute('data-name'),act=b.getAttribute('data-act');
+  if(act==='close')closeTower(n);
+  else if(act==='send'){var i2=twInput(n);if(i2)sendMsg(n,i2.value)}
+  else if(act==='clearmsg')sendMsg(n,'');
+  else if(act==='hist')showHist(n)});
+$('twList').addEventListener('keydown',function(e){if(e.key==='Enter'&&e.target.tagName==='INPUT')sendMsg(e.target.getAttribute('data-name'),e.target.value)});
+function renderTowerBox(){var ae=document.activeElement;if(ae&&ae.closest&&ae.closest('#twList'))return;
+  var openHist={};document.querySelectorAll('#twList .hist[data-open]').forEach(function(x){openHist[x.id]=1});
+  var t=ac.filter(function(a){return a.virtual_tower});
+  $('twList').innerHTML=t.length?t.map(function(a){var n=esc(String(a.callsign).replace(/^ATC_/,''));
+    return'<div class="tw"><div class="row"><span>'+esc(a.callsign)+' <span class="m">virtual</span></span><button data-act="close" data-name="'+n+'">Close</button></div>'+
+      '<div class="ctl"><input data-name="'+n+'" maxlength="120" placeholder="Broadcast / ATIS (pilots see it when they tap the tower)" value="'+esc(a.tower_message||'')+'">'+
+      '<button data-act="send" data-name="'+n+'">Send</button><button data-act="clearmsg" data-name="'+n+'">Clear</button><button data-act="hist" data-name="'+n+'">History</button></div>'+
+      '<div class="hist" id="hist-'+n+'"></div></div>'}).join(''):'<div class="m" style="margin-top:6px">No virtual towers open.</div>';
+  Object.keys(openHist).forEach(function(id){var n=id.replace('hist-','');var b=document.getElementById(id);if(b){b.removeAttribute('data-open');showHist(n)}})}
 function refreshMyTowers(){if(!key)return;myTowers.forEach(function(t){putTower(t).catch(function(){})})}
 
 /* ---------- polling ---------- */

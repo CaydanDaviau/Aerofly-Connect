@@ -17,10 +17,14 @@ const normCallsign = cs => {
 
 // How the Android app decides to draw a tower (TrafficClassification.detectControlTower):
 // callsign contains "ATC_" AND (airplane_model is a 3-4 char airport code OR airplane_livery is a function name).
-const towerFields = cs => {
+const MAX_MSG = 120, MAX_LOG = 20;
+const cleanMsg = x => String(x ?? "").replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim().slice(0, MAX_MSG);
+const towerFields = (cs, text) => {
   const m = /^ATC_([A-Z0-9]+)$/.exec(cs || "");
   if (!m) return null;
-  return { airplane_model: /^[A-Z0-9]{3,4}$/.test(m[1]) ? m[1] : "", airplane_livery: "TOWER", livery: "TOWER" };
+  let fn = text ? text : "TOWER";
+  if (/^[A-Z0-9]{3,4}$/.test(fn)) fn += ".";   // the app would mistake a bare 3-4 char text for an airport code
+  return { airplane_model: /^[A-Z0-9]{3,4}$/.test(m[1]) ? m[1] : "", airplane_livery: fn, livery: fn };
 };
 
 const pick = (d, ...names) => {
@@ -132,10 +136,27 @@ export class Hub {
       if (!/^[A-Z0-9]{2,8}$/.test(name) || !(Math.abs(lat) <= 90) || !(Math.abs(lon) <= 180))
         return json({ error: "need name (2-8 letters/digits), latitude, longitude" }, 400);
       if (this.towers.size >= 50 && !this.towers.has(name)) return json({ error: "too many towers" }, 409);
-      const t = { name, latitude: lat, longitude: lon, altitude_ft: Number(d.altitude_ft) || 0, at: Date.now() };
+      const prev = this.towers.get(name) || {};
+      const t = { name, latitude: lat, longitude: lon, altitude_ft: Number(d.altitude_ft) || 0, at: Date.now(),
+                  message: prev.message || "", msg_at: prev.msg_at || 0, log: prev.log || [] };
       this.towers.set(name, t);
       await this.ctx.storage.put("tower:" + name, t);
       return json({ success: true, callsign: "ATC_" + name });
+    }
+    if ((m === "PUT" || m === "POST") && p === "/api/atc/tower/message") {
+      const d = await request.json().catch(() => ({}));
+      const t = this.towers.get(String(d.name || "").toUpperCase());
+      if (!t) return json({ error: "tower not open" }, 404);
+      const text = cleanMsg(d.message);
+      t.message = text; t.msg_at = Date.now();
+      if (text) { t.log = [...(t.log || []), { text, at: t.msg_at }].slice(-MAX_LOG); }
+      t.at = Date.now();
+      await this.ctx.storage.put("tower:" + t.name, t);
+      return json({ success: true, message: text });
+    }
+    if (m === "GET" && p === "/api/atc/tower/log") {
+      const t = this.towers.get(String(url.searchParams.get("name") || "").toUpperCase());
+      return json({ message: t ? t.message : "", log: t ? (t.log || []).slice().reverse() : [] });
     }
     if (m === "DELETE" && p === "/api/atc/tower") {
       const name = String(url.searchParams.get("name") || "").toUpperCase();
@@ -168,7 +189,7 @@ export class Hub {
         out.push({ icao_address: hex6("tower:" + t.name), callsign: "ATC_" + t.name, latitude: t.latitude, longitude: t.longitude,
           altitude_ft: t.altitude_ft, altitude: t.altitude_ft, heading_true: 0, track: 0, ground_speed: 0, velocity_knots: 0,
           vertical_speed_ft_min: 0, vertical_speed: 0, squawk: "0000", squawk_code: "0000", airborne_flag: false,
-          timestamp: Math.floor(Date.now() / 1000), assigned_squawk: null, virtual_tower: true, ...towerFields("ATC_" + t.name), distance_miles: Math.round(d * 10) / 10 });
+          timestamp: Math.floor(Date.now() / 1000), assigned_squawk: null, virtual_tower: true, tower_message: t.message || "", ...towerFields("ATC_" + t.name, t.message), distance_miles: Math.round(d * 10) / 10 });
       }
       out.sort((a, b) => a.distance_miles - b.distance_miles);
       const truncated = out.length > MAX_TRAFFIC;
