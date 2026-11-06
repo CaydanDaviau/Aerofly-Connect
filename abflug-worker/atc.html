@@ -230,7 +230,7 @@ function renderStrips(force){
       '<button data-act="set">Assign</button><button data-act="auto">Auto</button><button data-act="clear">Clear</button></div>':'';
     return'<div class="strip'+(isSel?' sel':'')+(tw?' twr':(asg?'':' nocode'))+'" data-id="'+esc(id)+'">'+
       '<div class="h"><span class="cs">'+esc(a.callsign||id)+(tw?' &#9650;':'')+'</span><span class="m">'+Math.round(r.dist)+' nm / '+p3(r.brg)+'&deg;</span></div>'+
-      (tw?'':'<div>'+altStr(a.altitude_ft)+' &middot; '+Math.round(Number(a.ground_speed)||0)+' kt &middot; HDG '+p3(Number(a.heading_true)||0)+'&deg; &middot; '+(Number(a.vertical_speed_ft_min)>100?'&uarr;':Number(a.vertical_speed_ft_min)<-100?'&darr;':'&rarr;')+'</div>')+
+      (tw?'':'<div>'+altStr(a.altitude_ft)+' &middot; '+Math.round(Number(a.ground_speed)||0)+' kt &middot; HDG '+p3(Number(a.heading_mag!=null?a.heading_mag:a.heading_true)||0)+'&deg;'+(a.heading_mag==null?'T':'')+' &middot; '+(Number(a.vertical_speed_ft_min)>100?'&uarr;':Number(a.vertical_speed_ft_min)<-100?'&darr;':'&rarr;')+'</div>')+
       (tw?'':'<div>'+st+'</div>')+
       (route||cruise?'<div class="route">'+route+(cruise?' &middot; cruise '+esc(cruise):'')+'</div>':'')+
       (a.flightplan_route?'<div class="m">'+esc(a.flightplan_route)+'</div>':'')+ctl+'</div>'}).join('')}

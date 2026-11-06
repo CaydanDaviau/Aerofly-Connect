@@ -208,6 +208,7 @@ export class Hub {
         vertical_speed_ft_min: vs, vertical_speed: vs,
         squawk: sq, squawk_code: sq,
         airborne_flag: pick(d, "airborne_flag"),
+        heading_mag: pick(d, "heading_mag"),
         airplane_model: pick(d, "airplane_model"),
         airplane_livery: pick(d, "airplane_livery", "livery"),
         timestamp: pick(d, "timestamp") ?? Math.floor(Date.now() / 1000),

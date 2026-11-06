@@ -61,12 +61,15 @@ function addLayers(){
   ready=true; render();
 }
 map.on('style.load',addLayers);
+map.on('styledata',function(){ if(map.isStyleLoaded()&&!map.getLayer('planes'))addLayers() });
+map.on('idle',function(){ if(!map.getLayer('planes')||!map.hasImage('plane')){ready=false;addLayers()} });
 
 // ---- data ----
 function altStr(a){a=Number(a);if(!isFinite(a))return'';return a>=18000?'FL'+String(Math.round(a/100)).padStart(3,'0'):Math.round(a)+' ft'}
 function pt(lon,lat,props){return{type:'Feature',geometry:{type:'Point',coordinates:[lon,lat]},properties:props}}
 function render(){
-  if(!ready||!map.getSource('planes'))return;
+  if(!map.isStyleLoaded()&&!map.getSource('planes'))return;
+  if(!map.getSource('planes')||!map.getLayer('own')||!map.hasImage('plane')){ if(map.isStyleLoaded())addLayers(); else return }
   var pl=[],tw=[],tr=[],compact=document.body.classList.contains('pip');
   lastTraffic.forEach(function(a){
     var id=a.icao_address||a.callsign;
@@ -103,6 +106,7 @@ window.setOwn=function(lat,lon,hdg,gs,alt,callsign){
   own={lat:lat,lon:lon,hdg:hdg,gs:gs,alt:alt,callsign:callsign||''};
   pushTrail('__own',lon,lat);render();followNow();
 };
+window.zoomBy=function(d){map.zoomBy(d,{duration:200})};
 window.setPip=function(on){document.body.classList.toggle('pip',!!on);render();map.resize()};
 
 var firstFix=true, failures=0;

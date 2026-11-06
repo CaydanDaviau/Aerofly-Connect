@@ -19,7 +19,7 @@ final class SimLink {
     // Indices after the optional header token is skipped.
     // Verified: lat|lon|alt ft|true hdg (idx3)|magnetic hdg (idx4, not used)|IAS|GS|VS ft/min.
     // 99 = not sent by the sim (model, livery, squawk come from the app's own fields).
-    static final int F_LAT = 0, F_LON = 1, F_ALT_FT = 2, F_HDG = 3, F_GS = 6, F_VS = 7,
+    static final int F_LAT = 0, F_LON = 1, F_ALT_FT = 2, F_HDG = 3, F_HDG_MAG = 4, F_GS = 6, F_VS = 7,
             F_SQUAWK = 99, F_MODEL = 99, F_LIVERY = 99;
 
     private Socket socket;
@@ -78,6 +78,7 @@ final class SimLink {
             Double v;
             if ((v = num(at(f, off + F_ALT_FT))) != null) o.put("altitude_ft", Math.round(v));
             if ((v = num(at(f, off + F_HDG))) != null) o.put("heading_true", Math.round(v));
+            if ((v = num(at(f, off + F_HDG_MAG))) != null) o.put("heading_mag", Math.round(v));
             if ((v = num(at(f, off + F_GS))) != null) o.put("ground_speed", Math.round(v));
             if ((v = num(at(f, off + F_VS))) != null) o.put("vertical_speed_ft_min", Math.round(v));
             String sq = at(f, off + F_SQUAWK);
