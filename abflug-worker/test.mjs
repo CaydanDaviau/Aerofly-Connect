@@ -68,3 +68,23 @@ await call("PUT", "/api/position", { latitude: -15.8, longitude: -47.9, airplane
 const cl = JSON.parse((await call("GET", "/api/traffic?lat=-15.8&lon=-47.9&radius_miles=50")).slice(4)).aircraft;
 const show = n => { const a = cl.find(x => x.callsign === n); return a ? `${n}: model=${JSON.stringify(a.airplane_model)} livery=${JSON.stringify(a.airplane_livery)}` : n + " missing"; };
 console.log(show("ATC_SBBR")); console.log(show("ATC_SBGL")); console.log(show("PEDRO9"));
+
+// tower broadcast
+console.log("msg set:", await call("PUT", "/api/atc/tower/message", { name: "SBBR", message: "  ATIS  A\n RWY 11L   QNH 1013 " }, "ctl"));
+const bt = () => JSON.parse(awaitedTraffic).aircraft.find(a => a.callsign === "ATC_SBBR");
+var awaitedTraffic = (await call("GET", "/api/traffic?lat=-15.8&lon=-47.9&radius_miles=50")).slice(4);
+console.log("livery:", JSON.stringify(bt().airplane_livery), "model:", bt().airplane_model);
+await call("PUT", "/api/atc/tower", { name: "SBBR", latitude: -15.871, longitude: -47.919 }, "ctl");   // re-register must keep message
+awaitedTraffic = (await call("GET", "/api/traffic?lat=-15.8&lon=-47.9&radius_miles=50")).slice(4);
+console.log("kept after re-register:", bt().airplane_livery.includes("ATIS"));
+await call("PUT", "/api/atc/tower/message", { name: "SBBR", message: "ABCD" }, "ctl");
+awaitedTraffic = (await call("GET", "/api/traffic?lat=-15.8&lon=-47.9&radius_miles=50")).slice(4);
+console.log("bare 4-char text:", JSON.stringify(bt().airplane_livery));
+await call("PUT", "/api/atc/tower/message", { name: "SBBR", message: "x".repeat(500) }, "ctl");
+awaitedTraffic = (await call("GET", "/api/traffic?lat=-15.8&lon=-47.9&radius_miles=50")).slice(4);
+console.log("long text length:", bt().airplane_livery.length);
+console.log("log:", (await call("GET", "/api/atc/tower/log?name=SBBR")).slice(0, 110));
+await call("PUT", "/api/atc/tower/message", { name: "SBBR", message: "" }, "ctl");
+awaitedTraffic = (await call("GET", "/api/traffic?lat=-15.8&lon=-47.9&radius_miles=50")).slice(4);
+console.log("cleared:", bt().airplane_livery);
+console.log("unknown tower:", (await call("PUT", "/api/atc/tower/message", { name: "NOPE", message: "hi" }, "ctl")).slice(0, 3));
