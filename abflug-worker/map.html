@@ -106,7 +106,7 @@ window.setOwn=function(lat,lon,hdg,gs,alt,callsign){
   own={lat:lat,lon:lon,hdg:hdg,gs:gs,alt:alt,callsign:callsign||''};
   pushTrail('__own',lon,lat);render();followNow();
 };
-window.zoomBy=function(d){map.zoomBy(d,{duration:200})};
+window.zoomBy=function(d){map.easeTo({zoom:map.getZoom()+d,duration:200})};
 window.setPip=function(on){document.body.classList.toggle('pip',!!on);render();map.resize()};
 
 var firstFix=true, failures=0;
