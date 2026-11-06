@@ -3,6 +3,8 @@
 import ATC_HTML from "./atc.js";
 const TTL_MS = 60_000;
 const ASSIGN_TTL_MS = 12 * 3600_000;
+const TOWER_TTL_MS = 24 * 3600_000;
+const hex6 = str => { let h = 2166136261; for (const ch of str) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); } return (h >>> 0).toString(16).padStart(8, "0").slice(0, 6).toUpperCase(); };
 const MAX_TRAFFIC = 500;
 
 // The Android app refuses callsigns starting with "ATC_". Controllers can use
@@ -49,11 +51,18 @@ export default {
 };
 
 export class Hub {
-  constructor(ctx) { this.ctx = ctx; this.clients = new Map(); this.since = Date.now(); this.counts = {}; }
+  constructor(ctx) {
+    this.ctx = ctx; this.towers = new Map();
+    ctx.blockConcurrencyWhile(async () => {
+      const saved = await ctx.storage.list({ prefix: "tower:" });
+      for (const [k, v] of saved) this.towers.set(k.slice(6), v);
+    });
+    this.clients = new Map(); this.since = Date.now(); this.counts = {}; }
 
   purge() {
     const now = Date.now();
     for (const [k, c] of this.clients) if (now - c.seen > TTL_MS) this.clients.delete(k);
+    for (const [n, t] of this.towers) if (now - t.at > TOWER_TTL_MS) { this.towers.delete(n); this.ctx.storage.delete("tower:" + n); }
   }
 
   async fetch(request) {
@@ -108,6 +117,25 @@ export class Hub {
       return json({ success: true });
     }
 
+    if ((m === "PUT" || m === "POST") && p === "/api/atc/tower") {
+      const d = await request.json().catch(() => ({}));
+      const name = String(d.name || "").toUpperCase();
+      const lat = Number(d.latitude), lon = Number(d.longitude);
+      if (!/^[A-Z0-9]{2,8}$/.test(name) || !(Math.abs(lat) <= 90) || !(Math.abs(lon) <= 180))
+        return json({ error: "need name (2-8 letters/digits), latitude, longitude" }, 400);
+      if (this.towers.size >= 50 && !this.towers.has(name)) return json({ error: "too many towers" }, 409);
+      const t = { name, latitude: lat, longitude: lon, altitude_ft: Number(d.altitude_ft) || 0, at: Date.now() };
+      this.towers.set(name, t);
+      await this.ctx.storage.put("tower:" + name, t);
+      return json({ success: true, callsign: "ATC_" + name });
+    }
+    if (m === "DELETE" && p === "/api/atc/tower") {
+      const name = String(url.searchParams.get("name") || "").toUpperCase();
+      this.towers.delete(name);
+      await this.ctx.storage.delete("tower:" + name);
+      return json({ success: true });
+    }
+
     if (m === "GET" && p === "/api/health")
       return json({ status: "ok", active_clients: this.clients.size });
 
@@ -122,6 +150,14 @@ export class Hub {
         if (!pos) continue;
         const d = haversineMi(lat, lon, pos.latitude, pos.longitude);
         if (d <= rad) out.push({ ...pos, ...c.plan, callsign: normCallsign(c.plan.callsign ?? pos.callsign), assigned_squawk: c.assigned ? c.assigned.squawk : null, distance_miles: Math.round(d * 10) / 10 });
+      }
+      for (const t of this.towers.values()) {
+        const d = haversineMi(lat, lon, t.latitude, t.longitude);
+        if (d > rad) continue;
+        out.push({ icao_address: hex6("tower:" + t.name), callsign: "ATC_" + t.name, latitude: t.latitude, longitude: t.longitude,
+          altitude_ft: t.altitude_ft, altitude: t.altitude_ft, heading_true: 0, track: 0, ground_speed: 0, velocity_knots: 0,
+          vertical_speed_ft_min: 0, vertical_speed: 0, squawk: "0000", squawk_code: "0000", airborne_flag: false,
+          timestamp: Math.floor(Date.now() / 1000), assigned_squawk: null, virtual_tower: true, distance_miles: Math.round(d * 10) / 10 });
       }
       out.sort((a, b) => a.distance_miles - b.distance_miles);
       const truncated = out.length > MAX_TRAFFIC;
