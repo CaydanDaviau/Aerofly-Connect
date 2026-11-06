@@ -15,3 +15,6 @@ new_sqlite_classes = ["Hub"]
 [vars]
 DEBUG = "1"   # logs request bodies (view in dashboard Logs); remove when done
 # ABFLUG_KEYS = "key1,key2"
+
+[observability]
+enabled = true
