@@ -37,7 +37,7 @@ export default {
 };
 
 export class Hub {
-  constructor() { this.clients = new Map(); this.since = Date.now(); this.counts = {}; }
+  constructor(ctx) { this.ctx = ctx; this.clients = new Map(); this.since = Date.now(); this.counts = {}; }
 
   purge() {
     const now = Date.now();
@@ -107,7 +107,8 @@ export class Hub {
         airplane_livery: pick(d, "airplane_livery", "livery"),
         timestamp: pick(d, "timestamp") ?? Math.floor(Date.now() / 1000),
       };
-      const c = this.clients.get(key) || { plan: {} };
+      let c = this.clients.get(key);
+      if (!c) c = { plan: (await this.ctx.storage.get("plan:" + key)) || {} };
       c.pos = pos; c.seen = Date.now();
       this.clients.set(key, c);
       return json({ success: true });
@@ -121,6 +122,7 @@ export class Hub {
         if (k in d) plan[k] = d[k];
       const c = this.clients.get(key) || {};
       c.plan = plan; c.seen = Date.now();
+      await this.ctx.storage.put("plan:" + key, plan);
       this.clients.set(key, c);
       return json({ success: true });
     }
