@@ -88,10 +88,19 @@ public class PilotService extends Service {
 
                 if (pos != null) {
                     try {
+                        // The sim sends no model/livery/squawk; the pilot types them in the app.
+                        putIf(pos, "airplane_model", Api.field(this, "model"));
+                        putIf(pos, "airplane_livery", Api.field(this, "livery"));
+                        String sqk = Api.field(this, "squawk");
+                        if (sqk.matches("\\d{4}")) pos.put("squawk", sqk);
                         // Callsign lives in the flight plan; the app sends it once, so do we.
                         if (!planSent) {
                             JSONObject plan = new JSONObject();
                             if (!callsign.isEmpty()) plan.put("callsign", callsign);
+                            putIf(plan, "departure_airport", Api.field(this, "dep").toUpperCase());
+                            putIf(plan, "arrival_airport", Api.field(this, "arr").toUpperCase());
+                            putIf(plan, "cruise_altitude", Api.field(this, "cruise"));
+                            putIf(plan, "flightplan_route", Api.field(this, "route"));
                             int pc = Api.send("PUT", "/api/flightplan", plan.toString(), key);
                             planSent = pc < 400;
                         }
@@ -118,6 +127,10 @@ public class PilotService extends Service {
             stopForeground(true);
             stopSelf();
         }
+    }
+
+    private static void putIf(JSONObject o, String k, String v) throws Exception {
+        if (v != null && !v.trim().isEmpty()) o.put(k, v.trim());
     }
 
     @Override
