@@ -79,7 +79,7 @@ export class Hub {
       return json({ aircraft: out, traffic: out, truncated, active_clients: this.clients.size });
     }
 
-    if (m === "POST" && p === "/api/position") {
+    if ((m === "POST" || m === "PUT") && p === "/api/position") {
       let d = await request.json().catch(() => ({}));
       if (d.position && typeof d.position === "object") d = d.position;
       const lat = pick(d, "latitude", "lat"), lon = pick(d, "longitude", "lon", "lng");
@@ -108,7 +108,7 @@ export class Hub {
       return json({ success: true });
     }
 
-    if (m === "POST" && p === "/api/flightplan") {
+    if ((m === "POST" || m === "PUT") && p === "/api/flightplan") {
       let d = await request.json().catch(() => ({}));
       if (d.flightplan && typeof d.flightplan === "object") d = d.flightplan;
       const plan = {};
