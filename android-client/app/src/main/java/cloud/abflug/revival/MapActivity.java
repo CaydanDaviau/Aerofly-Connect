@@ -21,7 +21,12 @@ import android.view.WindowManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
+import android.view.View;
+import android.webkit.WebResourceError;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebViewClient;
+import android.widget.FrameLayout;
 
 import java.util.Locale;
 
@@ -31,6 +36,8 @@ public class MapActivity extends Activity {
     private final Handler ui = new Handler();
     private Runnable feed;
     private volatile boolean pageReady;
+    private View err;
+    private boolean failed;
 
     @Override
     protected void onCreate(Bundle b) {
@@ -44,13 +51,39 @@ public class MapActivity extends Activity {
         s.setCacheMode(WebSettings.LOAD_DEFAULT);
         web.addJavascriptInterface(new Bridge(), "Android");
         web.setWebViewClient(new WebViewClient() {
-            @Override public void onPageFinished(WebView v, String url) { pageReady = true; }
+            @Override public void onPageFinished(WebView v, String url) { if (!failed) pageReady = true; }
+            @Override public void onReceivedError(WebView v, WebResourceRequest r, WebResourceError e) {
+                if (r.isForMainFrame()) showError();
+            }
+            @Override public void onReceivedHttpError(WebView v, WebResourceRequest r, WebResourceResponse e) {
+                if (r.isForMainFrame() && e.getStatusCode() >= 500) showError();
+            }
         });
-        setContentView(web);
-        web.loadUrl(BuildConfig.SERVER_URL + "/map?key=" + Api.key(this));
+        err = ErrorPane.build(this, new Runnable() { @Override public void run() { retry(); } },
+                new Runnable() { @Override public void run() { finish(); } });
+        FrameLayout root = new FrameLayout(this);
+        root.addView(web);
+        root.addView(err);
+        setContentView(root);
+        web.loadUrl(mapUrl());
     }
 
     private boolean pipOnStart;
+
+    private String mapUrl() { return BuildConfig.SERVER_URL + "/map?key=" + Api.key(this); }
+
+    private void showError() {
+        failed = true; pageReady = false;
+        web.setVisibility(View.INVISIBLE);
+        err.setVisibility(View.VISIBLE);
+    }
+
+    private void retry() {
+        failed = false;
+        err.setVisibility(View.GONE);
+        web.setVisibility(View.VISIBLE);
+        web.loadUrl(mapUrl());
+    }
 
     @Override
     protected void onNewIntent(android.content.Intent it) {
