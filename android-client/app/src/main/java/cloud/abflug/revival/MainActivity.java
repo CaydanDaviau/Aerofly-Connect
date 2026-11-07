@@ -3,6 +3,9 @@ package cloud.abflug.revival;
 import android.Manifest;
 import android.app.Activity;
 import android.content.Intent;
+import android.database.Cursor;
+import android.net.Uri;
+import android.provider.OpenableColumns;
 import android.content.pm.PackageManager;
 import android.graphics.Typeface;
 import android.os.Build;
@@ -10,9 +13,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.speech.tts.TextToSpeech;
 import android.speech.tts.Voice;
-import android.text.Editable;
 import android.text.InputType;
-import android.text.TextWatcher;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.AdapterView;
@@ -28,6 +29,11 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -142,51 +148,42 @@ public class MainActivity extends Activity {
         root.addView(voiceRow());
         root.addView(rateRow());
 
-        // ----- Background radio stream -----
+        // ----- Background radio (loops an audio file picked from the phone) -----
         TextView hdr = text(Api.t(this, "Background radio", "Rádio de fundo"), 18, true);
         hdr.setPadding(0, pad, 0, 0);
         root.addView(hdr);
 
         Switch st = new Switch(this);
-        st.setText(Api.t(this, "Play radio stream (Pilot and Controller)", "Tocar rádio (Piloto e Controlador)"));
+        st.setText(Api.t(this, "Play background radio (Pilot and Controller)", "Tocar rádio de fundo (Piloto e Controlador)"));
         st.setTextSize(16);
         st.setPadding(0, pad / 2, 0, pad / 4);
-        st.setChecked(Api.streamOn(this));
+        st.setChecked(Api.radioOn(this));
         st.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             @Override public void onCheckedChanged(CompoundButton b, boolean on) {
-                Api.setStreamOn(MainActivity.this, on);
-                StreamPlayer.settingsChanged(MainActivity.this);
+                Api.setRadioOn(MainActivity.this, on);
+                RadioPlayer.settingsChanged(MainActivity.this);
             }
         });
         root.addView(st);
 
-        TextView ul = text(Api.t(this, "Stream URL (paste an MP3 stream link)", "URL do stream (cole um link de stream MP3)"), 13, false);
-        ul.setPadding(0, pad / 4, 0, 0);
-        root.addView(ul);
-        EditText url = new EditText(this);
-        url.setSingleLine(true);
-        url.setHint("http://.../stream");
-        url.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
-        url.setText(Api.streamUrl(this));
-        url.addTextChangedListener(new TextWatcher() {
-            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
-            @Override public void onTextChanged(CharSequence s, int a, int b, int c) { }
-            @Override public void afterTextChanged(Editable s) { Api.setStreamUrl(MainActivity.this, s.toString().trim()); }
+        radioFileLabel = text("", 13, false);
+        radioFileLabel.setPadding(0, pad / 4, 0, 0);
+        showRadioName();
+        root.addView(radioFileLabel);
+        Button pickBtn = new Button(this);
+        pickBtn.setText(Api.t(this, "Choose audio file", "Escolher arquivo de áudio"));
+        pickBtn.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { pickRadioFile(); }
         });
-        url.setOnFocusChangeListener(new View.OnFocusChangeListener() {
-            @Override public void onFocusChange(View v, boolean has) {
-                if (!has) StreamPlayer.settingsChanged(MainActivity.this);
-            }
-        });
-        root.addView(url);
+        root.addView(pickBtn);
 
         root.addView(volRow(Api.t(this, "Volume - Pilot", "Volume - Piloto"), Api.volPilot(this), true));
         root.addView(volRow(Api.t(this, "Volume - Controller", "Volume - Controlador"), Api.volCtl(this), false));
 
         testBtn = new Button(this);
-        testBtn.setText(streamTesting ? Api.t(this, "Stop test", "Parar teste") : Api.t(this, "Test stream", "Testar stream"));
+        testBtn.setText(radioTesting ? Api.t(this, "Stop test", "Parar teste") : Api.t(this, "Test radio", "Testar rádio"));
         testBtn.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) { toggleStreamTest(); }
+            @Override public void onClick(View v) { toggleRadioTest(); }
         });
         root.addView(testBtn);
 
@@ -195,18 +192,18 @@ public class MainActivity extends Activity {
         setContentView(sv);
     }
 
-    // ---------- Settings helpers: voice picker, speed, stream test ----------
+    // ---------- Settings helpers: voice picker, speed, radio file + test ----------
     private Spinner voiceSpinner;
     private TextToSpeech voiceTts;
     private final List<String> voiceNames = new ArrayList<String>();
     private Button testBtn;
-    private boolean streamTesting;
+    private boolean radioTesting;
 
-    /** Releases everything the Settings screen holds (voice list engine, stream test). */
+    /** Releases everything the Settings screen holds (voice list engine, radio test). */
     private void leaveSettings() {
         closeVoiceTts();
         voiceSpinner = null;
-        if (streamTesting) { streamTesting = false; StreamPlayer.stop("test"); }
+        if (radioTesting) { radioTesting = false; RadioPlayer.stop("test"); }
         testBtn = null;
     }
 
@@ -329,7 +326,7 @@ public class MainActivity extends Activity {
             @Override public void onProgressChanged(SeekBar s, int p, boolean user) {
                 l.setText(label + ": " + p + "%");
                 if (pilot) Api.setVolPilot(MainActivity.this, p); else Api.setVolCtl(MainActivity.this, p);
-                StreamPlayer.refreshVolume();
+                RadioPlayer.refreshVolume();
             }
             @Override public void onStartTrackingTouch(SeekBar s) { }
             @Override public void onStopTrackingTouch(SeekBar s) { }
@@ -338,20 +335,98 @@ public class MainActivity extends Activity {
         return row;
     }
 
-    /** Plays the stream right here so a pasted URL can be checked without starting a flight. */
-    private void toggleStreamTest() {
-        streamTesting = !streamTesting;
-        if (streamTesting) {
-            StreamPlayer.start(this, "test");
+    private static final int REQ_RADIO = 77;
+    private static final long MAX_RADIO_BYTES = 100L * 1024 * 1024;
+    private TextView radioFileLabel;
+
+    private void showRadioName() {
+        if (radioFileLabel == null) return;
+        String n = Api.radioName(this);
+        boolean has = Api.radioFile(this).exists() && !n.isEmpty();
+        radioFileLabel.setText(Api.t(this, "Audio file: ", "Arquivo de áudio: ")
+                + (has ? n : Api.t(this, "(none chosen)", "(nenhum escolhido)")));
+    }
+
+    private void pickRadioFile() {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.setType("audio/*");
+        startActivityForResult(i, REQ_RADIO);
+    }
+
+    @Override
+    protected void onActivityResult(int req, int res, Intent data) {
+        super.onActivityResult(req, res, data);
+        if (req != REQ_RADIO || res != RESULT_OK || data == null || data.getData() == null) return;
+        final Uri uri = data.getData();
+        final android.content.Context app = getApplicationContext();
+        Toast.makeText(this, Api.t(this, "Loading audio file...", "Carregando arquivo de áudio..."), Toast.LENGTH_SHORT).show();
+        new Thread(new Runnable() {
+            @Override public void run() {
+                String name = "audio";
+                try {
+                    Cursor c = app.getContentResolver().query(uri, new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null);
+                    if (c != null) { try { if (c.moveToFirst() && !c.isNull(0)) name = c.getString(0); } finally { c.close(); } }
+                } catch (Throwable ignored) { }
+                File dst = Api.radioFile(app);
+                File tmp = new File(dst.getPath() + ".tmp");
+                boolean ok = false;
+                String why = "";
+                try {
+                    InputStream in = app.getContentResolver().openInputStream(uri);
+                    OutputStream out = new FileOutputStream(tmp);
+                    try {
+                        byte[] buf = new byte[65536];
+                        long total = 0;
+                        int n;
+                        while ((n = in.read(buf)) > 0) {
+                            total += n;
+                            if (total > MAX_RADIO_BYTES) throw new IOException("too big");
+                            out.write(buf, 0, n);
+                        }
+                    } finally {
+                        try { in.close(); } catch (Throwable ignored) { }
+                        out.close();
+                    }
+                    dst.delete();
+                    ok = tmp.renameTo(dst);
+                } catch (Throwable e) {
+                    why = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+                }
+                if (!ok) tmp.delete();
+                final boolean fok = ok;
+                final String fname = name, fwhy = why;
+                ui.post(new Runnable() {
+                    @Override public void run() {
+                        if (fok) {
+                            Api.setRadioName(app, fname);
+                            RadioPlayer.settingsChanged(app);
+                            showRadioName();
+                            Toast.makeText(app, Api.t(app, "Audio file ready", "Arquivo de áudio pronto"), Toast.LENGTH_SHORT).show();
+                        } else {
+                            Toast.makeText(app, Api.t(app, "Could not load the file", "Não foi possível carregar o arquivo")
+                                    + (fwhy.equals("too big") ? Api.t(app, " (over 100 MB)", " (mais de 100 MB)") : ""), Toast.LENGTH_LONG).show();
+                        }
+                    }
+                });
+            }
+        }, "radio-copy").start();
+    }
+
+    /** Plays the radio right here so the chosen file can be checked without starting a flight. */
+    private void toggleRadioTest() {
+        radioTesting = !radioTesting;
+        if (radioTesting) {
+            RadioPlayer.start(this, "test");
             testBtn.setText(Api.t(this, "Stop test", "Parar teste"));
             ui.postDelayed(new Runnable() {
                 @Override public void run() {
-                    if (streamTesting) Toast.makeText(MainActivity.this, "Radio: " + StreamPlayer.state, Toast.LENGTH_SHORT).show();
+                    if (radioTesting) Toast.makeText(MainActivity.this, "Radio: " + RadioPlayer.state, Toast.LENGTH_SHORT).show();
                 }
             }, 4000);
         } else {
-            StreamPlayer.stop("test");
-            testBtn.setText(Api.t(this, "Test stream", "Testar stream"));
+            RadioPlayer.stop("test");
+            testBtn.setText(Api.t(this, "Test radio", "Testar rádio"));
         }
     }
 
@@ -491,7 +566,7 @@ public class MainActivity extends Activity {
                 + Api.t(this, "\nSim link: ", "\nLink do sim: ") + PilotService.simState
                 + Api.t(this, "\nServer: ", "\nServidor: ") + PilotService.serverState
                 + Api.t(this, "\nUploads: ", "\nEnvios: ") + PilotService.okCount + " ok / " + PilotService.failCount + Api.t(this, " failed", " falhas")
-                + (Api.streamOn(this) ? "\nRadio: " + StreamPlayer.state : "")
+                + (Api.radioOn(this) ? "\nRadio: " + RadioPlayer.state : "")
                 + Api.t(this, "\nKey: ", "\nChave: ") + Api.key(this)
                 + Api.t(this, "\n\nLast sim line:\n", "\n\nÚltima linha do sim:\n") + (raw.isEmpty() ? Api.t(this, "(none yet)", "(nenhuma ainda)") : raw));
         // Skip identical text so a text selection is not cleared by the 1 s refresh.

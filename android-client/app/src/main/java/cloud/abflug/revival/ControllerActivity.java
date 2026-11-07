@@ -39,12 +39,12 @@ public class ControllerActivity extends Activity {
         root.addView(err);
         setContentView(root);
         web.loadUrl(url());
-        StreamPlayer.start(this, "ctl");   // background radio (only plays if enabled in Settings)
+        RadioPlayer.start(this, "ctl");   // background radio (only plays if enabled in Settings)
     }
 
     @Override
     protected void onDestroy() {
-        StreamPlayer.stop("ctl");
+        RadioPlayer.stop("ctl");
         super.onDestroy();
     }
 

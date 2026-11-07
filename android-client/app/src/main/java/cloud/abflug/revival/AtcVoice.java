@@ -254,12 +254,12 @@ final class AtcVoice {
                     .setTransferMode(AudioTrack.MODE_STATIC)
                     .setBufferSizeInBytes(bytes).build();
             t.write(pcm, 0, pcm.length);
-            StreamPlayer.duck(true);   // background radio goes quiet while ATC speaks
+            RadioPlayer.duck(true);   // background radio goes quiet while ATC speaks
             t.play();
             fireStart(onStart);
             Thread.sleep(pcm.length * 1000L / rate + 250);
         } finally {
-            StreamPlayer.duck(false);
+            RadioPlayer.duck(false);
             if (t != null) t.release();
             am.abandonAudioFocusRequest(fr);
         }

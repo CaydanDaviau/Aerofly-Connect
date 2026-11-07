@@ -79,11 +79,13 @@ final class Api {
     static String voiceName(Context c) { return prefs(c).getString("voice_name", ""); }
     static void setVoiceName(Context c, String n) { prefs(c).edit().putString("voice_name", n).apply(); }
 
-    /** Background radio stream: on/off, URL, volume (0-100) for Pilot and Controller. */
-    static boolean streamOn(Context c) { return prefs(c).getBoolean("stream_on", false); }
-    static void setStreamOn(Context c, boolean on) { prefs(c).edit().putBoolean("stream_on", on).apply(); }
-    static String streamUrl(Context c) { return prefs(c).getString("stream_url", "").trim(); }
-    static void setStreamUrl(Context c, String u) { prefs(c).edit().putString("stream_url", u).apply(); }
+    /** Background radio: on/off and the chosen audio file's display name (the file itself is copied into app storage). */
+    static boolean radioOn(Context c) { return prefs(c).getBoolean("radio_on", false); }
+    static void setRadioOn(Context c, boolean on) { prefs(c).edit().putBoolean("radio_on", on).apply(); }
+    static String radioName(Context c) { return prefs(c).getString("radio_name", ""); }
+    static void setRadioName(Context c, String n) { prefs(c).edit().putString("radio_name", n).apply(); }
+    static java.io.File radioFile(Context c) { return new java.io.File(c.getFilesDir(), "radio_loop"); }
+    /** Volume (0-100) for Pilot and Controller. */
     static int volPilot(Context c) { return prefs(c).getInt("vol_pilot", 25); }
     static void setVolPilot(Context c, int v) { prefs(c).edit().putInt("vol_pilot", v).apply(); }
     static int volCtl(Context c) { return prefs(c).getInt("vol_ctl", 50); }

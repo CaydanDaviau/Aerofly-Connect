@@ -7,17 +7,19 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.PowerManager;
 
+import java.io.File;
+import java.io.FileInputStream;
 import java.util.HashSet;
 import java.util.Set;
 
 /**
- * Background radio stream (a URL the user pastes in Settings). One shared player for the screens that
- * want it ("pilot" service, "ctl" Controller screen, "test" Settings button). It never takes audio
- * focus, so it plays alongside the sim and Discord. Reconnects every 5 s when the stream drops.
+ * Background radio: loops an audio file the user picked in Settings (copied into app storage).
+ * One shared player for the screens that want it ("pilot" service, "ctl" Controller screen, "test"
+ * Settings button). It never takes audio focus, so it plays alongside the sim and Discord.
  * All work happens on the main thread; the public methods can be called from any thread.
  */
-final class StreamPlayer {
-    private StreamPlayer() {}
+final class RadioPlayer {
+    private RadioPlayer() {}
 
     /** Shown in the Pilot status. */
     static volatile String state = "off";
@@ -27,11 +29,8 @@ final class StreamPlayer {
     private static Context app;
     private static MediaPlayer mp;
     private static boolean ducked;
-    private static final Runnable reopen = new Runnable() {
-        @Override public void run() { open(); }
-    };
 
-    /** A screen wants the radio. Plays if the stream is enabled and has a URL. */
+    /** A screen wants the radio. Plays if it is enabled and a file is chosen. */
     static void start(Context c, final String owner) {
         final Context a = c.getApplicationContext();
         h.post(new Runnable() {
@@ -49,7 +48,7 @@ final class StreamPlayer {
         });
     }
 
-    /** Settings changed (on/off or URL): reconnect if someone is listening. */
+    /** Settings changed (on/off or a new file): restart if someone is listening. */
     static void settingsChanged(Context c) {
         final Context a = c.getApplicationContext();
         h.post(new Runnable() {
@@ -66,13 +65,12 @@ final class StreamPlayer {
         h.post(new Runnable() { @Override public void run() { applyVolume(); } });
     }
 
-    /** Lowers the stream while a real ATC message is spoken. */
+    /** Lowers the radio while a real ATC message is spoken. */
     static void duck(final boolean on) {
         h.post(new Runnable() { @Override public void run() { ducked = on; applyVolume(); } });
     }
 
     private static void release() {
-        h.removeCallbacks(reopen);
         MediaPlayer m = mp;
         mp = null;
         if (m != null) {
@@ -82,18 +80,21 @@ final class StreamPlayer {
     }
 
     private static void open() {
-        h.removeCallbacks(reopen);
         if (mp != null || owners.isEmpty() || app == null) return;
-        String url = Api.streamUrl(app);
-        if (!Api.streamOn(app) || url.isEmpty()) { state = "off"; return; }
+        File f = Api.radioFile(app);
+        if (!Api.radioOn(app)) { state = "off"; return; }
+        if (!f.exists() || f.length() == 0) { state = "no audio file chosen"; return; }
         final MediaPlayer m = new MediaPlayer();
         mp = m;
+        FileInputStream in = null;
         try {
             m.setAudioAttributes(new AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_MEDIA)
                     .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build());
             m.setWakeMode(app, PowerManager.PARTIAL_WAKE_LOCK);
-            m.setDataSource(url);
+            in = new FileInputStream(f);
+            m.setDataSource(in.getFD());
+            m.setLooping(true);
             m.setOnPreparedListener(new MediaPlayer.OnPreparedListener() {
                 @Override public void onPrepared(MediaPlayer p) {
                     if (mp != p) return;
@@ -104,25 +105,18 @@ final class StreamPlayer {
             });
             m.setOnErrorListener(new MediaPlayer.OnErrorListener() {
                 @Override public boolean onError(MediaPlayer p, int what, int extra) {
-                    fail(p, "error " + what + "/" + extra);
+                    if (mp == p) { release(); state = "error " + what + "/" + extra + " (can't play this file)"; }
                     return true;
                 }
             });
-            m.setOnCompletionListener(new MediaPlayer.OnCompletionListener() {
-                @Override public void onCompletion(MediaPlayer p) { fail(p, "stream ended"); }
-            });
-            state = "connecting...";
+            state = "loading...";
             m.prepareAsync();
         } catch (Throwable e) {
-            fail(m, e.getClass().getSimpleName());
+            release();
+            state = "error: " + e.getClass().getSimpleName();
+        } finally {
+            if (in != null) { try { in.close(); } catch (Throwable ignored) { } }
         }
-    }
-
-    private static void fail(MediaPlayer p, String why) {
-        if (mp != p) return;
-        release();
-        state = why + ", retrying";
-        if (!owners.isEmpty()) h.postDelayed(reopen, 5000);
     }
 
     private static void applyVolume() {
