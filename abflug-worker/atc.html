@@ -81,7 +81,7 @@ input::placeholder{color:var(--dim)}
 (function(){
 var $=function(id){return document.getElementById(id)};
 var cv=$('radar'),g=cv.getContext('2d');
-var key='';try{key=localStorage.getItem('abflug_key')||''}catch(e){}
+var key='';try{key=new URLSearchParams(location.search).get('key')||localStorage.getItem('abflug_key')||''}catch(e){}
 var ac=[],sel=null,center={lat:0,lon:0},manual=false,centroidDone=false,nmpp=0.25,W=300,H=300;
 var trails={},ranges=[1,2,5,10,25,50,100,250,500,1000];
 
