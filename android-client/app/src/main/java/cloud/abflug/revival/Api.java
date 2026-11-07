@@ -53,8 +53,20 @@ final class Api {
         prefs(c).edit().putString("f_" + name, v).apply();
     }
 
+    /** HTTP status code and (small) response body. */
+    static final class Resp {
+        final int code;
+        final String body;
+        Resp(int code, String body) { this.code = code; this.body = body; }
+    }
+
     /** Returns HTTP status code; body is ignored. Throws on network failure. */
     static int send(String method, String path, String json, String key) throws Exception {
+        return request(method, path, json, key).code;
+    }
+
+    /** Like send, but also returns the response body. Throws on network failure. */
+    static Resp request(String method, String path, String json, String key) throws Exception {
         HttpURLConnection c = (HttpURLConnection) new URL(BuildConfig.SERVER_URL + path).openConnection();
         try {
             c.setRequestMethod(method);
@@ -70,12 +82,14 @@ final class Api {
             }
             int code = c.getResponseCode();
             InputStream in = code < 400 ? c.getInputStream() : c.getErrorStream();
+            StringBuilder sb = new StringBuilder();
             if (in != null) {
-                BufferedReader r = new BufferedReader(new InputStreamReader(in));
-                while (r.readLine() != null) { /* drain */ }
+                BufferedReader r = new BufferedReader(new InputStreamReader(in, "UTF-8"));
+                String ln;
+                while ((ln = r.readLine()) != null && sb.length() < 65536) sb.append(ln);
                 r.close();
             }
-            return code;
+            return new Resp(code, sb.toString());
         } finally {
             c.disconnect();
         }
