@@ -10,6 +10,7 @@ import android.content.Intent;
 import android.os.IBinder;
 import android.os.PowerManager;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 /** Foreground service: reads the sim every 3 s and uploads the position to the Worker. */
@@ -70,6 +71,7 @@ public class PilotService extends Service {
 
         NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         nm.createNotificationChannel(new NotificationChannel("pilot", "Flight upload", NotificationManager.IMPORTANCE_LOW));
+        nm.createNotificationChannel(new NotificationChannel("atc", "ATC messages", NotificationManager.IMPORTANCE_HIGH));
         Notification n = buildNotif(this);
         startForeground(1, n);
 
@@ -131,8 +133,12 @@ public class PilotService extends Service {
                             int pc = Api.send("PUT", "/api/flightplan", plan.toString(), key);
                             planSent = pc < 400;
                         }
-                        int code = Api.send("PUT", "/api/position", pos.toString(), key);
-                        if (code < 400) { okCount++; serverState = "OK (HTTP " + code + ")"; }
+                        Api.Resp r = Api.request("PUT", "/api/position", pos.toString(), key);
+                        int code = r.code;
+                        if (code < 400) {
+                            okCount++; serverState = "OK (HTTP " + code + ")";
+                            showMessages(r.body);
+                        }
                         else { failCount++; serverState = "HTTP " + code; }
                     } catch (Exception e) {
                         failCount++;
@@ -154,6 +160,42 @@ public class PilotService extends Service {
             stopForeground(true);
             stopSelf();
         }
+    }
+
+    private static int nextNid = 100;
+
+    /** The position response carries new ATC messages: one heads-up notification each. */
+    private void showMessages(String body) {
+        try {
+            JSONArray arr = new JSONObject(body).optJSONArray("messages");
+            if (arr == null) return;
+            NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject m = arr.getJSONObject(i);
+                String id = m.optString("id");
+                String text = m.optString("text");
+                if (id.isEmpty() || text.isEmpty()) continue;
+                int nid = nextNid++;
+                Notification.Builder b = new Notification.Builder(this, "atc")
+                        .setContentTitle("ATC")
+                        .setContentText(text)
+                        .setStyle(new Notification.BigTextStyle().bigText(text))
+                        .setSmallIcon(android.R.drawable.ic_dialog_info)
+                        .setAutoCancel(true)
+                        .addAction(new Notification.Action.Builder(null, "Wilco", replyIntent(id, "wilco", nid)).build())
+                        .addAction(new Notification.Action.Builder(null, "Unable", replyIntent(id, "unable", nid)).build());
+                nm.notify(nid, b.build());
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    private PendingIntent replyIntent(String id, String reply, int nid) {
+        Intent i = new Intent(this, ReplyReceiver.class).setAction(ReplyReceiver.ACTION)
+                .putExtra("id", id).putExtra("reply", reply).putExtra("nid", nid);
+        // Distinct request code per notification and button, otherwise extras get overwritten.
+        return PendingIntent.getBroadcast(this, nid * 2 + (reply.equals("wilco") ? 0 : 1), i,
+                PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
     }
 
     private static void putIf(JSONObject o, String k, String v) throws Exception {

@@ -66,3 +66,31 @@ hub = new Hub(ctx); await new Promise(r => setTimeout(r, 0));   // mock does not
 console.log("tower survives restart:", (await call("GET", "/api/traffic?lat=-15.8&lon=-47.9&radius_miles=50")).includes("ATC_SBBR"));
 console.log("tower delete:", await call("DELETE", "/api/atc/tower?name=sbbr", null, "ctl"));
 console.log("tower gone:", !(await call("GET", "/api/traffic?lat=-15.8&lon=-47.9&radius_miles=50")).includes("ATC_SBBR"));
+
+// ATC messages (stage 3)
+const ok = (name, v) => console.log("msg " + name + ":", v ? "PASS" : "FAIL");
+await call("PUT", "/api/flightplan", { callsign: "MSG1" }, "mp");
+await call("PUT", "/api/position", { latitude: 10, longitude: 10 }, "mp");
+await call("PUT", "/api/position", { latitude: 10, longitude: 10 }, "other");
+const mtr = JSON.parse((await call("GET", "/api/traffic?lat=10&lon=10&radius_miles=50")).slice(4)).aircraft;
+const micao = mtr.find(a => a.callsign === "MSG1").icao_address;
+const sent = JSON.parse((await call("PUT", "/api/atc/message", { icao_address: micao, text: "Descend FL100" }, "ctl")).slice(4));
+ok("send", sent.success && sent.id);
+ok("unknown aircraft 404", (await call("PUT", "/api/atc/message", { icao_address: "FFFFFF", text: "x" }, "ctl")).startsWith("404"));
+ok("empty 400", (await call("PUT", "/api/atc/message", { icao_address: micao, text: "  " }, "ctl")).startsWith("400"));
+const status = async () => JSON.parse((await call("GET", "/api/traffic?lat=10&lon=10&radius_miles=50")).slice(4)).atc_messages.find(m => m.id === sent.id).status;
+ok("status sent", await status() === "sent");
+const otherResp = JSON.parse((await call("PUT", "/api/position", { latitude: 10, longitude: 10 }, "other")).slice(4));
+ok("other pilot gets nothing", otherResp.messages.length === 0);
+const p1 = JSON.parse((await call("PUT", "/api/position", { latitude: 10, longitude: 10 }, "mp")).slice(4));
+ok("pilot gets message", p1.messages.length === 1 && p1.messages[0].text === "Descend FL100" && p1.messages[0].id === sent.id);
+ok("status delivered", await status() === "delivered");
+const p2 = JSON.parse((await call("PUT", "/api/position", { latitude: 10, longitude: 10 }, "mp")).slice(4));
+ok("not delivered twice", p2.messages.length === 0);
+ok("other pilot cannot reply", (await call("PUT", "/api/messages/reply", { id: sent.id, reply: "wilco" }, "other")).startsWith("404"));
+ok("bad reply 400", (await call("PUT", "/api/messages/reply", { id: sent.id, reply: "maybe" }, "mp")).startsWith("400"));
+ok("wilco", (await call("PUT", "/api/messages/reply", { id: sent.id, reply: "wilco" }, "mp")).startsWith("200") && await status() === "wilco");
+// squawk assignment also creates a message
+await call("PUT", "/api/atc/squawk", { icao_address: micao, squawk: "4321" }, "ctl");
+const p3 = JSON.parse((await call("PUT", "/api/position", { latitude: 10, longitude: 10 }, "mp")).slice(4));
+ok("squawk message", p3.messages.length === 1 && p3.messages[0].text === "Squawk 4321" && p3.messages[0].kind === "squawk");

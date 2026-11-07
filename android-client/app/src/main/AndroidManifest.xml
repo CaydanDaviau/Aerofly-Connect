@@ -29,6 +29,7 @@
             android:supportsPictureInPicture="true"
             android:resizeableActivity="true"
             android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|keyboardHidden" />
+        <receiver android:name=".ReplyReceiver" android:exported="false" />
         <service
             android:name=".PilotService"
             android:exported="false"
