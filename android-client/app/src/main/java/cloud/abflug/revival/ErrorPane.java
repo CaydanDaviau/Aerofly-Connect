@@ -15,7 +15,7 @@ final class ErrorPane {
         LinearLayout l = new LinearLayout(c);
         l.setOrientation(LinearLayout.VERTICAL);
         l.setGravity(Gravity.CENTER);
-        l.setBackgroundColor(0xFF14181E);
+        l.setBackgroundColor(0xFF152238);
         int p = (int) (24 * c.getResources().getDisplayMetrics().density);
         l.setPadding(p, p, p, p);
         TextView t = new TextView(c);

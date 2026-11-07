@@ -15,7 +15,7 @@ public class ControllerActivity extends Activity {
     private WebView web;
     private View err;
     private boolean failed;
-    private static final String URL = BuildConfig.SERVER_URL + "/atc";
+    private String url() { return BuildConfig.SERVER_URL + "/atc?key=" + Api.key(this); }
 
     @Override
     protected void onCreate(Bundle b) {
@@ -38,7 +38,7 @@ public class ControllerActivity extends Activity {
         root.addView(web);
         root.addView(err);
         setContentView(root);
-        web.loadUrl(URL);
+        web.loadUrl(url());
     }
 
     private void showError() {
@@ -51,7 +51,7 @@ public class ControllerActivity extends Activity {
         failed = false;
         err.setVisibility(View.GONE);
         web.setVisibility(View.VISIBLE);
-        web.loadUrl(URL);
+        web.loadUrl(url());
     }
 
     @Override
