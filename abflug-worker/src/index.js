@@ -160,7 +160,7 @@ export class Hub {
       const target = [...this.clients.values()].find(c => c.pos && c.pos.icao_address === icao);
       if (!target) return json({ error: "aircraft not found" }, 404);
       if (!text) return json({ error: "empty message" }, 400);
-      return json({ success: true, id: this.addMsg(target, text, "msg").id });
+      return json({ success: true, id: this.addMsg(target, text, "msg", { urgent: d.urgent === true }).id });
     }
     if ((m === "PUT" || m === "POST") && p === "/api/messages/reply") {
       const d = await request.json().catch(() => ({}));
@@ -216,7 +216,7 @@ export class Hub {
       out.sort((a, b) => a.distance_miles - b.distance_miles);
       const truncated = out.length > MAX_TRAFFIC;
       out = out.slice(0, MAX_TRAFFIC);
-      const atc_messages = [...this.msgs.values()].map(x => ({ id: x.id, icao_address: x.icao, text: x.text, kind: x.kind, status: x.status, at: x.at }));
+      const atc_messages = [...this.msgs.values()].map(x => ({ id: x.id, icao_address: x.icao, text: x.text, kind: x.kind, urgent: !!x.urgent, status: x.status, at: x.at }));
       return json({ aircraft: out, traffic: out, truncated, active_clients: this.clients.size, atc_messages });
     }
 
@@ -253,7 +253,7 @@ export class Hub {
       c.pos = pos; c.seen = Date.now();
       this.clients.set(key, c);
       const messages = [];
-      for (const x of this.msgs.values()) if (x.icao === icao && x.status === "sent") { x.status = "delivered"; messages.push({ id: x.id, text: x.text, kind: x.kind, at: x.at }); }
+      for (const x of this.msgs.values()) if (x.icao === icao && x.status === "sent") { x.status = "delivered"; messages.push({ id: x.id, text: x.text, kind: x.kind, urgent: !!x.urgent, at: x.at }); }
       return json({ success: true, messages });
     }
 

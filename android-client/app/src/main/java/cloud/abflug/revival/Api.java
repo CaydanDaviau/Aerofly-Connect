@@ -53,6 +53,25 @@ final class Api {
         prefs(c).edit().putString("f_" + name, v).apply();
     }
 
+    private static String deviceLang() {
+        return java.util.Locale.getDefault().getLanguage().equals("pt") ? "pt" : "en";
+    }
+
+    /** App UI language: "en" or "pt" (Português BR). Defaults to the device language. */
+    static String uiLang(Context c) { return prefs(c).getString("ui_lang", deviceLang()); }
+    static void setUiLang(Context c, String l) { prefs(c).edit().putString("ui_lang", l).apply(); }
+
+    /** Language of the spoken ATC messages: "en" or "pt". */
+    static String voiceLang(Context c) { return prefs(c).getString("voice_lang", deviceLang()); }
+    static void setVoiceLang(Context c, String l) { prefs(c).edit().putString("voice_lang", l).apply(); }
+
+    /** Speak ATC messages (on by default). */
+    static boolean speakOn(Context c) { return prefs(c).getBoolean("speak", true); }
+    static void setSpeakOn(Context c, boolean on) { prefs(c).edit().putBoolean("speak", on).apply(); }
+
+    /** Picks the English or Portuguese text according to the app UI language. */
+    static String t(Context c, String en, String pt) { return uiLang(c).equals("pt") ? pt : en; }
+
     /** HTTP status code and (small) response body. */
     static final class Resp {
         final int code;

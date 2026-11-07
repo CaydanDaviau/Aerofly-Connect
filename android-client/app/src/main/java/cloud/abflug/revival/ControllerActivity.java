@@ -15,7 +15,7 @@ public class ControllerActivity extends Activity {
     private WebView web;
     private View err;
     private boolean failed;
-    private String url() { return BuildConfig.SERVER_URL + "/atc?key=" + Api.key(this); }
+    private String url() { return BuildConfig.SERVER_URL + "/atc?key=" + Api.key(this) + "&lang=" + Api.uiLang(this); }
 
     @Override
     protected void onCreate(Bundle b) {

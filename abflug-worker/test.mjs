@@ -94,3 +94,10 @@ ok("wilco", (await call("PUT", "/api/messages/reply", { id: sent.id, reply: "wil
 await call("PUT", "/api/atc/squawk", { icao_address: micao, squawk: "4321" }, "ctl");
 const p3 = JSON.parse((await call("PUT", "/api/position", { latitude: 10, longitude: 10 }, "mp")).slice(4));
 ok("squawk message", p3.messages.length === 1 && p3.messages[0].text === "Squawk 4321" && p3.messages[0].kind === "squawk");
+ok("squawk not urgent", p3.messages[0].urgent === false);
+// urgent flag
+await call("PUT", "/api/atc/message", { icao_address: micao, text: "Traffic!", urgent: true }, "ctl");
+const p4 = JSON.parse((await call("PUT", "/api/position", { latitude: 10, longitude: 10 }, "mp")).slice(4));
+ok("urgent flag delivered", p4.messages.length === 1 && p4.messages[0].urgent === true);
+const trf = JSON.parse((await call("GET", "/api/traffic?lat=10&lon=10&radius_miles=50")).slice(4)).atc_messages;
+ok("urgent in traffic", trf.some(m => m.text === "Traffic!" && m.urgent === true) && trf.find(m => m.id === sent.id).urgent === false);

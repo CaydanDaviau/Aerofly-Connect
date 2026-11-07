@@ -34,6 +34,7 @@ input::placeholder{color:var(--dim)}
 .ctl{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;align-items:center}
 .ctl input{width:84px;text-align:center;letter-spacing:.2em}
 .ctl input#msgin{flex:1 1 140px;width:auto;text-align:left;letter-spacing:0}
+.urg{display:flex;align-items:center;gap:4px;white-space:nowrap}.urg input{width:auto;letter-spacing:0}
 .mlog{font-size:12px;margin-top:4px;color:var(--dim2,#8aa)}.mlog b.wilco{color:#3dff7a}.mlog b.unable{color:#ff6b6b}
 #toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:var(--panel);border:1px solid var(--fg);padding:8px 14px;border-radius:6px;opacity:0;transition:opacity .2s;pointer-events:none}
 #toast.on{opacity:1}
@@ -54,7 +55,6 @@ input::placeholder{color:var(--dim)}
     <button id="ctrSel" title="Center scope on the selected aircraft">Center sel</button>
     <input id="ll" size="16" placeholder="lat, lon or ICAO" title="Center on coordinates or an airport code">
     <button id="llGo">Go</button>
-    <button id="keyBtn" title="Change API key">Key</button>
     <span id="rwStatus" class="m"></span>
     <span id="status">offline</span>
   </div>
@@ -83,6 +83,17 @@ input::placeholder{color:var(--dim)}
 (function(){
 var $=function(id){return document.getElementById(id)};
 var cv=$('radar'),g=cv.getContext('2d');
+var LANG=(new URLSearchParams(location.search).get('lang')||'')==='pt'?'pt':'en';
+function L(en,pt){return LANG==='pt'?pt:en}
+
+if(LANG==='pt'){document.documentElement.lang='pt';
+  var T={ctrSel:['Centralizar sel.'],llGo:['Ir'],twOpen:['Abrir torre'],keySave:['Conectar']};
+  Object.keys(T).forEach(function(k){var e=$(k);if(e)e.textContent=T[k][0]});
+  $('ll').placeholder='lat, lon ou ICAO';$('range').title='Alcance (nm)';
+  var tw=document.querySelector('#twrbox .cs');if(tw)tw.textContent='Torres';
+  var lp=document.querySelector('#login .m');if(lp)lp.textContent='Digite sua chave de API. Ela fica salva só neste navegador.';
+  $('keyIn').placeholder='Chave de API'}
+var urgent=false;
 var key='';try{key=new URLSearchParams(location.search).get('key')||localStorage.getItem('abflug_key')||''}catch(e){}
 var ac=[],msgs=[],sel=null,center={lat:0,lon:0},manual=false,centroidDone=false,nmpp=0.25,W=300,H=300;
 var trails={},ranges=[1,2,5,10,25,50,100,250,500,1000];
@@ -207,74 +218,74 @@ function pick(x,y){var best=null,bd=26;
 
 /* ---------- controls ---------- */
 $('ctrSel').onclick=function(){var a=ac.filter(function(x){return x.icao_address===sel})[0];
-  if(!a){toast('Select an aircraft first');return}center.lat=a.latitude;center.lon=a.longitude;manual=true;draw();renderStrips(true)};
+  if(!a){toast(L('Select an aircraft first','Selecione uma aeronave primeiro'));return}center.lat=a.latitude;center.lon=a.longitude;manual=true;draw();renderStrips(true)};
 $('llGo').onclick=function(){var raw=$('ll').value.trim().toUpperCase();
   if(/^[A-Z0-9]{3,4}$/.test(raw)){var ap=APT[raw];
     if(ap){center.lat=ap.lat;center.lon=ap.lon;manual=true;nmpp=6/(Math.min(W,H)/2);draw();renderStrips(true)}
     else toast(rwState==='ready'?'Unknown airport '+raw:'Airport data not loaded yet');return}
   var m=$('ll').value.match(/(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)/);
-  if(!m){toast('Use: lat, lon');return}center.lat=+m[1];center.lon=+m[2];manual=true;draw();renderStrips(true)};
-$('keyBtn').onclick=function(){showLogin('')};
+  if(!m){toast(L('Use: lat, lon','Use: lat, lon'));return}center.lat=+m[1];center.lon=+m[2];manual=true;draw();renderStrips(true)};
 $('keySave').onclick=function(){var k=$('keyIn').value.trim();if(!k)return;key=k;try{localStorage.setItem('abflug_key',k)}catch(e){}
   $('login').style.display='none';poll()};
 function showLogin(msg){$('keyErr').textContent=msg||'';$('keyIn').value='';$('login').style.display='flex'}
 
 /* ---------- strips ---------- */
 function renderStrips(force){
-  var f=document.activeElement;if(!force&&f&&(f.id==='sqin'||f.id==='msgin'))return;
+  var f=document.activeElement;if(!force&&f&&(f.id==='sqin'||f.id==='msgin'||f.id==='urg'))return;
   var list=ac.map(function(a){return{a:a,r:rel(a)}}).sort(function(x,y){return x.r.dist-y.r.dist});
-  if(!list.length){$('list').innerHTML='<div class="empty">No traffic.</div>';return}
+  if(!list.length){$('list').innerHTML='<div class="empty">'+L('No traffic.','Sem tráfego.')+'</div>';return}
   $('list').innerHTML=list.map(function(o){var a=o.a,r=o.r,id=a.icao_address,tw=isTwr(a),isSel=id===sel;
-    var asg=a.assigned_squawk||null,st=tw?'':(asg?'<span class="ok">SQ '+esc(asg)+'</span>':'<span class="warn">NO CODE &ndash; assign one</span>');
+    var asg=a.assigned_squawk||null,st=tw?'':(asg?'<span class="ok">SQ '+esc(asg)+'</span>':'<span class="warn">'+L('NO CODE &ndash; assign one','SEM CÓDIGO &ndash; atribua um')+'</span>');
     var route=[a.departure_airport,a.arrival_airport].filter(Boolean).map(esc).join(' &rarr; ');
     var cruise=a.cruise_altitude||a.cruise_altitude_ft||a.cruise_alt||'';
     var ctl=isSel&&!tw?'<div class="ctl"><input id="sqin" inputmode="numeric" maxlength="4" placeholder="'+(asg||'0000')+'" value="'+esc(asg||'')+'">'+
-      '<button data-act="set">Assign</button><button data-act="auto">Auto</button><button data-act="clear">Clear</button></div>'+
-      '<div class="ctl"><input id="msgin" maxlength="300" placeholder="Message to pilot"><button data-act="msg">Send</button></div>':'';
+      '<button data-act="set">'+L('Assign','Atribuir')+'</button><button data-act="auto">Auto</button><button data-act="clear">'+L('Clear','Limpar')+'</button></div>'+
+      '<div class="ctl"><input id="msgin" maxlength="300" placeholder="'+L('Message to pilot','Mensagem ao piloto')+'"><label class="urg"><input type="checkbox" id="urg"'+(urgent?' checked':'')+'> '+L('Urgent','Urgente')+'</label><button data-act="msg">'+L('Send','Enviar')+'</button></div>':'';
     var ml=msgs.filter(function(m){return m.icao_address===id}).slice(-3).map(function(m){return'<div class="mlog">&rsaquo; '+esc(m.text)+' &mdash; <b class="'+esc(m.status)+'">'+esc(m.status.toUpperCase())+'</b></div>'}).join('');
     return'<div class="strip'+(isSel?' sel':'')+(tw?' twr':(asg?'':' nocode'))+'" data-id="'+esc(id)+'">'+
       '<div class="h"><span class="cs">'+esc(a.callsign||id)+(tw?' &#9650;':'')+'</span><span class="m">'+Math.round(r.dist)+' nm / '+p3(r.brg)+'&deg;</span></div>'+
       (tw?'':'<div>'+altStr(a.altitude_ft)+' &middot; '+Math.round(Number(a.ground_speed)||0)+' kt &middot; HDG '+p3(Number(a.heading_mag!=null?a.heading_mag:a.heading_true)||0)+'&deg;'+(a.heading_mag==null?'T':'')+' &middot; '+(Number(a.vertical_speed_ft_min)>100?'&uarr;':Number(a.vertical_speed_ft_min)<-100?'&darr;':'&rarr;')+'</div>')+
       (tw?'':'<div>'+st+'</div>')+
-      (route||cruise?'<div class="route">'+route+(cruise?' &middot; cruise '+esc(cruise):'')+'</div>':'')+
+      (route||cruise?'<div class="route">'+route+(cruise?' &middot; '+L('cruise ','cruzeiro ')+esc(cruise):'')+'</div>':'')+
       (a.flightplan_route?'<div class="m">'+esc(a.flightplan_route)+'</div>':'')+ml+ctl+'</div>'}).join('')}
 $('strips').addEventListener('click',function(e){
   var btn=e.target.closest('button'),strip=e.target.closest('.strip');if(!strip)return;var id=strip.getAttribute('data-id');
   if(btn){var act=btn.getAttribute('data-act'),v=($('sqin')||{}).value||'';
-    if(act==='set'){if(!/^[0-7]{4}$/.test(v)){toast('4 digits, each 0-7');return}assign(id,v)}
+    if(act==='set'){if(!/^[0-7]{4}$/.test(v)){toast(L('4 digits, each 0-7','4 dígitos, cada um 0-7'));return}assign(id,v)}
     else if(act==='msg')sendMsg(id);else if(act==='auto')assign(id,'');else if(act==='clear')clearSq(id);return}
-  if(e.target.id==='sqin'||e.target.id==='msgin')return;
+  if(e.target.id==='sqin'||e.target.id==='msgin'||e.target.id==='urg')return;
   sel=id;draw();renderStrips(true)});
 function api(path,opt){opt=opt||{};opt.headers=Object.assign({'X-API-Key':key},opt.headers||{});return fetch(path,opt)}
 function assign(id,sq){var body={icao_address:id};if(sq)body.squawk=sq;
   api('/api/atc/squawk',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
    .then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j,s:r.status}})})
-   .then(function(o){toast(o.ok?'Assigned '+o.j.squawk:'Error: '+(o.j.error||o.s));poll(true)})
-   .catch(function(){toast('Network error')})}
-function sendMsg(id){var el=$('msgin'),t=(el.value||'').trim();if(!t){toast('Type a message');return}
-  api('/api/atc/message',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({icao_address:id,text:t})})
-   .then(function(r){return r.json().then(function(j){if(!r.ok){toast('Error: '+(j.error||r.status));return}el.value='';toast('Sent');poll(true)})})
-   .catch(function(){toast('Network error')})}
+   .then(function(o){toast(o.ok?L('Assigned ','Atribuído ')+o.j.squawk:L('Error: ','Erro: ')+(o.j.error||o.s));poll(true)})
+   .catch(function(){toast(L('Network error','Erro de rede'))})}
+function sendMsg(id){var el=$('msgin'),t=(el.value||'').trim();if(!t){toast(L('Type a message','Digite uma mensagem'));return}
+  api('/api/atc/message',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({icao_address:id,text:t,urgent:urgent})})
+   .then(function(r){return r.json().then(function(j){if(!r.ok){toast(L('Error: ','Erro: ')+(j.error||r.status));return}el.value='';toast(L('Sent','Enviado'));poll(true)})})
+   .catch(function(){toast(L('Network error','Erro de rede'))})}
+$('strips').addEventListener('change',function(e){if(e.target.id==='urg')urgent=e.target.checked});
 $('strips').addEventListener('keydown',function(e){if(e.key==='Enter'&&e.target.id==='msgin'){var s=e.target.closest('.strip');if(s)sendMsg(s.getAttribute('data-id'))}});
-function clearSq(id){api('/api/atc/squawk?icao_address='+encodeURIComponent(id),{method:'DELETE'}).then(function(){toast('Cleared');poll(true)})}
+function clearSq(id){api('/api/atc/squawk?icao_address='+encodeURIComponent(id),{method:'DELETE'}).then(function(){toast(L('Cleared','Removido'));poll(true)})}
 
 /* ---------- virtual towers ---------- */
 var myTowers=[];try{myTowers=JSON.parse(localStorage.getItem('abflug_towers')||'[]')}catch(e){}
 function saveTowers(){try{localStorage.setItem('abflug_towers',JSON.stringify(myTowers))}catch(e){}}
 function putTower(t){return api('/api/atc/tower',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(t)})}
 $('twOpen').onclick=function(){var name=$('twIcao').value.trim().toUpperCase();
-  if(!/^[A-Z0-9]{2,8}$/.test(name)){toast('Enter an airport code, e.g. SBBR');return}
+  if(!/^[A-Z0-9]{2,8}$/.test(name)){toast(L('Enter an airport code, e.g. SBBR','Digite um código de aeroporto, ex.: SBBR'));return}
   var ap=APT[name],t={name:name,latitude:+(ap?ap.lat:center.lat).toFixed(5),longitude:+(ap?ap.lon:center.lon).toFixed(5)};
   if(!ap)toast(rwState==='ready'?'Unknown airport - tower placed at scope center':'Airport data not loaded - tower placed at scope center');
-  putTower(t).then(function(r){return r.json().then(function(j){if(!r.ok){toast('Error: '+(j.error||r.status));return}
+  putTower(t).then(function(r){return r.json().then(function(j){if(!r.ok){toast(L('Error: ','Erro: ')+(j.error||r.status));return}
     myTowers=myTowers.filter(function(x){return x.name!==name});myTowers.push(t);saveTowers();
-    if(ap)toast('Tower '+j.callsign+' open');$('twIcao').value='';poll(true)})}).catch(function(){toast('Network error')})};
+    if(ap)toast(L('Tower '+j.callsign+' open','Torre '+j.callsign+' aberta'));$('twIcao').value='';poll(true)})}).catch(function(){toast(L('Network error','Erro de rede'))})};
 function closeTower(name){api('/api/atc/tower?name='+encodeURIComponent(name),{method:'DELETE'}).then(function(){
-  myTowers=myTowers.filter(function(x){return x.name!==name});saveTowers();toast('Tower closed');poll(true)})}
+  myTowers=myTowers.filter(function(x){return x.name!==name});saveTowers();toast(L('Tower closed','Torre fechada'));poll(true)})}
 $('twList').addEventListener('click',function(e){var b=e.target.closest('button');if(b)closeTower(b.getAttribute('data-name'))});
 function renderTowerBox(){var t=ac.filter(function(a){return a.virtual_tower});
   $('twList').innerHTML=t.length?t.map(function(a){var n=esc(String(a.callsign).replace(/^ATC_/,''));
-    return'<div class="row"><span>'+esc(a.callsign)+' <span class="m">virtual</span></span><button data-name="'+n+'">Close</button></div>'}).join(''):'<div class="m" style="margin-top:6px">No virtual towers open.</div>'}
+    return'<div class="row"><span>'+esc(a.callsign)+' <span class="m">virtual</span></span><button data-name="'+n+'">Close</button></div>'}).join(''):'<div class="m" style="margin-top:6px">'+L('No virtual towers open.','Nenhuma torre virtual aberta.')+'</div>'}
 function refreshMyTowers(){if(key)myTowers.forEach(function(t){putTower(t).catch(function(){})})}
 
 /* ---------- polling ---------- */
@@ -292,8 +303,8 @@ function poll(force){
     if(!manual){var tw=ac.filter(isTwr)[0];if(tw){center.lat=tw.latitude;center.lon=tw.longitude}
       else if(!centroidDone&&ac.length){center.lat=ac.reduce(function(s,a){return s+a.latitude},0)/ac.length;
         center.lon=ac.reduce(function(s,a){return s+a.longitude},0)/ac.length;centroidDone=true}}
-    setStatus(ac.length+' aircraft',true);draw();renderStrips();renderTowerBox()
-  }).catch(function(){setStatus('offline',false)})}
+    setStatus(ac.length+L(' aircraft',' aeronaves'),true);draw();renderStrips();renderTowerBox()
+  }).catch(function(){setStatus(L('offline','sem conexão'),false)})}
 document.addEventListener('visibilitychange',function(){if(!document.hidden)poll(true)});
 resize();applyRange();draw();loadRunways();refreshMyTowers();setInterval(refreshMyTowers,30*60000);poll(true);setInterval(poll,5000);
 })();
