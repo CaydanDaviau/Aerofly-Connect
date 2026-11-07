@@ -139,6 +139,6 @@ document.getElementById('bStyle').onclick=function(){
   this.textContent='Map: '+STYLES[si][0];ready=false;map.setStyle(STYLES[si][1]);
 };
 if(window.Android&&window.Android.pip){var b=document.getElementById('bPip');b.style.display='';b.onclick=function(){window.Android.pip()}}
-window.addEventListener('resize',function(){document.body.classList.toggle('pip',window.innerWidth<420&&window.innerHeight<420)});
+if(!window.Android)window.addEventListener('resize',function(){document.body.classList.toggle('pip',window.innerWidth<420&&window.innerHeight<420)});
 })();
 </script></body></html>

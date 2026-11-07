@@ -83,6 +83,11 @@ public class PilotService extends Service {
         nm.createNotificationChannel(new NotificationChannel("atc_urgent", Api.t(this, "ATC urgent messages", "Mensagens urgentes do ATC"), NotificationManager.IMPORTANCE_HIGH));
         Notification n = buildNotif(this);
         startForeground(1, n);
+        // Warm up the radio voice now so the first ATC message is spoken without init delay.
+        if (Api.speakOn(this)) {
+            voiceLang = Api.voiceLang(this);
+            voice = new AtcVoice(this, voiceLang);
+        }
 
         PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
         wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "revival:upload");

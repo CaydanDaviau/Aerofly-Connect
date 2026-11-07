@@ -43,6 +43,7 @@ public class MapActivity extends Activity {
     protected void onCreate(Bundle b) {
         super.onCreate(b);
         pipOnStart = ACT_TOGGLE.equals(getIntent().getAction());
+        overridePendingTransition(0, 0);
         PipReply.onChange = new Runnable() { @Override public void run() { refreshPip(); } };
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         web = new WebView(this);
@@ -52,7 +53,7 @@ public class MapActivity extends Activity {
         s.setCacheMode(WebSettings.LOAD_DEFAULT);
         web.addJavascriptInterface(new Bridge(), "Android");
         web.setWebViewClient(new WebViewClient() {
-            @Override public void onPageFinished(WebView v, String url) { if (!failed) pageReady = true; }
+            @Override public void onPageFinished(WebView v, String url) { if (!failed) { pageReady = true; syncPip(); } }
             @Override public void onReceivedError(WebView v, WebResourceRequest r, WebResourceError e) {
                 if (r.isForMainFrame()) showError();
             }
@@ -66,10 +67,28 @@ public class MapActivity extends Activity {
         root.addView(web);
         root.addView(err);
         setContentView(root);
+        if (pipOnStart) web.setVisibility(View.INVISIBLE);   // no full-screen flash before the PiP window
         web.loadUrl(mapUrl());
     }
 
     private boolean pipOnStart;
+
+    /** The app decides PiP state; the page must never guess it from its size. */
+    private void syncPip() {
+        final boolean on = isInPictureInPictureMode();
+        web.evaluateJavascript("window.setPip&&window.setPip(" + on + ")", null);
+        ui.postDelayed(new Runnable() {
+            @Override public void run() {
+                web.evaluateJavascript("window.setPip&&window.setPip(" + isInPictureInPictureMode() + ")", null);
+            }
+        }, 400);
+    }
+
+    @Override
+    public void onConfigurationChanged(Configuration c) {
+        super.onConfigurationChanged(c);
+        syncPip();
+    }
 
     private String mapUrl() { return BuildConfig.SERVER_URL + "/map?key=" + Api.key(this); }
 
@@ -96,6 +115,7 @@ public class MapActivity extends Activity {
     protected void onResume() {
         super.onResume();
         if (pipOnStart) { pipOnStart = false; enterPip(); }   // "Show map": straight into PiP
+        else syncPip();
     }
 
     @Override
@@ -206,9 +226,11 @@ public class MapActivity extends Activity {
                 if (android.os.Build.VERSION.SDK_INT >= 33) registerReceiver(zoomRx, f, Context.RECEIVER_NOT_EXPORTED);
                 else registerReceiver(zoomRx, f);
             }
-            enterPictureInPictureMode(new PictureInPictureParams.Builder()
-                    .setAspectRatio(new Rational(4, 3)).setActions(buildActions()).build());
-        } catch (Exception ignored) { }
+            if (!enterPictureInPictureMode(new PictureInPictureParams.Builder()
+                    .setAspectRatio(new Rational(4, 3)).setActions(buildActions()).build())) {
+                web.setVisibility(View.VISIBLE);
+            }
+        } catch (Exception ignored) { web.setVisibility(View.VISIBLE); }
     }
 
     /** Leaving to the sim with Home: shrink into a floating window instead of disappearing. */
@@ -220,7 +242,8 @@ public class MapActivity extends Activity {
     @Override
     public void onPictureInPictureModeChanged(boolean inPip, Configuration c) {
         super.onPictureInPictureModeChanged(inPip, c);
-        web.evaluateJavascript("window.setPip&&window.setPip(" + inPip + ")", null);
+        if (inPip) web.setVisibility(View.VISIBLE);
+        syncPip();
     }
 
     @Override
