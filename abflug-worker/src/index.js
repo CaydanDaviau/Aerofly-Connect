@@ -82,12 +82,22 @@ export class Hub {
     this.towers = new Map();
     ctx.blockConcurrencyWhile(async () => {
       for (const [k, v] of await ctx.storage.list({ prefix: "tower:" })) this.towers.set(k.slice(6), v);
-    }); this.ctx = ctx; this.clients = new Map(); this.since = Date.now(); this.counts = {}; }
+    }); this.ctx = ctx; this.clients = new Map(); this.msgs = new Map(); this.msgSeq = 0; this.since = Date.now(); this.counts = {}; }
 
   purge() {
     const now = Date.now();
     for (const [k, c] of this.clients) if (now - c.seen > TTL_MS) this.clients.delete(k);
+    for (const [k, m] of this.msgs) if (now - m.at > 30 * 60 * 1000) this.msgs.delete(k);
     for (const [k, t] of this.towers) if (now - t.at > TOWER_TTL_MS) { this.towers.delete(k); this.ctx.storage.delete("tower:" + k); }
+  }
+
+  addMsg(target, text, kind, extra) {
+    const pos = target.pos || {};
+    const id = Date.now().toString(36) + (++this.msgSeq).toString(36);
+    const m = { id, icao: pos.icao_address, callsign: normCallsign(target.plan.callsign ?? pos.callsign), text: String(text).slice(0, 300), kind, at: Date.now(), status: "sent", ...extra };
+    this.msgs.set(id, m);
+    if (this.msgs.size > 300) this.msgs.delete(this.msgs.keys().next().value);
+    return m;
   }
 
   async fetch(request) {
@@ -132,6 +142,7 @@ export class Hub {
       }
       const rec = { squawk: sq, at: Date.now() };
       target.assigned = rec;
+      this.addMsg(target, "Squawk " + sq, "squawk", { squawk: sq });
       await this.ctx.storage.put("sq:" + icao, rec);
       return json({ success: true, squawk: sq });
     }
@@ -139,6 +150,25 @@ export class Hub {
       const icao = String(url.searchParams.get("icao_address") || "").toUpperCase();
       for (const c of this.clients.values()) if (c.pos && c.pos.icao_address === icao) c.assigned = null;
       await this.ctx.storage.delete("sq:" + icao);
+      return json({ success: true });
+    }
+
+    if ((m === "PUT" || m === "POST") && p === "/api/atc/message") {
+      const d = await request.json().catch(() => ({}));
+      const icao = String(d.icao_address || "").toUpperCase();
+      const text = String(d.text || "").trim();
+      const target = [...this.clients.values()].find(c => c.pos && c.pos.icao_address === icao);
+      if (!target) return json({ error: "aircraft not found" }, 404);
+      if (!text) return json({ error: "empty message" }, 400);
+      return json({ success: true, id: this.addMsg(target, text, "msg").id });
+    }
+    if ((m === "PUT" || m === "POST") && p === "/api/messages/reply") {
+      const d = await request.json().catch(() => ({}));
+      const msg = this.msgs.get(String(d.id || ""));
+      const me = this.clients.get(key);
+      if (!msg || !me || !me.pos || me.pos.icao_address !== msg.icao) return json({ error: "message not found" }, 404);
+      if (!["wilco", "unable"].includes(d.reply)) return json({ error: "reply must be wilco or unable" }, 400);
+      msg.status = d.reply; msg.replied = Date.now();
       return json({ success: true });
     }
 
@@ -186,7 +216,8 @@ export class Hub {
       out.sort((a, b) => a.distance_miles - b.distance_miles);
       const truncated = out.length > MAX_TRAFFIC;
       out = out.slice(0, MAX_TRAFFIC);
-      return json({ aircraft: out, traffic: out, truncated, active_clients: this.clients.size });
+      const atc_messages = [...this.msgs.values()].map(x => ({ id: x.id, icao_address: x.icao, text: x.text, kind: x.kind, status: x.status, at: x.at }));
+      return json({ aircraft: out, traffic: out, truncated, active_clients: this.clients.size, atc_messages });
     }
 
     if ((m === "POST" || m === "PUT") && p === "/api/position") {
@@ -221,7 +252,9 @@ export class Hub {
       }
       c.pos = pos; c.seen = Date.now();
       this.clients.set(key, c);
-      return json({ success: true });
+      const messages = [];
+      for (const x of this.msgs.values()) if (x.icao === icao && x.status === "sent") { x.status = "delivered"; messages.push({ id: x.id, text: x.text, kind: x.kind, at: x.at }); }
+      return json({ success: true, messages });
     }
 
     if ((m === "POST" || m === "PUT") && p === "/api/flightplan") {
