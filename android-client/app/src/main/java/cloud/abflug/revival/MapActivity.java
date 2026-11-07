@@ -43,6 +43,7 @@ public class MapActivity extends Activity {
     protected void onCreate(Bundle b) {
         super.onCreate(b);
         pipOnStart = ACT_TOGGLE.equals(getIntent().getAction());
+        PipReply.onChange = new Runnable() { @Override public void run() { refreshPip(); } };
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         web = new WebView(this);
         WebSettings s = web.getSettings();
@@ -140,6 +141,52 @@ public class MapActivity extends Activity {
         return Icon.createWithBitmap(bm);
     }
 
+    private Icon replyGlyph(boolean ok) {
+        Bitmap bm = Bitmap.createBitmap(96, 96, Bitmap.Config.ARGB_8888);
+        Canvas c = new Canvas(bm);
+        Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+        p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(12);
+        p.setStrokeCap(Paint.Cap.ROUND); p.setStrokeJoin(Paint.Join.ROUND);
+        if (ok) {
+            p.setColor(0xFF4CD964);
+            android.graphics.Path path = new android.graphics.Path();
+            path.moveTo(20, 50); path.lineTo(40, 70); path.lineTo(76, 28);
+            c.drawPath(path, p);
+        } else {
+            p.setColor(0xFFFF5A52);
+            c.drawLine(26, 26, 70, 70, p);
+            c.drawLine(70, 26, 26, 70, p);
+        }
+        return Icon.createWithBitmap(bm);
+    }
+
+    private RemoteAction replyAction(PipReply.Item it, boolean ok) {
+        String label = ok ? "Wilco" : Api.t(this, "Unable", "Impossível");
+        return new RemoteAction(replyGlyph(ok), label, label,
+                PilotService.replyIntent(this, it.id, ok ? "wilco" : "unable", it.nid));
+    }
+
+    /** Zoom buttons, or check / cross while an ATC message waits for an answer. */
+    private ArrayList<RemoteAction> buildActions() {
+        ArrayList<RemoteAction> acts = new ArrayList<>();
+        PipReply.Item it = PipReply.current();
+        if (it != null) {
+            acts.add(replyAction(it, true));
+            acts.add(replyAction(it, false));
+        } else {
+            acts.add(zoomAction(false));
+            acts.add(zoomAction(true));
+        }
+        return acts;
+    }
+
+    private void refreshPip() {
+        try {
+            setPictureInPictureParams(new PictureInPictureParams.Builder()
+                    .setAspectRatio(new Rational(4, 3)).setActions(buildActions()).build());
+        } catch (Exception ignored) { }
+    }
+
     private RemoteAction zoomAction(boolean in) {
         Intent i = new Intent(ACT_ZOOM).setPackage(getPackageName()).putExtra("d", in ? 1 : -1);
         PendingIntent pi = PendingIntent.getBroadcast(this, in ? 1 : 2, i,
@@ -159,11 +206,8 @@ public class MapActivity extends Activity {
                 if (android.os.Build.VERSION.SDK_INT >= 33) registerReceiver(zoomRx, f, Context.RECEIVER_NOT_EXPORTED);
                 else registerReceiver(zoomRx, f);
             }
-            ArrayList<RemoteAction> acts = new ArrayList<>();
-            acts.add(zoomAction(false));
-            acts.add(zoomAction(true));
             enterPictureInPictureMode(new PictureInPictureParams.Builder()
-                    .setAspectRatio(new Rational(4, 3)).setActions(acts).build());
+                    .setAspectRatio(new Rational(4, 3)).setActions(buildActions()).build());
         } catch (Exception ignored) { }
     }
 
@@ -188,6 +232,7 @@ public class MapActivity extends Activity {
     protected void onDestroy() {
         PilotService.mapShown = false; PilotService.refreshNotif(this);
         ui.removeCallbacks(feed);
+        PipReply.onChange = null;
         if (zoomRx != null) { try { unregisterReceiver(zoomRx); } catch (Exception ignored) { } }
         web.destroy();
         super.onDestroy();

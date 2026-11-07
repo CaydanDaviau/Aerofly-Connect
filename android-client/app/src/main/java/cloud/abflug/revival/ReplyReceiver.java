@@ -28,6 +28,7 @@ public class ReplyReceiver extends BroadcastReceiver {
                     // Keep the notification if sending failed, so the pilot can tap again.
                     if (code < 400) {
                         ((NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE)).cancel(nid);
+                        PipReply.done(id);
                     }
                 } catch (Exception ignored) {
                 } finally {

@@ -164,6 +164,7 @@ public class PilotService extends Service {
             if (voice != null) { voice.shutdown(); voice = null; }
             try { Api.send("DELETE", "/api/position", null, key); } catch (Exception ignored) { }
             running = false;
+            PipReply.clear();
             simState = "-";
             if (wl != null && wl.isHeld()) wl.release();
             stopForeground(true);
@@ -206,20 +207,21 @@ public class PilotService extends Service {
                         .setStyle(new Notification.BigTextStyle().bigText(text))
                         .setSmallIcon(android.R.drawable.ic_dialog_info)
                         .setAutoCancel(true)
-                        .addAction(new Notification.Action.Builder(null, "Wilco", replyIntent(id, "wilco", nid)).build())
-                        .addAction(new Notification.Action.Builder(null, Api.t(this, "Unable", "Impossível"), replyIntent(id, "unable", nid)).build());
+                        .addAction(new Notification.Action.Builder(null, "Wilco", replyIntent(this, id, "wilco", nid)).build())
+                        .addAction(new Notification.Action.Builder(null, Api.t(this, "Unable", "Impossível"), replyIntent(this, id, "unable", nid)).build());
                 nm.notify(nid, b.build());
+                PipReply.offer(id, nid);
                 speak(text);
             }
         } catch (Exception ignored) {
         }
     }
 
-    private PendingIntent replyIntent(String id, String reply, int nid) {
-        Intent i = new Intent(this, ReplyReceiver.class).setAction(ReplyReceiver.ACTION)
+    static PendingIntent replyIntent(Context c, String id, String reply, int nid) {
+        Intent i = new Intent(c, ReplyReceiver.class).setAction(ReplyReceiver.ACTION)
                 .putExtra("id", id).putExtra("reply", reply).putExtra("nid", nid);
         // Distinct request code per notification and button, otherwise extras get overwritten.
-        return PendingIntent.getBroadcast(this, nid * 2 + (reply.equals("wilco") ? 0 : 1), i,
+        return PendingIntent.getBroadcast(c, nid * 2 + (reply.equals("wilco") ? 0 : 1), i,
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
     }
 
