@@ -58,12 +58,21 @@ final class AtcVoice {
     }
 
     /** Queues a message; messages are spoken one after another. */
-    void speak(final String text) {
+    void speak(final String text, final Runnable onStart) {
         ex.execute(new Runnable() {
             @Override public void run() {
-                try { say(text); } catch (Throwable ignored) { }
+                started = false;
+                try { say(text, onStart); } catch (Throwable ignored) { }
+                fireStart(onStart);   // speech failed before playing: still run it
             }
         });
+    }
+
+    private boolean started;
+    private void fireStart(Runnable r) {
+        if (started) return;
+        started = true;
+        if (r != null) r.run();
     }
 
     void shutdown() {
@@ -76,7 +85,7 @@ final class AtcVoice {
     }
 
     // ---------- speech ----------
-    private void say(String text) throws Exception {
+    private void say(String text, Runnable onStart) throws Exception {
         if (!ready.await(8, TimeUnit.SECONDS) || !ttsOk) return;
         Locale loc = lang.equals("pt") ? new Locale("pt", "BR") : Locale.US;
         int r = tts.setLanguage(loc);
@@ -94,7 +103,7 @@ final class AtcVoice {
         short[] pcm = readWav(f, rate);
         f.delete();
         if (pcm == null || pcm.length == 0) return;
-        play(radio(pcm, rate[0]), rate[0]);
+        play(radio(pcm, rate[0]), rate[0], onStart);
     }
 
     /** Prefers an installed (offline) voice of the language, so the app works without internet. */
@@ -218,7 +227,7 @@ final class AtcVoice {
     }
 
     // ---------- playback ----------
-    private void play(short[] pcm, int rate) throws Exception {
+    private void play(short[] pcm, int rate, Runnable onStart) throws Exception {
         AudioManager am = (AudioManager) ctx.getSystemService(Context.AUDIO_SERVICE);
         AudioAttributes attr = new AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -237,6 +246,7 @@ final class AtcVoice {
                     .setBufferSizeInBytes(bytes).build();
             t.write(pcm, 0, pcm.length);
             t.play();
+            fireStart(onStart);
             Thread.sleep(pcm.length * 1000L / rate + 250);
         } finally {
             if (t != null) t.release();

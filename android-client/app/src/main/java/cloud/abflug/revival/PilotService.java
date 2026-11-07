@@ -36,7 +36,8 @@ public class PilotService extends Service {
                 new Intent(c, PilotService.class).setAction(ACTION_STOP),
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         PendingIntent map = PendingIntent.getActivity(c, 11,
-                new Intent(c, MapActivity.class).setAction(MapActivity.ACT_TOGGLE),
+                new Intent(c, MapActivity.class).setAction(MapActivity.ACT_TOGGLE)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         return new Notification.Builder(c, "pilot")
                 .setContentTitle("Aerofly Connect")
@@ -177,15 +178,15 @@ public class PilotService extends Service {
     private String voiceLang;
 
     /** Speaks the message with the radio effect, if "Speak" is on. Created on first use. */
-    private void speak(String text) {
-        if (!Api.speakOn(this)) return;
+    private void speak(String text, Runnable onStart) {
+        if (!Api.speakOn(this)) { onStart.run(); return; }
         String lang = Api.voiceLang(this);
         if (voice == null || !lang.equals(voiceLang)) {
             if (voice != null) voice.shutdown();
             voice = new AtcVoice(this, lang);
             voiceLang = lang;
         }
-        voice.speak(text);
+        voice.speak(text, onStart);
     }
 
     /** The position response carries new ATC messages: one heads-up notification each. */
@@ -210,8 +211,9 @@ public class PilotService extends Service {
                         .addAction(new Notification.Action.Builder(null, "Wilco", replyIntent(this, id, "wilco", nid)).build())
                         .addAction(new Notification.Action.Builder(null, Api.t(this, "Unable", "Impossível"), replyIntent(this, id, "unable", nid)).build());
                 nm.notify(nid, b.build());
-                PipReply.offer(id, nid);
-                speak(text);
+                final String fid = id; final int fnid = nid;
+                // PiP Wilco/Unable buttons appear when the voice starts (or at once if it is off).
+                speak(text, new Runnable() { @Override public void run() { PipReply.offer(fid, fnid); } });
             }
         } catch (Exception ignored) {
         }
