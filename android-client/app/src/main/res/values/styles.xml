@@ -1,11 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="app_bg">#152238</color>
+    <color name="app_bg">#0B1626</color>
     <style name="AppTheme" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/app_bg</item>
         <item name="android:colorBackground">@color/app_bg</item>
         <item name="android:statusBarColor">@color/app_bg</item>
         <item name="android:navigationBarColor">@color/app_bg</item>
+        <item name="android:colorAccent">#22D3EE</item>
+        <item name="android:colorControlActivated">#22D3EE</item>
+        <item name="android:colorControlNormal">#8FA6C4</item>
+        <item name="android:textColorPrimary">#E6EEF8</item>
+        <item name="android:textColorSecondary">#8FA6C4</item>
     </style>
     <style name="MapTheme" parent="AppTheme">
         <item name="android:windowIsTranslucent">true</item>

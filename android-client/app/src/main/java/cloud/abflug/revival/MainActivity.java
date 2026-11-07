@@ -72,7 +72,7 @@ public class MainActivity extends Activity {
     private LinearLayout column() {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(pad, pad * 2, pad, pad);
+        root.setPadding(Ui.dp(this, 20), Ui.dp(this, 28), Ui.dp(this, 20), Ui.dp(this, 24));
         return root;
     }
 
@@ -80,8 +80,54 @@ public class MainActivity extends Activity {
         TextView t = new TextView(this);
         t.setText(s);
         t.setTextSize(size);
+        t.setTextColor(Ui.TXT);
         if (bold) t.setTypeface(Typeface.DEFAULT_BOLD);
         return t;
+    }
+
+    private TextView dim(String s, int size) {
+        TextView t = text(s, size, false);
+        t.setTextColor(Ui.DIM);
+        return t;
+    }
+
+    /** Small dim caption above a field or control. */
+    private TextView fieldLabel(String s) {
+        TextView t = dim(s, 12);
+        t.setPadding(0, pad / 2, 0, pad / 8);
+        return t;
+    }
+
+    /** A rounded card with a cyan caps title, added to root. */
+    private LinearLayout section(LinearLayout root, String title) {
+        LinearLayout c = Ui.card(this);
+        c.addView(Ui.heading(this, title));
+        root.addView(c, Ui.lp(this, 14));
+        return c;
+    }
+
+    private Switch sw(String label, boolean on, CompoundButton.OnCheckedChangeListener l) {
+        Switch s = new Switch(this);
+        s.setText(label);
+        s.setTextSize(15);
+        s.setPadding(0, pad / 2, 0, pad / 6);
+        s.setChecked(on);
+        Ui.toggle(s);
+        s.setOnCheckedChangeListener(l);
+        return s;
+    }
+
+    private View menuCard(String title, String sub, View.OnClickListener click) {
+        LinearLayout c = Ui.card(this);
+        c.setBackground(Ui.ripple(this, Ui.CARD, Ui.STROKE, 16));
+        c.setOnClickListener(click);
+        TextView t = text(title, 20, true);
+        t.setTextColor(Ui.CYAN);
+        c.addView(t);
+        TextView d = dim(sub, 13);
+        d.setPadding(0, pad / 6, 0, 0);
+        c.addView(d);
+        return c;
     }
 
     // ---------- Start screen ----------
@@ -92,35 +138,38 @@ public class MainActivity extends Activity {
         inSettings = false;
         LinearLayout root = column();
         root.setGravity(Gravity.CENTER_HORIZONTAL);
-        root.addView(text("Aerofly Connect", 28, true));
-        TextView info = text("Build " + BuildConfig.VERSION_NAME
-                + (BuildConfig.RELEASE_KEY ? "" : " (debug key)"), 13, false);
-        info.setPadding(0, pad / 4, 0, pad * 2);
+
+        android.widget.ImageView logo = new android.widget.ImageView(this);
+        logo.setImageResource(R.mipmap.ic_launcher);
+        root.addView(logo, new LinearLayout.LayoutParams(Ui.dp(this, 84), Ui.dp(this, 84)));
+        TextView title = text("AEROFLY CONNECT", 22, true);
+        title.setLetterSpacing(0.12f);
+        title.setPadding(0, pad / 2, 0, 0);
+        root.addView(title);
+        TextView info = dim("Build " + BuildConfig.VERSION_NAME
+                + (BuildConfig.RELEASE_KEY ? "" : " (debug key)"), 12);
+        info.setPadding(0, pad / 6, 0, pad);
         root.addView(info);
 
-        Button pilot = new Button(this);
-        pilot.setText(Api.t(this, "Pilot", "Piloto"));
-        pilot.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) { showPilot(); }
-        });
-        root.addView(pilot);
+        root.addView(menuCard(Api.t(this, "Pilot", "Piloto"),
+                Api.t(this, "Share your position and receive ATC messages", "Compartilhe sua posição e receba mensagens do ATC"),
+                new View.OnClickListener() { @Override public void onClick(View v) { showPilot(); } }), Ui.lp(this, 12));
+        root.addView(menuCard(Api.t(this, "Controller", "Controlador"),
+                Api.t(this, "See the radar and message pilots", "Veja o radar e envie mensagens aos pilotos"),
+                new View.OnClickListener() {
+                    @Override public void onClick(View v) { startActivity(new Intent(MainActivity.this, ControllerActivity.class)); }
+                }), Ui.lp(this, 12));
 
-        Button ctl = new Button(this);
-        ctl.setText(Api.t(this, "Controller", "Controlador"));
-        ctl.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) {
-                startActivity(new Intent(MainActivity.this, ControllerActivity.class));
-            }
-        });
-        root.addView(ctl);
-
-        Button set = new Button(this);
-        set.setText(Api.t(this, "Settings", "Configurações"));
+        Button set = Ui.button(this, Api.t(this, "Settings", "Configurações"), Ui.SECONDARY);
         set.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { showSettings(); }
         });
-        root.addView(set);
-        setContentView(root);
+        root.addView(set, Ui.lp(this, 16));
+
+        ScrollView sv = new ScrollView(this);
+        sv.setFillViewport(true);
+        sv.addView(root);
+        setContentView(sv);
     }
 
     // ---------- Settings ----------
@@ -133,59 +182,46 @@ public class MainActivity extends Activity {
         LinearLayout root = column();
         root.addView(text(Api.t(this, "Settings", "Configurações"), 24, true));
 
-        Switch sp = new Switch(this);
-        sp.setText(Api.t(this, "Speak ATC messages", "Falar mensagens do ATC"));
-        sp.setTextSize(16);
-        sp.setPadding(0, pad, 0, pad / 2);
-        sp.setChecked(Api.speakOn(this));
-        sp.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
-            @Override public void onCheckedChanged(CompoundButton b, boolean on) { Api.setSpeakOn(MainActivity.this, on); }
-        });
-        root.addView(sp);
+        LinearLayout lang = section(root, Api.t(this, "Language", "Idioma"));
+        lang.addView(langRow(Api.t(this, "App language", "Idioma do app"), Api.uiLang(this), true));
+        lang.addView(langRow(Api.t(this, "Voice language", "Idioma da voz"), Api.voiceLang(this), false));
 
-        root.addView(langRow(Api.t(this, "App language", "Idioma do app"), Api.uiLang(this), true));
-        root.addView(langRow(Api.t(this, "Voice language", "Idioma da voz"), Api.voiceLang(this), false));
-        root.addView(voiceRow());
-        root.addView(rateRow());
+        LinearLayout voice = section(root, Api.t(this, "ATC voice", "Voz do ATC"));
+        voice.addView(sw(Api.t(this, "Speak ATC messages", "Falar mensagens do ATC"), Api.speakOn(this),
+                new CompoundButton.OnCheckedChangeListener() {
+                    @Override public void onCheckedChanged(CompoundButton b, boolean on) { Api.setSpeakOn(MainActivity.this, on); }
+                }));
+        voice.addView(voiceRow());
+        voice.addView(rateRow());
 
         // ----- Background radio (loops an audio file picked from the phone) -----
-        TextView hdr = text(Api.t(this, "Background radio", "Rádio de fundo"), 18, true);
-        hdr.setPadding(0, pad, 0, 0);
-        root.addView(hdr);
+        LinearLayout radio = section(root, Api.t(this, "Background radio", "Rádio de fundo"));
+        radio.addView(sw(Api.t(this, "Play background radio (Pilot and Controller)", "Tocar rádio de fundo (Piloto e Controlador)"),
+                Api.radioOn(this), new CompoundButton.OnCheckedChangeListener() {
+                    @Override public void onCheckedChanged(CompoundButton b, boolean on) {
+                        Api.setRadioOn(MainActivity.this, on);
+                        RadioPlayer.settingsChanged(MainActivity.this);
+                    }
+                }));
 
-        Switch st = new Switch(this);
-        st.setText(Api.t(this, "Play background radio (Pilot and Controller)", "Tocar rádio de fundo (Piloto e Controlador)"));
-        st.setTextSize(16);
-        st.setPadding(0, pad / 2, 0, pad / 4);
-        st.setChecked(Api.radioOn(this));
-        st.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
-            @Override public void onCheckedChanged(CompoundButton b, boolean on) {
-                Api.setRadioOn(MainActivity.this, on);
-                RadioPlayer.settingsChanged(MainActivity.this);
-            }
-        });
-        root.addView(st);
-
-        radioFileLabel = text("", 13, false);
+        radioFileLabel = dim("", 13);
         radioFileLabel.setPadding(0, pad / 4, 0, 0);
         showRadioName();
-        root.addView(radioFileLabel);
-        Button pickBtn = new Button(this);
-        pickBtn.setText(Api.t(this, "Choose audio file", "Escolher arquivo de áudio"));
+        radio.addView(radioFileLabel);
+        Button pickBtn = Ui.button(this, Api.t(this, "Choose audio file", "Escolher arquivo de áudio"), Ui.SECONDARY);
         pickBtn.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { pickRadioFile(); }
         });
-        root.addView(pickBtn);
+        radio.addView(pickBtn, Ui.lp(this, 10));
 
-        root.addView(volRow(Api.t(this, "Volume - Pilot", "Volume - Piloto"), Api.volPilot(this), true));
-        root.addView(volRow(Api.t(this, "Volume - Controller", "Volume - Controlador"), Api.volCtl(this), false));
+        radio.addView(volRow(Api.t(this, "Volume - Pilot", "Volume - Piloto"), Api.volPilot(this), true));
+        radio.addView(volRow(Api.t(this, "Volume - Controller", "Volume - Controlador"), Api.volCtl(this), false));
 
-        testBtn = new Button(this);
-        testBtn.setText(radioTesting ? Api.t(this, "Stop test", "Parar teste") : Api.t(this, "Test radio", "Testar rádio"));
+        testBtn = Ui.button(this, radioTesting ? Api.t(this, "Stop test", "Parar teste") : Api.t(this, "Test radio", "Testar rádio"), Ui.SECONDARY);
         testBtn.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { toggleRadioTest(); }
         });
-        root.addView(testBtn);
+        radio.addView(testBtn, Ui.lp(this, 12));
 
         ScrollView sv = new ScrollView(this);
         sv.addView(root);
@@ -216,15 +252,14 @@ public class MainActivity extends Activity {
     private View voiceRow() {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.VERTICAL);
-        TextView l = text(Api.t(this, "Voice", "Voz"), 13, false);
-        l.setPadding(0, pad / 2, 0, 0);
+        TextView l = fieldLabel(Api.t(this, "Voice", "Voz"));
         row.addView(l);
         voiceSpinner = new Spinner(this);
+        Ui.spinner(this, voiceSpinner);
         voiceSpinner.setAdapter(new ArrayAdapter<String>(this, android.R.layout.simple_spinner_dropdown_item,
                 new String[]{Api.t(this, "Loading...", "Carregando...")}));
         row.addView(voiceSpinner);
-        Button test = new Button(this);
-        test.setText(Api.t(this, "Test voice", "Testar voz"));
+        Button test = Ui.button(this, Api.t(this, "Test voice", "Testar voz"), Ui.SECONDARY);
         test.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) {
                 String lang = Api.voiceLang(MainActivity.this);
@@ -234,7 +269,7 @@ public class MainActivity extends Activity {
                 av.shutdown();   // finishes after the queued sentence
             }
         });
-        row.addView(test);
+        row.addView(test, Ui.lp(this, 10));
         refreshVoices();
         return row;
     }
@@ -296,10 +331,10 @@ public class MainActivity extends Activity {
     private View rateRow() {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.VERTICAL);
-        TextView l = text(Api.t(this, "Speech speed", "Velocidade da fala"), 13, false);
-        l.setPadding(0, pad / 2, 0, 0);
+        TextView l = fieldLabel(Api.t(this, "Speech speed", "Velocidade da fala"));
         row.addView(l);
         Spinner sp = new Spinner(this);
+        Ui.spinner(this, sp);
         sp.setAdapter(new ArrayAdapter<String>(this, android.R.layout.simple_spinner_dropdown_item,
                 new String[]{Api.t(this, "Slow", "Lenta"), "Normal", Api.t(this, "Fast", "Rápida")}));
         sp.setSelection(Api.rateIdx(this));
@@ -316,10 +351,10 @@ public class MainActivity extends Activity {
     private View volRow(final String label, int value, final boolean pilot) {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.VERTICAL);
-        final TextView l = text(label + ": " + value + "%", 13, false);
-        l.setPadding(0, pad / 2, 0, 0);
+        final TextView l = fieldLabel(label + ": " + value + "%");
         row.addView(l);
         SeekBar sb = new SeekBar(this);
+        Ui.seek(sb);
         sb.setMax(100);
         sb.setProgress(value);
         sb.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
@@ -436,10 +471,10 @@ public class MainActivity extends Activity {
     private View langRow(String label, String current, final boolean ui) {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.VERTICAL);
-        TextView l = text(label, 13, false);
-        l.setPadding(0, pad / 2, 0, 0);
+        TextView l = fieldLabel(label);
         row.addView(l);
         Spinner sp = new Spinner(this);
+        Ui.spinner(this, sp);
         sp.setAdapter(new ArrayAdapter<String>(this, android.R.layout.simple_spinner_dropdown_item, LANG_NAMES));
         sp.setSelection(current.equals("pt") ? 1 : 0);
         sp.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
@@ -464,40 +499,51 @@ public class MainActivity extends Activity {
     }
 
     // ---------- Pilot screen ----------
+    private TextView statusHead;
+    private Boolean lastOn;
+
     private void showPilot() {
+        lastOn = null;
         LinearLayout root = column();
         root.addView(text(Api.t(this, "Pilot", "Piloto"), 24, true));
 
-        callsignBox = addField(root, Api.t(this, "Callsign", "Indicativo"), Api.callsign(this), true, false);
-        extra = new EditText[]{
-                addField(root, Api.t(this, "Departure (ICAO)", "Partida (ICAO)"), Api.field(this, "dep"), true, false),
-                addField(root, Api.t(this, "Arrival (ICAO)", "Chegada (ICAO)"), Api.field(this, "arr"), true, false),
-                addField(root, Api.t(this, "Aircraft model", "Modelo da aeronave"), Api.field(this, "model"), true, false),
-                addField(root, Api.t(this, "Airline / livery", "Companhia / pintura"), Api.field(this, "livery"), false, false),
-                addField(root, Api.t(this, "Cruise alt (ft)", "Altitude de cruzeiro (ft)"), Api.field(this, "cruise"), false, true),
-                addField(root, Api.t(this, "Squawk (4 digits)", "Squawk (4 dígitos)"), Api.field(this, "squawk"), false, true),
-                addField(root, Api.t(this, "Route (optional)", "Rota (opcional)"), Api.field(this, "route"), true, false)};
+        LinearLayout card = section(root, Api.t(this, "Flight", "Voo"));
+        callsignBox = addField(card, Api.t(this, "Callsign", "Indicativo"), Api.callsign(this), true, false);
+        LinearLayout r1 = fieldRow(card);
+        EditText dep = addField(r1, Api.t(this, "Departure (ICAO)", "Partida (ICAO)"), Api.field(this, "dep"), true, false);
+        EditText arr = addField(r1, Api.t(this, "Arrival (ICAO)", "Chegada (ICAO)"), Api.field(this, "arr"), true, false);
+        LinearLayout r2 = fieldRow(card);
+        EditText model = addField(r2, Api.t(this, "Aircraft model", "Modelo da aeronave"), Api.field(this, "model"), true, false);
+        EditText livery = addField(r2, Api.t(this, "Airline / livery", "Companhia / pintura"), Api.field(this, "livery"), false, false);
+        LinearLayout r3 = fieldRow(card);
+        EditText cruise = addField(r3, Api.t(this, "Cruise alt (ft)", "Altitude de cruzeiro (ft)"), Api.field(this, "cruise"), false, true);
+        EditText squawk = addField(r3, Api.t(this, "Squawk (4 digits)", "Squawk (4 dígitos)"), Api.field(this, "squawk"), false, true);
+        EditText route = addField(card, Api.t(this, "Route (optional)", "Rota (opcional)"), Api.field(this, "route"), true, false);
+        extra = new EditText[]{dep, arr, model, livery, cruise, squawk, route};   // same order as EXTRA_KEYS
 
-        startStop = new Button(this);
+        startStop = Ui.button(this, "", Ui.PRIMARY);
         startStop.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { toggle(); }
         });
-        root.addView(startStop);
+        root.addView(startStop, Ui.lp(this, 16));
 
-        Button map = new Button(this);
-        map.setText(Api.t(this, "Map", "Mapa"));
+        Button map = Ui.button(this, Api.t(this, "Map", "Mapa"), Ui.SECONDARY);
         map.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) {
                 startActivity(new Intent(MainActivity.this, MapActivity.class));
             }
         });
-        root.addView(map);
+        root.addView(map, Ui.lp(this, 10));
 
-        status = text("", 14, false);
-        status.setPadding(0, pad, 0, 0);
+        LinearLayout sc = section(root, "Status");
+        statusHead = text("", 16, true);
+        statusHead.setPadding(0, pad / 3, 0, 0);
+        sc.addView(statusHead);
+        status = text("", 13, false);
+        status.setPadding(0, pad / 3, 0, 0);
         status.setTypeface(Typeface.MONOSPACE);
         status.setTextIsSelectable(true);
-        root.addView(status);
+        sc.addView(status);
 
         ScrollView sv = new ScrollView(this);
         sv.addView(root);
@@ -508,16 +554,33 @@ public class MainActivity extends Activity {
     private EditText[] extra;
     private static final String[] EXTRA_KEYS = {"dep", "arr", "model", "livery", "cruise", "squawk", "route"};
 
-    private EditText addField(LinearLayout root, String label, String value, boolean caps, boolean digits) {
-        TextView l = text(label, 13, false);
-        l.setPadding(0, pad / 2, 0, 0);
-        root.addView(l);
+    /** Horizontal row that holds two fields side by side. */
+    private LinearLayout fieldRow(LinearLayout parent) {
+        LinearLayout r = new LinearLayout(this);
+        r.setOrientation(LinearLayout.HORIZONTAL);
+        parent.addView(r, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        return r;
+    }
+
+    private EditText addField(LinearLayout parent, String label, String value, boolean caps, boolean digits) {
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.addView(fieldLabel(label));
         EditText e = new EditText(this);
         e.setSingleLine(true);
         e.setInputType(digits ? InputType.TYPE_CLASS_NUMBER
                 : InputType.TYPE_CLASS_TEXT | (caps ? InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS : 0));
         e.setText(value);
-        root.addView(e);
+        Ui.field(this, e);
+        col.addView(e);
+        if (parent.getOrientation() == LinearLayout.HORIZONTAL) {
+            LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+            if (parent.getChildCount() > 0) p.leftMargin = Ui.dp(this, 10);
+            parent.addView(col, p);
+        } else {
+            parent.addView(col);
+        }
         return e;
     }
 
@@ -558,12 +621,17 @@ public class MainActivity extends Activity {
         if (status == null) return;
         boolean on = PilotService.running;
         startStop.setText(on ? Api.t(this, "Stop", "Parar") : Api.t(this, "Start", "Iniciar"));
+        if (lastOn == null || lastOn != on) {   // restyle only on change, so a press ripple is not reset every second
+            lastOn = on;
+            Ui.kind(this, startStop, on ? Ui.DANGER : Ui.PRIMARY);
+        }
+        statusHead.setText("\u25CF " + (on ? Api.t(this, "FLYING", "VOANDO") : Api.t(this, "STOPPED", "PARADO")));
+        statusHead.setTextColor(on ? Ui.GREEN : Ui.DIM);
         callsignBox.setEnabled(!on);
         for (EditText e : extra) e.setEnabled(!on);
         String raw = PilotService.lastRaw;
         if (raw.length() > 300) raw = raw.substring(0, 300) + "...";
-        String shown = (Api.t(this, "State: ", "Estado: ") + (on ? Api.t(this, "flying", "voando") : Api.t(this, "stopped", "parado"))
-                + Api.t(this, "\nSim link: ", "\nLink do sim: ") + PilotService.simState
+        String shown = (Api.t(this, "Sim link: ", "Link do sim: ") + PilotService.simState
                 + Api.t(this, "\nServer: ", "\nServidor: ") + PilotService.serverState
                 + Api.t(this, "\nUploads: ", "\nEnvios: ") + PilotService.okCount + " ok / " + PilotService.failCount + Api.t(this, " failed", " falhas")
                 + (Api.radioOn(this) ? "\nRadio: " + RadioPlayer.state : "")
