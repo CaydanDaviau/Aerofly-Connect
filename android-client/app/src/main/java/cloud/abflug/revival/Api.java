@@ -69,6 +69,26 @@ final class Api {
     static boolean speakOn(Context c) { return prefs(c).getBoolean("speak", true); }
     static void setSpeakOn(Context c, boolean on) { prefs(c).edit().putBoolean("speak", on).apply(); }
 
+    /** Speech speed: 0 slow, 1 normal, 2 fast. */
+    private static final float[] RATES = {0.85f, 1.0f, 1.2f};
+    static int rateIdx(Context c) { return Math.max(0, Math.min(2, prefs(c).getInt("rate_idx", 1))); }
+    static void setRateIdx(Context c, int i) { prefs(c).edit().putInt("rate_idx", i).apply(); }
+    static float speechRate(Context c) { return RATES[rateIdx(c)]; }
+
+    /** Chosen TTS voice name for the voice language; empty = automatic. */
+    static String voiceName(Context c) { return prefs(c).getString("voice_name", ""); }
+    static void setVoiceName(Context c, String n) { prefs(c).edit().putString("voice_name", n).apply(); }
+
+    /** Background radio stream: on/off, URL, volume (0-100) for Pilot and Controller. */
+    static boolean streamOn(Context c) { return prefs(c).getBoolean("stream_on", false); }
+    static void setStreamOn(Context c, boolean on) { prefs(c).edit().putBoolean("stream_on", on).apply(); }
+    static String streamUrl(Context c) { return prefs(c).getString("stream_url", "").trim(); }
+    static void setStreamUrl(Context c, String u) { prefs(c).edit().putString("stream_url", u).apply(); }
+    static int volPilot(Context c) { return prefs(c).getInt("vol_pilot", 25); }
+    static void setVolPilot(Context c, int v) { prefs(c).edit().putInt("vol_pilot", v).apply(); }
+    static int volCtl(Context c) { return prefs(c).getInt("vol_ctl", 50); }
+    static void setVolCtl(Context c, int v) { prefs(c).edit().putInt("vol_ctl", v).apply(); }
+
     /** Picks the English or Portuguese text according to the app UI language. */
     static String t(Context c, String en, String pt) { return uiLang(c).equals("pt") ? pt : en; }
 

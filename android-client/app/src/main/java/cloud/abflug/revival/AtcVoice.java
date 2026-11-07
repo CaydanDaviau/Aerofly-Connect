@@ -91,7 +91,7 @@ final class AtcVoice {
         int r = tts.setLanguage(loc);
         if (r == TextToSpeech.LANG_MISSING_DATA || r == TextToSpeech.LANG_NOT_SUPPORTED) return;
         pickOfflineVoice(loc);
-        tts.setSpeechRate(0.95f);
+        tts.setSpeechRate(Api.speechRate(ctx));
 
         File f = new File(ctx.getCacheDir(), "atc_tts_" + (seq++ % 4) + ".wav");
         utterDone = new CountDownLatch(1);
@@ -106,9 +106,18 @@ final class AtcVoice {
         play(radio(pcm, rate[0]), rate[0], onStart);
     }
 
-    /** Prefers an installed (offline) voice of the language, so the app works without internet. */
+    /** Uses the voice chosen in Settings; otherwise prefers an installed (offline) voice of the language. */
     private void pickOfflineVoice(Locale loc) {
         try {
+            String want = Api.voiceName(ctx);
+            if (!want.isEmpty()) {
+                for (Voice v : tts.getVoices()) {
+                    if (v.getName().equals(want) && v.getLocale().getLanguage().equals(loc.getLanguage())) {
+                        tts.setVoice(v);
+                        return;
+                    }
+                }
+            }
             Voice best = null;
             for (Voice v : tts.getVoices()) {
                 Locale vl = v.getLocale();
@@ -245,10 +254,12 @@ final class AtcVoice {
                     .setTransferMode(AudioTrack.MODE_STATIC)
                     .setBufferSizeInBytes(bytes).build();
             t.write(pcm, 0, pcm.length);
+            StreamPlayer.duck(true);   // background radio goes quiet while ATC speaks
             t.play();
             fireStart(onStart);
             Thread.sleep(pcm.length * 1000L / rate + 250);
         } finally {
+            StreamPlayer.duck(false);
             if (t != null) t.release();
             am.abandonAudioFocusRequest(fr);
         }

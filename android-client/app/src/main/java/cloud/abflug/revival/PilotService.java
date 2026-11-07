@@ -89,6 +89,8 @@ public class PilotService extends Service {
             voice = new AtcVoice(this, voiceLang);
         }
 
+        StreamPlayer.start(this, "pilot");   // background radio (only plays if enabled in Settings)
+
         PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
         wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "revival:upload");
         wl.acquire();
@@ -167,6 +169,7 @@ public class PilotService extends Service {
             }
         } finally {
             sim.close();
+            StreamPlayer.stop("pilot");
             if (voice != null) { voice.shutdown(); voice = null; }
             try { Api.send("DELETE", "/api/position", null, key); } catch (Exception ignored) { }
             running = false;
