@@ -169,7 +169,7 @@ public class MainActivity extends Activity {
         ScrollView sv = new ScrollView(this);
         sv.setFillViewport(true);
         sv.addView(root);
-        setContentView(sv);
+        setContentView(Ui.withBackground(this, sv));
     }
 
     // ---------- Settings ----------
@@ -225,7 +225,7 @@ public class MainActivity extends Activity {
 
         ScrollView sv = new ScrollView(this);
         sv.addView(root);
-        setContentView(sv);
+        setContentView(Ui.withBackground(this, sv));
     }
 
     // ---------- Settings helpers: voice picker, speed, radio file + test ----------
@@ -547,7 +547,7 @@ public class MainActivity extends Activity {
 
         ScrollView sv = new ScrollView(this);
         sv.addView(root);
-        setContentView(sv);
+        setContentView(Ui.withBackground(this, sv));
         startTicker();
     }
 

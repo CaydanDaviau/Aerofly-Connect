@@ -6,7 +6,10 @@ import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.RippleDrawable;
 import android.widget.Button;
+import android.view.View;
 import android.widget.EditText;
+import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.SeekBar;
 import android.widget.Spinner;
@@ -17,9 +20,10 @@ import android.widget.TextView;
 final class Ui {
     private Ui() { }
 
-    static final int BG = 0xFF0B1626, CARD = 0xFF13233A, FIELD = 0xFF0E1B2E, STROKE = 0xFF24405F;
-    static final int CYAN = 0xFF22D3EE, AMBER = 0xFFFFB020, RED = 0xFFE5484D, GREEN = 0xFF34D399;
-    static final int TXT = 0xFFE6EEF8, DIM = 0xFF8FA6C4, ON_ACCENT = 0xFF04222B;
+    // Palette built around #00414B (the background image's base colour).
+    static final int BG = 0xFF00414B, CARD = 0xDD012C33, FIELD = 0xFF01242A, STROKE = 0xFF1E7480;
+    static final int CYAN = 0xFF4FE3D0, AMBER = 0xFFFFB020, RED = 0xFFE5584D, GREEN = 0xFF5CE0A0;
+    static final int TXT = 0xFFE8F6F5, DIM = 0xFF8FBCC0, ON_ACCENT = 0xFF00262C;
     static final int PRIMARY = 0, SECONDARY = 1, DANGER = 2;
 
     static int dp(Context c, float v) {
@@ -45,6 +49,20 @@ final class Ui {
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         p.topMargin = dp(c, topDp);
         return p;
+    }
+
+    /** Wraps a screen in the cockpit background image (cropped to fill) with a light dim for readability. */
+    static View withBackground(Context c, View content) {
+        FrameLayout f = new FrameLayout(c);
+        ImageView iv = new ImageView(c);
+        iv.setImageResource(R.drawable.bg_main);
+        iv.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        f.addView(iv, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        View dim = new View(c);
+        dim.setBackgroundColor(0x55002B32);
+        f.addView(dim, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        f.addView(content, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        return f;
     }
 
     static LinearLayout card(Context c) {
@@ -105,7 +123,7 @@ final class Ui {
         s.setThumbTintList(new ColorStateList(
                 new int[][]{{android.R.attr.state_checked}, {}}, new int[]{CYAN, 0xFF9FB3CC}));
         s.setTrackTintList(new ColorStateList(
-                new int[][]{{android.R.attr.state_checked}, {}}, new int[]{0x6622D3EE, 0x44FFFFFF}));
+                new int[][]{{android.R.attr.state_checked}, {}}, new int[]{0x664FE3D0, 0x44FFFFFF}));
     }
 
     static void seek(SeekBar s) {
