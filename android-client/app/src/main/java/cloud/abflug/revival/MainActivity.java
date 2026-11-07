@@ -11,7 +11,12 @@ import android.os.Handler;
 import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
+import android.widget.AdapterView;
+import android.widget.ArrayAdapter;
 import android.widget.Button;
+import android.widget.CompoundButton;
+import android.widget.Spinner;
+import android.widget.Switch;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -42,7 +47,7 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        if (status != null) showStart(); else super.onBackPressed();
+        if (status != null || inSettings) { inSettings = false; showStart(); } else super.onBackPressed();
     }
 
     private LinearLayout column() {
@@ -64,6 +69,7 @@ public class MainActivity extends Activity {
     private void showStart() {
         stopTicker();
         status = null;
+        inSettings = false;
         LinearLayout root = column();
         root.setGravity(Gravity.CENTER_HORIZONTAL);
         root.addView(text("Aerofly Connect", 28, true));
@@ -73,37 +79,102 @@ public class MainActivity extends Activity {
         root.addView(info);
 
         Button pilot = new Button(this);
-        pilot.setText("Pilot");
+        pilot.setText(Api.t(this, "Pilot", "Piloto"));
         pilot.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { showPilot(); }
         });
         root.addView(pilot);
 
         Button ctl = new Button(this);
-        ctl.setText("Controller");
+        ctl.setText(Api.t(this, "Controller", "Controlador"));
         ctl.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) {
                 startActivity(new Intent(MainActivity.this, ControllerActivity.class));
             }
         });
         root.addView(ctl);
+
+        Button set = new Button(this);
+        set.setText(Api.t(this, "Settings", "Configurações"));
+        set.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { showSettings(); }
+        });
+        root.addView(set);
         setContentView(root);
+    }
+
+    // ---------- Settings ----------
+    private boolean inSettings;
+
+    private void showSettings() {
+        stopTicker();
+        status = null;
+        inSettings = true;
+        LinearLayout root = column();
+        root.addView(text(Api.t(this, "Settings", "Configurações"), 24, true));
+
+        Switch sp = new Switch(this);
+        sp.setText(Api.t(this, "Speak ATC messages", "Falar mensagens do ATC"));
+        sp.setTextSize(16);
+        sp.setPadding(0, pad, 0, pad / 2);
+        sp.setChecked(Api.speakOn(this));
+        sp.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override public void onCheckedChanged(CompoundButton b, boolean on) { Api.setSpeakOn(MainActivity.this, on); }
+        });
+        root.addView(sp);
+
+        root.addView(langRow(Api.t(this, "App language", "Idioma do app"), Api.uiLang(this), true));
+        root.addView(langRow(Api.t(this, "Voice language", "Idioma da voz"), Api.voiceLang(this), false));
+
+        ScrollView sv = new ScrollView(this);
+        sv.addView(root);
+        setContentView(sv);
+    }
+
+    private static final String[] LANG_CODES = {"en", "pt"};
+    private static final String[] LANG_NAMES = {"English", "Português BR"};
+
+    private View langRow(String label, String current, final boolean ui) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.VERTICAL);
+        TextView l = text(label, 13, false);
+        l.setPadding(0, pad / 2, 0, 0);
+        row.addView(l);
+        Spinner sp = new Spinner(this);
+        sp.setAdapter(new ArrayAdapter<String>(this, android.R.layout.simple_spinner_dropdown_item, LANG_NAMES));
+        sp.setSelection(current.equals("pt") ? 1 : 0);
+        sp.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override public void onItemSelected(AdapterView<?> p, View v, int pos, long id) {
+                String code = LANG_CODES[pos];
+                if (ui) {
+                    if (code.equals(Api.uiLang(MainActivity.this))) return;
+                    Api.setUiLang(MainActivity.this, code);
+                    PilotService.refreshNotif(MainActivity.this);
+                    showSettings(); // redraw in the new language
+                } else {
+                    Api.setVoiceLang(MainActivity.this, code);
+                }
+            }
+            @Override public void onNothingSelected(AdapterView<?> p) { }
+        });
+        row.addView(sp);
+        return row;
     }
 
     // ---------- Pilot screen ----------
     private void showPilot() {
         LinearLayout root = column();
-        root.addView(text("Pilot", 24, true));
+        root.addView(text(Api.t(this, "Pilot", "Piloto"), 24, true));
 
-        callsignBox = addField(root, "Callsign", Api.callsign(this), true, false);
+        callsignBox = addField(root, Api.t(this, "Callsign", "Indicativo"), Api.callsign(this), true, false);
         extra = new EditText[]{
-                addField(root, "Departure (ICAO)", Api.field(this, "dep"), true, false),
-                addField(root, "Arrival (ICAO)", Api.field(this, "arr"), true, false),
-                addField(root, "Aircraft model", Api.field(this, "model"), true, false),
-                addField(root, "Airline / livery", Api.field(this, "livery"), false, false),
-                addField(root, "Cruise alt (ft)", Api.field(this, "cruise"), false, true),
-                addField(root, "Squawk (4 digits)", Api.field(this, "squawk"), false, true),
-                addField(root, "Route (optional)", Api.field(this, "route"), true, false)};
+                addField(root, Api.t(this, "Departure (ICAO)", "Partida (ICAO)"), Api.field(this, "dep"), true, false),
+                addField(root, Api.t(this, "Arrival (ICAO)", "Chegada (ICAO)"), Api.field(this, "arr"), true, false),
+                addField(root, Api.t(this, "Aircraft model", "Modelo da aeronave"), Api.field(this, "model"), true, false),
+                addField(root, Api.t(this, "Airline / livery", "Companhia / pintura"), Api.field(this, "livery"), false, false),
+                addField(root, Api.t(this, "Cruise alt (ft)", "Altitude de cruzeiro (ft)"), Api.field(this, "cruise"), false, true),
+                addField(root, Api.t(this, "Squawk (4 digits)", "Squawk (4 dígitos)"), Api.field(this, "squawk"), false, true),
+                addField(root, Api.t(this, "Route (optional)", "Rota (opcional)"), Api.field(this, "route"), true, false)};
 
         startStop = new Button(this);
         startStop.setOnClickListener(new View.OnClickListener() {
@@ -112,7 +183,7 @@ public class MainActivity extends Activity {
         root.addView(startStop);
 
         Button map = new Button(this);
-        map.setText("Map");
+        map.setText(Api.t(this, "Map", "Mapa"));
         map.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) {
                 startActivity(new Intent(MainActivity.this, MapActivity.class));
@@ -184,17 +255,17 @@ public class MainActivity extends Activity {
     private void refresh() {
         if (status == null) return;
         boolean on = PilotService.running;
-        startStop.setText(on ? "Stop" : "Start");
+        startStop.setText(on ? Api.t(this, "Stop", "Parar") : Api.t(this, "Start", "Iniciar"));
         callsignBox.setEnabled(!on);
         for (EditText e : extra) e.setEnabled(!on);
         String raw = PilotService.lastRaw;
         if (raw.length() > 300) raw = raw.substring(0, 300) + "...";
-        String shown = ("State: " + (on ? "flying" : "stopped")
-                + "\nSim link: " + PilotService.simState
-                + "\nServer: " + PilotService.serverState
-                + "\nUploads: " + PilotService.okCount + " ok / " + PilotService.failCount + " failed"
-                + "\nKey: " + Api.key(this)
-                + "\n\nLast sim line:\n" + (raw.isEmpty() ? "(none yet)" : raw));
+        String shown = (Api.t(this, "State: ", "Estado: ") + (on ? Api.t(this, "flying", "voando") : Api.t(this, "stopped", "parado"))
+                + Api.t(this, "\nSim link: ", "\nLink do sim: ") + PilotService.simState
+                + Api.t(this, "\nServer: ", "\nServidor: ") + PilotService.serverState
+                + Api.t(this, "\nUploads: ", "\nEnvios: ") + PilotService.okCount + " ok / " + PilotService.failCount + Api.t(this, " failed", " falhas")
+                + Api.t(this, "\nKey: ", "\nChave: ") + Api.key(this)
+                + Api.t(this, "\n\nLast sim line:\n", "\n\nÚltima linha do sim:\n") + (raw.isEmpty() ? Api.t(this, "(none yet)", "(nenhuma ainda)") : raw));
         // Skip identical text so a text selection is not cleared by the 1 s refresh.
         if (!shown.equals(status.getText().toString())) status.setText(shown);
     }

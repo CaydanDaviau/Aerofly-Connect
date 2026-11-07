@@ -40,11 +40,11 @@ public class PilotService extends Service {
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         return new Notification.Builder(c, "pilot")
                 .setContentTitle("Aerofly Connect")
-                .setContentText("Sharing your position")
+                .setContentText(Api.t(c, "Sharing your position", "Compartilhando sua posição"))
                 .setSmallIcon(android.R.drawable.ic_menu_mylocation)
                 .setOngoing(true)
-                .addAction(new Notification.Action.Builder(null, mapShown ? "Hide map" : "Show map", map).build())
-                .addAction(new Notification.Action.Builder(null, "Stop", stop).build())
+                .addAction(new Notification.Action.Builder(null, mapShown ? Api.t(c, "Hide map", "Ocultar mapa") : Api.t(c, "Show map", "Mostrar mapa"), map).build())
+                .addAction(new Notification.Action.Builder(null, Api.t(c, "Stop", "Parar"), stop).build())
                 .build();
     }
 
@@ -70,8 +70,16 @@ public class PilotService extends Service {
         if (worker != null) return START_NOT_STICKY;
 
         NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-        nm.createNotificationChannel(new NotificationChannel("pilot", "Flight upload", NotificationManager.IMPORTANCE_LOW));
-        nm.createNotificationChannel(new NotificationChannel("atc", "ATC messages", NotificationManager.IMPORTANCE_HIGH));
+        nm.createNotificationChannel(new NotificationChannel("pilot", Api.t(this, "Flight upload", "Envio do voo"), NotificationManager.IMPORTANCE_LOW));
+        nm.deleteNotificationChannel("atc"); // old channel: heads-up + sound for every message
+        // Normal messages: no sound, vibration or heads-up; they wait in the shade.
+        NotificationChannel quiet = new NotificationChannel("atc_quiet", Api.t(this, "ATC messages", "Mensagens do ATC"), NotificationManager.IMPORTANCE_LOW);
+        quiet.setSound(null, null);
+        quiet.enableVibration(false);
+        quiet.setShowBadge(false);
+        nm.createNotificationChannel(quiet);
+        // Urgent messages: heads-up pop up.
+        nm.createNotificationChannel(new NotificationChannel("atc_urgent", Api.t(this, "ATC urgent messages", "Mensagens urgentes do ATC"), NotificationManager.IMPORTANCE_HIGH));
         Notification n = buildNotif(this);
         startForeground(1, n);
 
@@ -153,6 +161,7 @@ public class PilotService extends Service {
             }
         } finally {
             sim.close();
+            if (voice != null) { voice.shutdown(); voice = null; }
             try { Api.send("DELETE", "/api/position", null, key); } catch (Exception ignored) { }
             running = false;
             simState = "-";
@@ -163,6 +172,20 @@ public class PilotService extends Service {
     }
 
     private static int nextNid = 100;
+    private AtcVoice voice;
+    private String voiceLang;
+
+    /** Speaks the message with the radio effect, if "Speak" is on. Created on first use. */
+    private void speak(String text) {
+        if (!Api.speakOn(this)) return;
+        String lang = Api.voiceLang(this);
+        if (voice == null || !lang.equals(voiceLang)) {
+            if (voice != null) voice.shutdown();
+            voice = new AtcVoice(this, lang);
+            voiceLang = lang;
+        }
+        voice.speak(text);
+    }
 
     /** The position response carries new ATC messages: one heads-up notification each. */
     private void showMessages(String body) {
@@ -176,15 +199,17 @@ public class PilotService extends Service {
                 String text = m.optString("text");
                 if (id.isEmpty() || text.isEmpty()) continue;
                 int nid = nextNid++;
-                Notification.Builder b = new Notification.Builder(this, "atc")
-                        .setContentTitle("ATC")
+                boolean urgent = m.optBoolean("urgent", false);
+                Notification.Builder b = new Notification.Builder(this, urgent ? "atc_urgent" : "atc_quiet")
+                        .setContentTitle(urgent ? Api.t(this, "ATC - URGENT", "ATC - URGENTE") : "ATC")
                         .setContentText(text)
                         .setStyle(new Notification.BigTextStyle().bigText(text))
                         .setSmallIcon(android.R.drawable.ic_dialog_info)
                         .setAutoCancel(true)
                         .addAction(new Notification.Action.Builder(null, "Wilco", replyIntent(id, "wilco", nid)).build())
-                        .addAction(new Notification.Action.Builder(null, "Unable", replyIntent(id, "unable", nid)).build());
+                        .addAction(new Notification.Action.Builder(null, Api.t(this, "Unable", "Impossível"), replyIntent(id, "unable", nid)).build());
                 nm.notify(nid, b.build());
+                speak(text);
             }
         } catch (Exception ignored) {
         }
