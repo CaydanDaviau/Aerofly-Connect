@@ -52,10 +52,10 @@ final class Ui {
     }
 
     /** Wraps a screen in the cockpit background image (cropped to fill) with a light dim for readability. */
-    static View withBackground(Context c, View content) {
+    static View withBackground(Context c, View content, int imageRes) {
         FrameLayout f = new FrameLayout(c);
         ImageView iv = new ImageView(c);
-        iv.setImageResource(R.drawable.bg_main);
+        iv.setImageResource(imageRes);
         iv.setScaleType(ImageView.ScaleType.CENTER_CROP);
         f.addView(iv, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
         View dim = new View(c);
