@@ -107,7 +107,8 @@ var trails={},ranges=[1,2,5,10,25,50,100,250,500,1000];
 
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
 function p3(n){n=Math.round(n);return (n<100?'0':'')+(n<10?'0':'')+n}
-function altStr(ft){if(ft==null||isNaN(ft))return '---';return ft>=18000?'FL'+p3(ft/100):'A'+p3(ft/100)}
+function altStr(ft){if(ft==null||isNaN(ft))return '---';return ft>=TA?'FL'+p3(ft/100):'A'+p3(ft/100)}
+var TA=5000; /* transition altitude (ft): FL above, A (altitude in hundreds) below */
 function isTwr(a){return /^ATC_/i.test(a.callsign||'')}
 function rel(a){var dy=(a.latitude-center.lat)*60,dx=(a.longitude-center.lon)*60*Math.cos(center.lat*Math.PI/180);
   return{dx:dx,dy:dy,dist:Math.hypot(dx,dy),brg:(Math.atan2(dx,dy)*180/Math.PI+360)%360}}
@@ -231,6 +232,7 @@ function draw(){
       if(gs>3){var len=Math.min(60,(gs/60)/nmpp);g.beginPath();g.moveTo(x,y);g.lineTo(x+Math.sin(hd)*len,y-Math.cos(hd)*len);g.stroke()}}
     g.fillStyle=col;g.font='11px ui-monospace,monospace';g.textBaseline='top';
     g.fillText((a.callsign||id),x+(tw?15:9),y-12);
+    if(!tw&&a.airplane_model){g.textAlign='center';g.fillText(String(a.airplane_model).slice(0,12),x,y-25);g.textAlign='left'}
     if(!tw)g.fillText(altStr(a.altitude_ft)+' '+Math.round(Number(a.ground_speed)||0)+'kt'+(asg?'  '+asg:''),x+9,y-1);
     if(isSel){g.strokeStyle='#7ae9ff';g.lineWidth=1;g.beginPath();g.arc(x,y,13,0,6.2832);g.stroke()}
   }
@@ -287,6 +289,7 @@ function renderStrips(force){
       '<div class="h"><span class="cs">'+esc(a.callsign||id)+(tw?' &#9650;':'')+'</span><span class="m">'+Math.round(r.dist)+' nm / '+p3(r.brg)+'&deg;</span></div>'+
       (tw?'':'<div>'+altStr(a.altitude_ft)+' &middot; '+Math.round(Number(a.ground_speed)||0)+' kt &middot; HDG '+p3(Number(a.heading_mag!=null?a.heading_mag:a.heading_true)||0)+'&deg;'+(a.heading_mag==null?'T':'')+' &middot; '+(Number(a.vertical_speed_ft_min)>100?'&uarr;':Number(a.vertical_speed_ft_min)<-100?'&darr;':'&rarr;')+'</div>')+
       (tw?'':'<div>'+st+'</div>')+
+      (!tw&&(a.airplane_model||a.departure_runway||a.arrival_runway)?'<div class="m">'+(a.airplane_model?esc(a.airplane_model):'')+((a.departure_runway||a.arrival_runway)?(a.airplane_model?' &middot; ':'')+'RWY '+esc(a.departure_runway||'--')+' &rarr; '+esc(a.arrival_runway||'--'):'')+'</div>':'')+
       (route||cruise?'<div class="route">'+route+(cruise?' &middot; '+L('cruise ','cruzeiro ')+esc(cruise):'')+'</div>':'')+
       (a.flightplan_route?'<div class="m">'+esc(a.flightplan_route)+'</div>':'')+ml+ctl+'</div>'}).join('')}
 $('strips').addEventListener('click',function(e){
@@ -344,7 +347,7 @@ function poll(force){
     if(!manual){var tw=ac.filter(isTwr)[0];if(tw){center.lat=tw.latitude;center.lon=tw.longitude}
       else if(!centroidDone&&ac.length){center.lat=ac.reduce(function(s,a){return s+a.latitude},0)/ac.length;
         center.lon=ac.reduce(function(s,a){return s+a.longitude},0)/ac.length;centroidDone=true}}
-    setStatus(ac.length+L(' aircraft',' aeronaves'),true);draw();renderStrips();renderTowerBox()
+    var nT=ac.filter(isTwr).length,nA=ac.length-nT;setStatus(nA+L(' aircraft',' aeronaves')+' · '+nT+L(nT===1?' tower':' towers',nT===1?' torre':' torres'),true);draw();renderStrips();renderTowerBox()
   }).catch(function(){setStatus(L('offline','sem conexão'),false)})}
 document.addEventListener('visibilitychange',function(){if(!document.hidden)poll(true)});
 initBg();resize();applyRange();draw();loadRunways();refreshMyTowers();setInterval(refreshMyTowers,30*60000);poll(true);setInterval(poll,5000);

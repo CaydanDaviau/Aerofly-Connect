@@ -322,6 +322,8 @@ export class Hub {
         squawk: sq, squawk_code: sq,
         airborne_flag: pick(d, "airborne_flag"),
         heading_mag: pick(d, "heading_mag"),
+        eta_min: pick(d, "eta_min"),
+        landing_fpm: pick(d, "landing_fpm"),
         airplane_model: pick(d, "airplane_model"),
         airplane_livery: pick(d, "airplane_livery", "livery"),
         timestamp: pick(d, "timestamp") ?? Math.floor(Date.now() / 1000),

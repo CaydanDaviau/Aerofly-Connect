@@ -142,9 +142,10 @@ public class MapActivity extends Activity {
         if (!pageReady || !PilotService.running || !PilotService.hasPos) return;
         String cs = Api.callsign(this).trim().toUpperCase(Locale.US).replace("'", "");
         web.evaluateJavascript(String.format(Locale.US,
-                "window.__appOwn=true;window.setOwn&&window.setOwn(%f,%f,%f,%f,%f,'%s')",
+                "window.__appOwn=true;window.setOwn&&window.setOwn(%f,%f,%f,%f,%f,'%s',%d,%s)",
                 PilotService.lastLat, PilotService.lastLon, PilotService.lastHdg,
-                PilotService.lastGs, PilotService.lastAlt, cs), null);
+                PilotService.lastGs, PilotService.lastAlt, cs, Phase.etaMin,
+                Phase.landingShown(System.currentTimeMillis()) ? String.valueOf(Phase.landFpm) : "null"), null);
     }
 
     static final String ACT_TOGGLE = "cloud.abflug.revival.TOGGLE_MAP";

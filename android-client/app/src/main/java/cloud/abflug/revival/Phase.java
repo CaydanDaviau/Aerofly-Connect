@@ -11,6 +11,13 @@ final class Phase {
     private Phase() {}
 
     static volatile boolean clearance, taxi, takeoff, land;
+    /** Minutes to the arrival airport (straight line / ground speed), -1 = unknown. */
+    static volatile int etaMin = -1;
+    /** Last touchdown rate (ft/min, negative = descending), shown until landUntil (ms). */
+    static volatile int landFpm;
+    static volatile long landUntil;
+    private static double candFpm;
+    private static long candAt;
 
     private static Airports.Apt dep, arr;
     private static boolean init, airborne, cleared;
@@ -22,7 +29,10 @@ final class Phase {
     static synchronized void reset() {
         dep = null; arr = null; init = false; airborne = false; cleared = false; slowSince = 0;
         clearance = false; taxi = false; takeoff = false; land = false;
+        etaMin = -1; landFpm = 0; landUntil = 0; candAt = 0;
     }
+
+    static boolean landingShown(long now) { return now < landUntil; }
 
     /** The pilot got (or asked for) the clearance: the Clearance button dims until the next departure. */
     static synchronized void markCleared() { cleared = true; clearance = false; }
@@ -30,7 +40,7 @@ final class Phase {
     static synchronized void setAirports(Airports.Apt d, Airports.Apt a) { dep = d; arr = a; }
 
     /** Feeds one sample. Returns true when the set of offered requests changed. */
-    static synchronized boolean update(double la, double lo, double altFt, double gsKt, double hdgTrue, long now) {
+    static synchronized boolean update(double la, double lo, double altFt, double gsKt, double hdgTrue, double vs, long now) {
         lat = la; lon = lo; hdg = hdgTrue;
         if (!init) { init = true; groundAlt = altFt; airborne = gsKt >= 80; }
 
@@ -50,6 +60,21 @@ final class Phase {
         boolean t = !airborne && gsKt < 40 && nearDep && !lined;
         boolean o = !airborne && gsKt < 60 && nearDep && (dep == null || lined);
         boolean l = airborne && (arr == null || distNm(la, lo, arr.lat, arr.lon) <= 30);
+
+        // ETA: straight line to the arrival airport at the current ground speed.
+        if (airborne && arr != null && gsKt >= 60) {
+            double m = distNm(la, lo, arr.lat, arr.lon) / gsKt * 60;
+            etaMin = (int) Math.min(5999, Math.round(m));
+        } else etaMin = -1;
+        // Touchdown rate: last descent sample below 200 ft AGL at the arrival airport, taken when the aircraft reaches the ground.
+        if (airborne && arr != null && !Double.isNaN(arr.elev) && distNm(la, lo, arr.lat, arr.lon) <= 5) {
+            double agl = altFt - arr.elev;
+            if (agl < 200 && vs < -50) { candFpm = vs; candAt = now; }
+            boolean touched = agl <= 25 || (candAt != 0 && vs > -50 && agl < 100);
+            if (touched && candAt != 0 && now - candAt < 15000) {
+                landFpm = (int) Math.round(candFpm); landUntil = now + 120000; candAt = 0;
+            }
+        }
 
         boolean changed = cl != clearance || t != taxi || o != takeoff || l != land;
         clearance = cl; taxi = t; takeoff = o; land = l;

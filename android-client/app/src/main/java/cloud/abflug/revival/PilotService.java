@@ -155,11 +155,14 @@ public class PilotService extends Service {
                     lastLat = pos.optDouble("latitude"); lastLon = pos.optDouble("longitude");
                     lastHdg = pos.optDouble("heading_true", 0); lastGs = pos.optDouble("ground_speed", 0);
                     lastAlt = pos.optDouble("altitude_ft", 0); hasPos = true;
-                    if (Phase.update(lastLat, lastLon, lastAlt, lastGs, lastHdg, System.currentTimeMillis())) onPhase();
+                    if (Phase.update(lastLat, lastLon, lastAlt, lastGs, lastHdg, pos.optDouble("vertical_speed_ft_min", 0), System.currentTimeMillis())) onPhase();
                     try {
                         // The sim sends no model/livery; the pilot types them in the app. Squawk is assigned by the controller.
                         putIf(pos, "airplane_model", Api.field(this, "model"));
                         putIf(pos, "airplane_livery", Api.field(this, "livery"));
+                        // Shared with other players (shown when they tap this aircraft on the map).
+                        if (Phase.etaMin >= 0) pos.put("eta_min", Phase.etaMin);
+                        if (Phase.landingShown(System.currentTimeMillis())) pos.put("landing_fpm", Phase.landFpm);
                         // Callsign lives in the flight plan; the app sends it once, so do we.
                         if (!planSent) {
                             JSONObject plan = new JSONObject();
