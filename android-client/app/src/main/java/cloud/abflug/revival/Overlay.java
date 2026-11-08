@@ -44,8 +44,8 @@ final class Overlay {
     private FrameLayout root;
     private WindowManager.LayoutParams lp;
     private TextView bubble, msgText, statusView;
-    private LinearLayout panel, msgRow, reqRow;
-    private Button bWilco, bUnable, bTaxi, bTakeoff, bLand;
+    private LinearLayout panel, msgRow, reqGrid;
+    private Button bWilco, bUnable, bClr, bTaxi, bTakeoff, bLand;
     private boolean expanded, autoExpanded, reqBusy, replyBusy;
     private String shownId = "", statusMsg = "";
 
@@ -169,21 +169,30 @@ final class Overlay {
             msgRow.setVisibility(View.GONE);
             panel.addView(msgRow);
 
-            reqRow = new LinearLayout(ctx);
-            reqRow.setOrientation(LinearLayout.HORIZONTAL);
-            bTaxi = small("Taxi", Ui.SECONDARY);
+            // 2x2 grid, always visible: buttons that do not fit the flight phase are dimmed and inactive.
+            reqGrid = new LinearLayout(ctx);
+            reqGrid.setOrientation(LinearLayout.VERTICAL);
+            bClr = small(Api.t(ctx, "Clearance", "Autorização"), Ui.SECONDARY);
+            bTaxi = small(Api.t(ctx, "Taxi", "Táxi"), Ui.SECONDARY);
             bTakeoff = small(Api.t(ctx, "Take off", "Decolar"), Ui.SECONDARY);
             bLand = small(Api.t(ctx, "Land", "Pousar"), Ui.SECONDARY);
+            bClr.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { request("clearance"); } });
             bTaxi.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { request("taxi"); } });
             bTakeoff.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { request("takeoff"); } });
             bLand.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { request("land"); } });
-            reqRow.addView(bTaxi, weight());
-            reqRow.addView(bTakeoff, weight());
-            reqRow.addView(bLand, weight());
+            LinearLayout r1 = new LinearLayout(ctx), r2 = new LinearLayout(ctx);
+            r1.setOrientation(LinearLayout.HORIZONTAL); r2.setOrientation(LinearLayout.HORIZONTAL);
+            r1.addView(bClr, weight()); r1.addView(bTaxi, weight());
+            r2.addView(bTakeoff, weight()); r2.addView(bLand, weight());
+            reqGrid.addView(r1);
+            LinearLayout.LayoutParams r2p = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            r2p.topMargin = dp(4);
+            reqGrid.addView(r2, r2p);
             LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
             rp.topMargin = dp(6);
-            panel.addView(reqRow, rp);
+            panel.addView(reqGrid, rp);
 
             statusView = new TextView(ctx);
             statusView.setTextSize(12);
@@ -306,18 +315,18 @@ final class Overlay {
             msgRow.setVisibility(View.GONE);
             if (expanded && autoExpanded) { h.removeCallbacks(autoCollapse); h.postDelayed(autoCollapse, 6000); }
         }
-        bTaxi.setVisibility(Phase.taxi ? View.VISIBLE : View.GONE);
-        bTakeoff.setVisibility(Phase.takeoff ? View.VISIBLE : View.GONE);
-        bLand.setVisibility(Phase.land ? View.VISIBLE : View.GONE);
-        boolean any = Phase.taxi || Phase.takeoff || Phase.land;
-        reqRow.setVisibility(any ? View.VISIBLE : View.GONE);
-        bTaxi.setEnabled(!reqBusy); bTakeoff.setEnabled(!reqBusy); bLand.setEnabled(!reqBusy);
+        dim(bClr, Phase.clearance); dim(bTaxi, Phase.taxi); dim(bTakeoff, Phase.takeoff); dim(bLand, Phase.land);
         bWilco.setEnabled(!replyBusy); bUnable.setEnabled(!replyBusy);
         String st = statusMsg;
-        if (st.isEmpty() && !any && it == null) st = Api.t(ctx, "No requests available now", "Nenhum pedido disponível agora");
         statusView.setText(st);
         statusView.setVisibility(st.isEmpty() ? View.GONE : View.VISIBLE);
         if (expanded) root.post(new Runnable() { @Override public void run() { clamp(); } });
+    }
+
+    /** Fits the phase: normal and tappable (unless a request is in flight); otherwise dimmed and inactive. */
+    private void dim(Button b, boolean fits) {
+        b.setEnabled(fits && !reqBusy);
+        b.setAlpha(fits ? 1f : 0.35f);
     }
 
     private void reply(final String r) {

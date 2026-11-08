@@ -137,3 +137,25 @@ ok("tower takes request", t7.mode === "controller");
 const rqm = JSON.parse((await call("GET", "/api/traffic?lat=-15.8&lon=-47.9&radius_miles=50")).slice(4)).atc_messages.find(m => m.id === t7.id);
 ok("request visible to controller, not delivered", rqm && rqm.kind === "request" && rqm.status === "request" && JSON.parse((await call("PUT", "/api/position", { latitude: -15.87, longitude: -47.92 }, "rq3")).slice(4)).messages.length === 0);
 await call("DELETE", "/api/atc/tower?name=SBBR", null, "ctl");
+
+// clearance delivery
+await call("PUT", "/api/flightplan", { callsign: "CLR1", departure_airport: "SBBR", departure_runway: "29L", arrival_airport: "SBGR" }, "cl1");
+await call("PUT", "/api/position", { latitude: -15.87, longitude: -47.92 }, "cl1");
+await new Promise(r => setTimeout(r, 2100));
+let [, c1] = await rq("cl1", { type: "clearance" });
+const sqm = /squawk (\d{4})/.exec(c1.messages && c1.messages[0].text);
+ok("clearance text", c1.mode === "auto" && /^Cleared to SBGR as filed, departure runway 29L, squawk [0-7]{4}$/.test(c1.messages[0].text));
+const cltr = JSON.parse((await call("GET", "/api/traffic?lat=-15.8&lon=-47.9&radius_miles=50")).slice(4)).aircraft.find(a => a.callsign === "CLR1");
+ok("squawk assigned", sqm && cltr.assigned_squawk === sqm[1]);
+await new Promise(r => setTimeout(r, 2100));
+let [, c2] = await rq("cl1", { type: "clearance", lang: "pt" });
+ok("same squawk, pt", c2.messages[0].text === `Autorizado para SBGR conforme o plano, pista de saída 29L, código ${sqm[1]}`);
+await call("PUT", "/api/flightplan", { callsign: "CLR2" }, "cl2");
+await call("PUT", "/api/position", { latitude: -15.87, longitude: -47.92 }, "cl2");
+let [, c3] = await rq("cl2", { type: "clearance" });
+ok("no arrival, no runway", /^Cleared as filed, squawk [0-7]{4}$/.test(c3.messages[0].text) && !c3.messages[0].text.includes(sqm[1]));
+await call("PUT", "/api/atc/tower", { name: "SBBR", latitude: -15.871, longitude: -47.919 }, "ctl");
+await new Promise(r => setTimeout(r, 2100));
+let [, c4] = await rq("cl2", { type: "clearance" });
+ok("tower takes clearance request", c4.mode === "controller" && c4.messages === undefined);
+await call("DELETE", "/api/atc/tower?name=SBBR", null, "ctl");

@@ -10,19 +10,22 @@ package cloud.abflug.revival;
 final class Phase {
     private Phase() {}
 
-    static volatile boolean taxi, takeoff, land;
+    static volatile boolean clearance, taxi, takeoff, land;
 
     private static Airports.Apt dep, arr;
-    private static boolean init, airborne;
+    private static boolean init, airborne, cleared;
     private static double groundAlt, lat, lon, hdg;
     private static long slowSince;
 
     static final double NM = 1852.0;
 
     static synchronized void reset() {
-        dep = null; arr = null; init = false; airborne = false; slowSince = 0;
-        taxi = false; takeoff = false; land = false;
+        dep = null; arr = null; init = false; airborne = false; cleared = false; slowSince = 0;
+        clearance = false; taxi = false; takeoff = false; land = false;
     }
+
+    /** The pilot got (or asked for) the clearance: the Clearance button dims until the next departure. */
+    static synchronized void markCleared() { cleared = true; clearance = false; }
 
     static synchronized void setAirports(Airports.Apt d, Airports.Apt a) { dep = d; arr = a; }
 
@@ -39,15 +42,17 @@ final class Phase {
             if (now - slowSince > 20000 && low) { airborne = false; groundAlt = altFt; }
         } else slowSince = 0;
         if (!airborne && gsKt >= 60 && altFt - groundAlt > 250) airborne = true;
+        if (airborne) cleared = false;   // next departure starts with a new clearance
 
         boolean nearDep = dep == null || distNm(la, lo, dep.lat, dep.lon) <= 5;
         boolean lined = dep != null && nearDep && linedUp() != null;
+        boolean cl = !airborne && !cleared && gsKt < 40 && nearDep && !lined;
         boolean t = !airborne && gsKt < 40 && nearDep && !lined;
         boolean o = !airborne && gsKt < 60 && nearDep && (dep == null || lined);
         boolean l = airborne && (arr == null || distNm(la, lo, arr.lat, arr.lon) <= 30);
 
-        boolean changed = t != taxi || o != takeoff || l != land;
-        taxi = t; takeoff = o; land = l;
+        boolean changed = cl != clearance || t != taxi || o != takeoff || l != land;
+        clearance = cl; taxi = t; takeoff = o; land = l;
         return changed;
     }
 

@@ -47,7 +47,7 @@ public class PilotService extends Service {
                 new Intent(c, RequestReceiver.class).setAction(RequestReceiver.ACT_MENU),
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         // Without the overlay, requests go through a notification button (only when one fits the phase).
-        boolean reqBtn = !Overlay.active && (Phase.taxi || Phase.takeoff || Phase.land);
+        boolean reqBtn = !Overlay.active && (Phase.clearance || Phase.taxi || Phase.takeoff || Phase.land);
         Notification.Builder nb = new Notification.Builder(c, "pilot")
                 .setContentTitle("Aerofly Connect")
                 .setContentText(Api.t(c, "Sharing your position", "Compartilhando sua posição"))
@@ -272,7 +272,7 @@ public class PilotService extends Service {
         if (!Overlay.active) refreshNotif(this);
     }
 
-    /** Sends an auto-ATC request (taxi / takeoff / land) from a background thread; the answer arrives like any ATC message. */
+    /** Sends an auto-ATC request (clearance / taxi / takeoff / land) from a background thread; the answer arrives like any ATC message. */
     static void request(final Context c, final String type, final ReqCb cb) {
         final Context app = c.getApplicationContext();
         new Thread(new Runnable() {
@@ -288,6 +288,11 @@ public class PilotService extends Service {
                     if (r.code < 400) {
                         PilotService s = inst;
                         if (s != null) s.showMessages(r.body);
+                        if (type.equals("clearance")) {
+                            Phase.markCleared();
+                            PilotService s2 = inst;
+                            if (s2 != null) s2.onPhase();
+                        }
                         boolean tower = "controller".equals(new JSONObject(r.body).optString("mode"));
                         fb = tower ? Api.t(app, "Request sent to the tower", "Pedido enviado à torre")
                                 : Api.t(app, "Request sent", "Pedido enviado");

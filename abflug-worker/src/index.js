@@ -60,11 +60,12 @@ function haversineMi(lat1, lon1, lat2, lon2) {
 
 
 // ---- Auto-ATC (basic clearances for pilots when no human controller covers the airport) ----
-const REQ_TYPES = ["taxi", "takeoff", "land"];
+const REQ_TYPES = ["clearance", "taxi", "takeoff", "land"];
 const REQ_LOCK_MS = { takeoff: 90_000, land: 120_000 };
 const TOWER_COVER_MI = 8;   // a human tower this close to the aircraft (or named like its airport) takes the request
 const PHRASE = {
   en: {
+    clearance: (dest, r, sq) => `Cleared ${dest ? "to " + dest + " " : ""}as filed${r ? ", departure runway " + r : ""}, squawk ${sq}`,
     taxi: r => r ? `Taxi to runway ${r}, hold short` : "Taxi to the runway, hold short",
     takeoff: r => r ? `Runway ${r}, cleared for takeoff` : "Cleared for takeoff",
     land: r => r ? `Runway ${r}, cleared to land` : "Cleared to land",
@@ -72,6 +73,7 @@ const PHRASE = {
     busyLand: r => `Runway ${r} occupied, extend and request again`,
   },
   pt: {
+    clearance: (dest, r, sq) => `Autorizado${dest ? " para " + dest : ""} conforme o plano${r ? ", pista de saída " + r : ""}, código ${sq}`,
     taxi: r => r ? `Táxi para a pista ${r}, aguarde antes da pista` : "Táxi para a pista, aguarde antes da pista",
     takeoff: r => r ? `Pista ${r}, autorizado a decolar` : "Autorizado a decolar",
     land: r => r ? `Pista ${r}, autorizado a pousar` : "Autorizado a pousar",
@@ -79,7 +81,7 @@ const PHRASE = {
     busyLand: r => `Pista ${r} ocupada, prolongue e solicite novamente`,
   },
 };
-const REQ_LABEL = { taxi: "taxi", takeoff: "takeoff", land: "landing" };
+const REQ_LABEL = { clearance: "clearance", taxi: "taxi", takeoff: "takeoff", land: "landing" };
 const cleanRunway = v => {
   const m = /^(\d{1,2})([LRC]?)$/.exec(String(v || "").toUpperCase().replace(/\s/g, ""));
   if (!m) return "";
@@ -130,6 +132,21 @@ export class Hub {
     return m;
   }
 
+  // First free squawk in 2000-2777 (random start), or null.
+  pickSquawk() {
+    const used = new Set();
+    for (const c of this.clients.values()) {
+      if (c.assigned) used.add(c.assigned.squawk);
+      if (c.pos && c.pos.squawk) used.add(String(c.pos.squawk));
+    }
+    const start = Math.floor(Math.random() * 512);
+    for (let i = 0; i < 512; i++) {
+      const cand = (0o2000 + ((start + i) % 512)).toString(8).padStart(4, "0");
+      if (!used.has(cand)) return cand;
+    }
+    return null;
+  }
+
   async fetch(request) {
     const url = new URL(request.url);
     const key = (request.headers.get("X-API-Key") || "").trim();
@@ -156,16 +173,7 @@ export class Hub {
       if (!target) return json({ error: "aircraft not found" }, 404);
       let sq = d.squawk === undefined || d.squawk === null || d.squawk === "" ? null : String(d.squawk);
       if (sq === null) {
-        const used = new Set();
-        for (const c of this.clients.values()) {
-          if (c.assigned) used.add(c.assigned.squawk);
-          if (c.pos && c.pos.squawk) used.add(String(c.pos.squawk));
-        }
-        const start = Math.floor(Math.random() * 512);
-        for (let i = 0; i < 512 && sq === null; i++) {
-          const cand = (0o2000 + ((start + i) % 512)).toString(8).padStart(4, "0");
-          if (!used.has(cand)) sq = cand;
-        }
+        sq = this.pickSquawk();
         if (sq === null) return json({ error: "no free squawk" }, 409);
       } else if (!/^[0-7]{4}$/.test(sq) || ["7500", "7600", "7700"].includes(sq)) {
         return json({ error: "invalid squawk (4 octal digits, not 7500/7600/7700)" }, 400);
@@ -215,6 +223,7 @@ export class Hub {
       const ph = PHRASE[d.lang === "pt" ? "pt" : "en"];
       const rwy = cleanRunway(plan[type === "land" ? "arrival_runway" : "departure_runway"]) || cleanRunway(d.runway);
       const apt = String(plan[type === "land" ? "arrival_airport" : "departure_airport"] || "").trim().toUpperCase();
+      const dest = String(plan.arrival_airport || "").trim().toUpperCase();
       // A human controller wins: a tower named like the airport, or one close to the aircraft.
       const human = [...this.towers.values()].some(t =>
         (apt && t.name === apt) || haversineMi(t.latitude, t.longitude, c.pos.latitude, c.pos.longitude) <= TOWER_COVER_MI);
@@ -225,7 +234,16 @@ export class Hub {
       }
       let text, lockKey = rwy ? (apt || "?") + "/" + rwy : null;
       const holder = lockKey && this.rwy.get(lockKey);
-      if (type !== "taxi" && holder && holder.key !== key && this.clients.has(holder.key)) {
+      if (type === "clearance") {
+        // The clearance carries the squawk: keep the one already assigned, else pick a free one.
+        let sq = c.assigned ? c.assigned.squawk : this.pickSquawk();
+        if (sq === null) return json({ error: "no free squawk" }, 409);
+        if (!c.assigned) {
+          c.assigned = { squawk: sq, at: Date.now() };
+          await this.ctx.storage.put("sq:" + c.pos.icao_address, c.assigned);
+        }
+        text = ph.clearance(dest, rwy, sq);
+      } else if (type !== "taxi" && holder && holder.key !== key && this.clients.has(holder.key)) {
         text = (type === "land" ? ph.busyLand : ph.busyTakeoff)(rwy);
       } else {
         text = ph[type](rwy);
