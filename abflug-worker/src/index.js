@@ -58,52 +58,8 @@ function haversineMi(lat1, lon1, lat2, lon2) {
   return 2 * r * Math.asin(Math.sqrt(a));
 }
 
-// Airport surface (taxiways/aprons/terminals) from OpenStreetMap, fetched server-side so the browser never hits Overpass (CORS / blocks), cached at the edge.
-const OVP = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter", "https://maps.mail.ru/osm/tools/overpass/api/interpreter"];
-function compactSurface(j) {
-  const out = [];
-  for (const e of j.elements || []) {
-    if (e.type !== "way" || !e.geometry || e.geometry.length < 2) continue;
-    const t = e.tags || {}, ae = t.aeroway, b = t.building;
-    let k = null, w = 0;
-    if (ae === "taxiway") { k = "T"; w = 23; } else if (ae === "taxilane") { k = "L"; w = 12; } else if (ae === "apron") k = "A";
-    else if (ae === "terminal" || ae === "hangar" || b === "terminal" || b === "hangar" || b === "airport") k = "B";
-    if (!k) continue;
-    const pw = parseFloat(t.width); if (isFinite(pw) && pw > 2 && pw < 80) w = pw;
-    const pts = [];
-    for (const p of e.geometry) pts.push(Math.round(p.lat * 1e5) / 1e5, Math.round(p.lon * 1e5) / 1e5);
-    out.push([k, w, pts]);
-  }
-  return out;
-}
-async function surface(url, ctx) {
-  const lat = parseFloat(url.searchParams.get("lat")), lon = parseFloat(url.searchParams.get("lon"));
-  if (!isFinite(lat) || !isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) return json({ error: "lat/lon required" }, 400);
-  const cache = caches.default, ck = new Request("https://surface.cache/" + lat.toFixed(3) + "/" + lon.toFixed(3));
-  const hit = await cache.match(ck);
-  if (hit) return new Response(hit.body, { headers: { "Content-Type": "application/json", "X-Cache": "hit" } });
-  const dl = 0.045, dn = dl / Math.max(0.2, Math.cos(lat * Math.PI / 180));
-  const bb = [lat - dl, lon - dn, lat + dl, lon + dn].map(v => v.toFixed(5)).join(",");
-  const q = '[out:json][timeout:25];way["aeroway"~"^(taxiway|taxilane|apron|terminal|hangar)$"](' + bb + ");out geom qt;";
-  let last = "no server";
-  for (const base of OVP) {
-    try {
-      const r = await fetch(base, { method: "POST", body: "data=" + encodeURIComponent(q),
-        headers: { "Content-Type": "application/x-www-form-urlencoded", "User-Agent": "AeroflyConnect/1.0 (ATC radar; github.com/caydanphoenix14-sketch/AeroflyTest)", "Accept": "application/json" },
-        signal: AbortSignal.timeout(20000) });
-      if (!r.ok) { last = base.split("/")[2] + " http " + r.status; continue; }
-      const j = await r.json();
-      if (j.remark && /runtime error|timed out/i.test(j.remark)) { last = base.split("/")[2] + " busy"; continue; }
-      const body = JSON.stringify(compactSurface(j));
-      ctx.waitUntil(cache.put(ck, new Response(body, { headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=2592000" } })));
-      return new Response(body, { headers: { "Content-Type": "application/json", "X-Cache": "miss" } });
-    } catch (e) { last = base.split("/")[2] + " " + ((e && e.message) || "error"); }
-  }
-  return json({ error: "overpass unavailable: " + last }, 502);
-}
-
 export default {
-  async fetch(request, env, ctx) {
+  async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === "/atc" || url.pathname === "/atc/")
       return new Response(ATC_HTML, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
@@ -115,7 +71,6 @@ export default {
       const allowed = (env.ABFLUG_KEYS || "").split(",").map(s => s.trim()).filter(Boolean);
       if (!key || (allowed.length && !allowed.includes(key))) return json({ error: "invalid api key" }, 401);
     }
-    if (request.method === "GET" && url.pathname === "/api/surface") return surface(url, ctx);
     if (env.DEBUG) console.log(request.method, url.pathname + url.search, (await request.clone().text()).slice(0, 600));
     const stub = env.HUB.get(env.HUB.idFromName("global"));
     return stub.fetch(request, { headers: request.headers });
