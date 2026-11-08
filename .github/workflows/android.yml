@@ -55,7 +55,7 @@ jobs:
         run: gradle --no-daemon assembleRelease
 
       - name: Name the APK
-        run: cp android-client/app/build/outputs/apk/release/app-release.apk abflug-revival.apk
+        run: cp android-client/app/build/outputs/apk/release/app-release.apk AFConnect.apk
 
       - name: Publish to the rolling release
         env:
@@ -63,10 +63,11 @@ jobs:
         run: |
           NOTES="Build ${{ github.run_number }} from commit ${GITHUB_SHA::7}"
           if gh release view android-latest >/dev/null 2>&1; then
-            gh release upload android-latest abflug-revival.apk --clobber
+            gh release upload android-latest AFConnect.apk --clobber
+            gh release delete-asset android-latest abflug-revival.apk --yes || true   # old name
             gh release edit android-latest --notes "$NOTES"
           else
-            gh release create android-latest abflug-revival.apk --title "Latest Android build" --notes "$NOTES"
+            gh release create android-latest AFConnect.apk --title "Latest Android build" --notes "$NOTES"
           fi
           echo "### Download" >> "$GITHUB_STEP_SUMMARY"
-          echo "https://github.com/${{ github.repository }}/releases/download/android-latest/abflug-revival.apk" >> "$GITHUB_STEP_SUMMARY"
+          echo "https://github.com/${{ github.repository }}/releases/download/android-latest/AFConnect.apk" >> "$GITHUB_STEP_SUMMARY"

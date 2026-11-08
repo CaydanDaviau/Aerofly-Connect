@@ -132,17 +132,27 @@ final class AtcVoice {
         } catch (Throwable ignored) { }
     }
 
-    /** Reads digits one by one after "squawk" and expands FL for natural pronunciation. */
+    /** Prepares the text for speech: every number is read digit by digit ("3000" -> "3, 0, 0, 0"), FL as flight level. */
     private String speakable(String s) {
         boolean pt = lang.equals("pt");
-        java.util.regex.Matcher m = java.util.regex.Pattern.compile("(?i)(squawk|código)\\s*(\\d{4})").matcher(s);
+        s = s.replaceAll("(?i)\\bFL\\s?(\\d{2,3})\\b", pt ? "nível de voo $1" : "flight level $1");
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("\\d+(?:\\.\\d+)?").matcher(s);
         StringBuffer sb = new StringBuffer();
         while (m.find()) {
-            String d = m.group(2);
-            m.appendReplacement(sb, m.group(1) + " " + d.charAt(0) + ", " + d.charAt(1) + ", " + d.charAt(2) + ", " + d.charAt(3));
+            StringBuilder r = new StringBuilder();
+            // keep letters (callsigns like GLO1234, runways like 11L) from gluing onto the digits
+            if (m.start() > 0 && Character.isLetter(s.charAt(m.start() - 1))) r.append(' ');
+            String t = m.group();
+            for (int i = 0; i < t.length(); i++) {
+                if (i > 0) r.append(", ");
+                char c = t.charAt(i);
+                r.append(c == '.' ? "decimal" : String.valueOf(c));
+            }
+            if (m.end() < s.length() && Character.isLetter(s.charAt(m.end()))) r.append(' ');
+            m.appendReplacement(sb, java.util.regex.Matcher.quoteReplacement(r.toString()));
         }
         m.appendTail(sb);
-        return sb.toString().replaceAll("(?i)\\bFL\\s?(\\d{2,3})\\b", pt ? "nível de voo $1" : "flight level $1");
+        return sb.toString();
     }
 
     // ---------- WAV ----------
