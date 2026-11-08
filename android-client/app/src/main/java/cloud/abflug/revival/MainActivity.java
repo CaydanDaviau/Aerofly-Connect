@@ -146,7 +146,7 @@ public class MainActivity extends Activity {
         title.setLetterSpacing(0.12f);
         title.setPadding(0, pad / 2, 0, 0);
         root.addView(title);
-        TextView info = dim("Build " + BuildConfig.VERSION_NAME, 12);
+        TextView info = dim("v" + BuildConfig.VERSION_NAME, 12);
         info.setPadding(0, pad / 6, 0, pad);
         root.addView(info);
 

@@ -40,9 +40,12 @@ function planeShape(g,s){var k=s/64;g.save();g.scale(k,k);g.beginPath();
   g.moveTo(32,3);g.quadraticCurveTo(36,6,36,18);g.lineTo(36,26);g.lineTo(60,40);g.lineTo(60,45);g.lineTo(36,38);g.lineTo(36,50);g.lineTo(45,57);g.lineTo(45,61);g.lineTo(32,57);
   g.lineTo(19,61);g.lineTo(19,57);g.lineTo(28,50);g.lineTo(28,38);g.lineTo(4,45);g.lineTo(4,40);g.lineTo(28,26);g.lineTo(28,18);g.quadraticCurveTo(28,6,32,3);g.closePath();g.fill();g.restore()}
 function towerShape(g,s){var k=s/64;g.save();g.scale(k,k);
-  g.beginPath();g.moveTo(24,60);g.lineTo(28,26);g.lineTo(36,26);g.lineTo(40,60);g.closePath();g.fill();
-  g.beginPath();g.moveTo(18,12);g.lineTo(46,12);g.lineTo(50,26);g.lineTo(14,26);g.closePath();g.fill();
-  g.fillRect(30,4,4,8);g.restore()}
+  g.beginPath();g.moveTo(27,30);g.lineTo(37,30);g.lineTo(40,58);g.lineTo(24,58);g.closePath();g.fill();   // shaft
+  g.fillRect(18,58,28,5);                                                                                   // base
+  g.beginPath();g.moveTo(10,13);g.lineTo(54,13);g.lineTo(46,30);g.lineTo(18,30);g.closePath();g.fill();   // glass cab
+  g.fillRect(13,9,38,4);g.fillRect(31,1,2,8);                                                               // roof + antenna
+  g.globalCompositeOperation='destination-out';                                                             // windows
+  g.fillRect(20,15,5,9);g.fillRect(29.5,15,5,9);g.fillRect(39,15,5,9);g.restore()}
 function addIcons(){
   if(!map.hasImage('plane'))map.addImage('plane',icon(planeShape,64),{sdf:true});
   if(!map.hasImage('tower'))map.addImage('tower',icon(towerShape,64),{sdf:true});
@@ -55,7 +58,7 @@ function addLayers(){
   ['trails','planes','towers','ownsrc'].forEach(function(id){ if(!map.getSource(id))map.addSource(id,{type:'geojson',data:EMPTY}) });
   var halo={'text-halo-color':'#fff','text-halo-width':1.6};
   if(!map.getLayer('trails'))map.addLayer({id:'trails',type:'line',source:'trails',layout:{'line-cap':'round','line-join':'round'},paint:{'line-color':['get','c'],'line-width':2.5,'line-opacity':.65}});
-  if(!map.getLayer('towers'))map.addLayer({id:'towers',type:'symbol',source:'towers',layout:{'icon-image':'tower','icon-size':.6,'icon-allow-overlap':true,'text-field':['get','label'],'text-font':['Noto Sans Bold'],'text-size':12,'text-offset':[0,1.6],'text-anchor':'top','text-allow-overlap':true},paint:{'icon-color':'#c2189a','text-color':'#7a0f62','text-halo-color':'#fff','text-halo-width':1.6}});
+  if(!map.getLayer('towers'))map.addLayer({id:'towers',type:'symbol',source:'towers',layout:{'icon-image':'tower','icon-size':.7,'icon-allow-overlap':true,'text-field':['get','label'],'text-font':['Noto Sans Bold'],'text-size':12,'text-offset':[0,1.9],'text-anchor':'top','text-allow-overlap':true},paint:{'icon-color':'#c2189a','icon-halo-color':'#fff','icon-halo-width':1.2,'text-color':'#7a0f62','text-halo-color':'#fff','text-halo-width':1.6}});
   if(!map.getLayer('planes'))map.addLayer({id:'planes',type:'symbol',source:'planes',layout:{'icon-image':'plane','icon-size':.55,'icon-rotate':['get','h'],'icon-rotation-alignment':'map','icon-allow-overlap':true,'icon-ignore-placement':true,'text-field':['get','label'],'text-font':['Noto Sans Bold'],'text-size':12,'text-offset':[1.4,0],'text-anchor':'left','text-optional':true},paint:{'icon-color':'#e8710a','text-color':'#7a3600','text-halo-color':'#fff','text-halo-width':1.6}});
   if(!map.getLayer('own'))map.addLayer({id:'own',type:'symbol',source:'ownsrc',layout:{'icon-image':'plane','icon-size':.65,'icon-rotate':['get','h'],'icon-rotation-alignment':'map','icon-allow-overlap':true,'icon-ignore-placement':true,'text-field':['get','label'],'text-font':['Noto Sans Bold'],'text-size':12,'text-offset':[1.6,0],'text-anchor':'left','text-optional':true},paint:{'icon-color':'#1a73e8','text-color':'#0b3d91','text-halo-color':'#fff','text-halo-width':1.6}});
   ready=true; render();

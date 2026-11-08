@@ -165,6 +165,13 @@ function resize(){var r=cv.parentNode.getBoundingClientRect(),d=window.devicePix
   W=Math.max(100,r.width);H=Math.max(100,r.height);cv.width=W*d;cv.height=H*d;g.setTransform(d,0,0,d,0,0);draw()}
 window.addEventListener('resize',function(){var old=nmpp*Math.min(W,H)/2;resize();nmpp=old/(Math.min(W,H)/2);draw()});
 
+/* control-tower glyph (same shape as the pilot map icon); s = size in px, windows are drawn in the scope background colour */
+function drawTower(g,x,y,s,col,bg){var k=s/64;g.save();g.translate(x-s/2,y-s/2);g.scale(k,k);g.fillStyle=col;
+  g.beginPath();g.moveTo(27,30);g.lineTo(37,30);g.lineTo(40,58);g.lineTo(24,58);g.closePath();g.fill();
+  g.fillRect(18,58,28,5);
+  g.beginPath();g.moveTo(10,13);g.lineTo(54,13);g.lineTo(46,30);g.lineTo(18,30);g.closePath();g.fill();
+  g.fillRect(13,9,38,4);g.fillRect(31,1,2,8);
+  g.fillStyle=bg;g.fillRect(20,15,5,9);g.fillRect(29.5,15,5,9);g.fillRect(39,15,5,9);g.restore()}
 function draw(){
   g.fillStyle='#040704';g.fillRect(0,0,W,H);
   var maxR=Math.hypot(W,H)/2*nmpp,steps=[1,2,5,10,20,25,50,100,200,500,1000],step=steps[steps.length-1];
@@ -184,12 +191,12 @@ function draw(){
     var tr=trails[id]||[];g.strokeStyle=col;g.globalAlpha=.45;
     for(var t=0;t<tr.length;t++){var q=proj(tr[t]);g.fillStyle=col;g.fillRect(q[0]-1,q[1]-1,2,2)}
     g.globalAlpha=1;
-    if(tw){g.fillStyle=col;g.beginPath();g.moveTo(x,y-7);g.lineTo(x+6,y+5);g.lineTo(x-6,y+5);g.closePath();g.fill()}
+    if(tw){drawTower(g,x,y,24,col,'#040704')}
     else{g.strokeStyle=col;g.lineWidth=isSel?2:1.5;g.strokeRect(x-4,y-4,8,8);
       var gs=Number(a.ground_speed)||0,hd=(Number(a.heading_true)||0)*Math.PI/180;
       if(gs>3){var len=Math.min(60,(gs/60)/nmpp);g.beginPath();g.moveTo(x,y);g.lineTo(x+Math.sin(hd)*len,y-Math.cos(hd)*len);g.stroke()}}
     g.fillStyle=col;g.font='11px ui-monospace,monospace';g.textBaseline='top';
-    g.fillText((a.callsign||id),x+9,y-12);
+    g.fillText((a.callsign||id),x+(tw?15:9),y-12);
     if(!tw)g.fillText(altStr(a.altitude_ft)+' '+Math.round(Number(a.ground_speed)||0)+'kt'+(asg?'  '+asg:''),x+9,y-1);
     if(isSel){g.strokeStyle='#7ae9ff';g.lineWidth=1;g.beginPath();g.arc(x,y,13,0,6.2832);g.stroke()}
   }
