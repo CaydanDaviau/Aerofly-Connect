@@ -163,9 +163,9 @@ function drawRunways(maxR){
 var SURF={},SURF_REQ={},surfBusy=false;
 var OVP=['https://overpass-api.de/api/interpreter','https://overpass.kumi.systems/api/interpreter','https://maps.mail.ru/osm/tools/overpass/api/interpreter'];
 function setSurfMsg(t){var e=$('sfStatus');if(e)e.textContent=t?' \u00b7 '+t:''}
-function surfQuery(a){var c=a.lat.toFixed(5)+','+a.lon.toFixed(5);
-  return '[out:json][timeout:25];(way["aeroway"~"^(taxiway|taxilane|apron|terminal|hangar)$"](around:5000,'+c+');'
-    +'way["building"~"^(terminal|hangar|airport)$"](around:5000,'+c+'););out geom;'}
+function surfQuery(a){var dl=0.045,dn=dl/Math.max(0.2,Math.cos(a.lat*Math.PI/180));   // ~5 km box around the airport
+  var bb=[a.lat-dl,a.lon-dn,a.lat+dl,a.lon+dn].map(function(v){return v.toFixed(5)}).join(',');
+  return '[out:json][timeout:25];way["aeroway"~"^(taxiway|taxilane|apron|terminal|hangar)$"]('+bb+');out geom qt;'}
 /* keep only what is drawn: [kind, width_m, [lat,lon,lat,lon,...]]; kind T taxiway, L taxilane, A apron, B building */
 function compactSurface(j){var out=[];(j.elements||[]).forEach(function(e){
   if(e.type!=='way'||!e.geometry||e.geometry.length<2)return;
@@ -176,21 +176,30 @@ function compactSurface(j){var out=[];(j.elements||[]).forEach(function(e){
   var pw=parseFloat(t.width);if(isFinite(pw)&&pw>2&&pw<80)w=pw;
   var pts=[];e.geometry.forEach(function(p){pts.push(Math.round(p.lat*1e5)/1e5,Math.round(p.lon*1e5)/1e5)});
   out.push([k,w,pts])});return out}
-function fetchSurface(icao){var a=APT[icao];if(!a)return Promise.resolve();
+var OV_MS=20000;
+/* GET + parse JSON with a hard timeout, so a hanging server can never leave the status on "loading" */
+function ovGet(url){return new Promise(function(res,rej){
+  var ctl=typeof AbortController!=='undefined'?new AbortController():null;
+  var t=setTimeout(function(){if(ctl)ctl.abort();rej(new Error('timeout'))},OV_MS);
+  fetch(url,ctl?{signal:ctl.signal}:{}).then(function(r){if(!r.ok)throw new Error('http '+r.status);return r.json()}).then(
+    function(j){clearTimeout(t);res(j)},function(e){clearTimeout(t);rej(e)})})}
+function fetchSurface(icao,onTry){var a=APT[icao];if(!a)return Promise.resolve('no airport');
   return idbGet('surf:'+icao).then(function(c){
-    if(c&&c.w&&Date.now()-c.t<30*86400000){SURF[icao]=c.w;return}
-    return new Promise(function(res){var i=0;(function next(){if(i>=OVP.length){res();return}
-      fetch(OVP[i++]+'?data='+encodeURIComponent(surfQuery(a))).then(function(r){if(!r.ok)throw 0;return r.json()}).then(function(j){
-        if(j.remark&&/runtime error|timed out/i.test(j.remark))throw 0;
-        var w=compactSurface(j);SURF[icao]=w;idbSet('surf:'+icao,{t:Date.now(),w:w});res()}).catch(next)})()})})}
+    if(c&&c.w&&Date.now()-c.t<30*86400000){SURF[icao]=c.w;return''}
+    return new Promise(function(res){var i=0,last='';(function next(){if(i>=OVP.length){res(last||'failed');return}
+      if(onTry)onTry(i+1,OVP.length);
+      ovGet(OVP[i++]+'?data='+encodeURIComponent(surfQuery(a))).then(function(j){
+        if(j.remark&&/runtime error|timed out/i.test(j.remark))throw new Error('server busy');
+        var w=compactSurface(j);SURF[icao]=w;idbSet('surf:'+icao,{t:Date.now(),w:w});res('')}).catch(function(e){last=(e&&e.message)||'error';next()})})()})})}
 /* loads the surface of the airport nearest to the scope centre (one at a time) once zoomed in to airport scale */
 function ensureSurface(){if(nmpp>=0.08||rwState!=='ready'||surfBusy)return;
   var cl=Math.cos(center.lat*Math.PI/180),best=null,bd=4;
   for(var k in APT){if(SURF[k]||(SURF_REQ[k]&&Date.now()-SURF_REQ[k]<300000))continue;var a=APT[k];
     var d=Math.hypot((a.lat-center.lat)*60,(a.lon-center.lon)*60*cl);if(d<bd){bd=d;best=k}}
   if(!best)return;surfBusy=true;SURF_REQ[best]=Date.now();setSurfMsg(best+' taxiways: loading...');
-  fetchSurface(best).then(function(){surfBusy=false;
-    setSurfMsg(SURF[best]?(SURF[best].length?best+' taxiways: ok':best+' taxiways: no OSM data'):best+' taxiways unavailable');draw()}).catch(function(){surfBusy=false})}
+  fetchSurface(best,function(n,m){setSurfMsg(best+' taxiways: loading (server '+n+'/'+m+')...')}).then(function(err){surfBusy=false;
+    setSurfMsg(SURF[best]?(SURF[best].length?best+' taxiways: ok':best+' taxiways: no OSM data'):best+' taxiways unavailable ('+err+') - tap to retry');draw()}).catch(function(){surfBusy=false;setSurfMsg(best+' taxiways unavailable - tap to retry')})}
+$('sfStatus').addEventListener('click',function(){if(!/retry/.test(this.textContent))return;SURF_REQ={};ensureSurface()});
 function drawSurface(){
   if(nmpp>=0.08)return;clearTimeout(ensureSurface.t);ensureSurface.t=setTimeout(ensureSurface,400);
   var ks=Object.keys(SURF);if(!ks.length)return;
