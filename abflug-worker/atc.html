@@ -49,7 +49,7 @@ input::placeholder{color:var(--dim)}
 #rwStatus button{padding:1px 6px;font-size:11px}
 #bgmap{position:absolute;inset:0;z-index:0}
 #radar{z-index:1}
-#attr{position:absolute;right:4px;bottom:2px;z-index:2;font-size:9px;color:#8c8c8c;pointer-events:none}
+#attr{position:absolute;right:4px;bottom:2px;z-index:2;font-size:8px;color:#8c8c8c;opacity:.45;pointer-events:none}
 .maplibregl-canvas{outline:none}
 </style>
 </head>
@@ -65,7 +65,7 @@ input::placeholder{color:var(--dim)}
     <span id="status">offline</span>
   </div>
   <div id="main">
-    <div id="scope"><div id="bgmap"></div><canvas id="radar"></canvas><div id="attr">© OpenStreetMap · OpenFreeMap</div></div>
+    <div id="scope"><div id="bgmap"></div><canvas id="radar"></canvas><div id="attr">© OSM · OpenFreeMap</div></div>
     <div id="strips">
       <div id="twrbox" class="strip twr">
         <div class="h"><span class="cs">Towers</span></div>
@@ -149,14 +149,20 @@ function loadRunways(){rwState='loading';$('rwStatus').textContent='runways: loa
       fetch(RW_URLS[i++]).then(function(r){if(!r.ok)throw 0;return r.text()}).then(function(t){
         var data=buildRunways(parseCSV(t));useRunways(data);idbSet('runways',{t:Date.now(),data:data})}).catch(next)})()})}
 $('rwStatus').addEventListener('click',function(e){if(e.target.id==='rwRetry')loadRunways()});
-function drawRunways(maxR){   /* only the runway numbers; the runway shapes come from the map underneath */
-  if(!RW.length||nmpp>=0.12)return;var lim=maxR+8,cl=Math.cos(center.lat*Math.PI/180);
+function drawRunways(maxR){   /* light runway bars over the map, plus the numbers */
+  if(!RW.length)return;var lim=maxR+8,lbl=nmpp<0.12,cl=Math.cos(center.lat*Math.PI/180);
   g.font='bold 11px ui-monospace,monospace';g.textAlign='center';g.textBaseline='middle';g.lineJoin='round';g.lineWidth=3;g.strokeStyle='rgba(30,30,30,.85)';g.fillStyle='#f0f0f0';
   function lab(t,x,y){g.strokeText(t,x,y);g.fillText(t,x,y)}
   for(var i=0;i<RW.length;i++){var r=RW[i];
     if(Math.abs((r[2]-center.lat)*60)>lim||Math.abs((r[3]-center.lon)*60*cl)>lim)continue;
     var p1=projLL(r[2],r[3]),p2=projLL(r[5],r[6]),dx=p2[0]-p1[0],dy=p2[1]-p1[1],L=Math.hypot(dx,dy)||1,ux=dx/L,uy=dy/L;
-    if(L<30)continue;
+    var w=Math.min(40,Math.max(3,(r[7]?r[7]*0.3048:45)/1852/nmpp));
+    g.lineCap='butt';g.beginPath();g.moveTo(p1[0],p1[1]);g.lineTo(p2[0],p2[1]);
+    g.strokeStyle='#d6d6d6';g.lineWidth=w+2;g.stroke();          // light outline
+    g.strokeStyle='#8c8c8c';g.lineWidth=w;g.stroke();            // surface, clearly brighter than taxiways
+    if(w>7){g.strokeStyle='#bdbdbd';g.lineWidth=1;g.stroke()}     // centre line
+    g.lineWidth=3;g.strokeStyle='rgba(30,30,30,.85)';
+    if(!lbl||L<30)continue;
     lab(r[1],p1[0]-ux*14,p1[1]-uy*14);lab(r[4],p2[0]+ux*14,p2[1]+uy*14)}
   g.textAlign='start'}
 
@@ -206,11 +212,11 @@ function draw(){
   for(var i=0;i<steps.length;i++){if(steps[i]/nmpp>=55){step=steps[i];break}}
   g.lineWidth=1;g.font='10px ui-monospace,monospace';g.textBaseline='bottom';
   for(var r=step;r<=maxR;r+=step){var px=r/nmpp;
-    g.strokeStyle='#4a4a4a';g.beginPath();g.arc(W/2,H/2,px,0,6.2832);g.stroke();
-    g.fillStyle='#8c8c8c';g.fillText(r+'',W/2+3,H/2-px-1)}
-  g.strokeStyle='#4a4a4a';g.beginPath();g.moveTo(W/2,0);g.lineTo(W/2,H);g.moveTo(0,H/2);g.lineTo(W,H/2);g.stroke();
-  g.fillStyle='#8c8c8c';g.textBaseline='top';g.fillText('N',W/2+4,3);
-  g.fillStyle='#8c8c8c';g.fillText(step+' nm rings',6,H-14);
+    g.strokeStyle='rgba(61,255,122,.26)';g.beginPath();g.arc(W/2,H/2,px,0,6.2832);g.stroke();
+    g.fillStyle='rgba(61,255,122,.55)';g.fillText(r+'',W/2+3,H/2-px-1)}
+  g.strokeStyle='rgba(61,255,122,.26)';g.beginPath();g.moveTo(W/2,0);g.lineTo(W/2,H);g.moveTo(0,H/2);g.lineTo(W,H/2);g.stroke();
+  g.fillStyle='rgba(61,255,122,.55)';g.textBaseline='top';g.fillText('N',W/2+4,3);
+  g.fillText(step+' nm rings',6,H-14);
   drawRunways(maxR);
   for(var k=0;k<ac.length;k++){var a=ac[k],id=a.icao_address,xy=proj(a),x=xy[0],y=xy[1];
     if(x<-60||y<-40||x>W+60||y>H+40)continue;
