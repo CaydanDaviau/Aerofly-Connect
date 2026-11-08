@@ -42,7 +42,8 @@ input::placeholder{color:var(--dim)}
 #login div{background:var(--panel);border:1px solid var(--dim);padding:18px;border-radius:8px;max-width:360px;width:100%}
 #login input{width:100%;margin:10px 0}
 .empty{color:var(--dim);padding:10px}
-#rwStatus{font-size:11px}
+#rwStatus,#sfStatus{font-size:11px}
+#scope{background:#2b2b2b}
 #twList .row{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:6px}
 #rwStatus button{padding:1px 6px;font-size:11px}
 </style>
@@ -55,7 +56,7 @@ input::placeholder{color:var(--dim)}
     <button id="ctrSel" title="Center scope on the selected aircraft">Center sel</button>
     <input id="ll" size="16" placeholder="lat, lon or ICAO" title="Center on coordinates or an airport code">
     <button id="llGo">Go</button>
-    <span id="rwStatus" class="m"></span>
+    <span id="rwStatus" class="m"></span><span id="sfStatus" class="m"></span>
     <span id="status">offline</span>
   </div>
   <div id="main">
@@ -144,15 +145,66 @@ function loadRunways(){rwState='loading';$('rwStatus').textContent='runways: loa
 $('rwStatus').addEventListener('click',function(e){if(e.target.id==='rwRetry')loadRunways()});
 function drawRunways(maxR){
   if(!RW.length)return;var lim=maxR+8,cl=Math.cos(center.lat*Math.PI/180),lbl=nmpp<0.12;
-  g.strokeStyle='#4f9bc4';g.fillStyle='#4f9bc4';g.lineCap='butt';g.font='10px ui-monospace,monospace';g.textAlign='center';g.textBaseline='middle';
+  g.lineCap='butt';g.font='10px ui-monospace,monospace';g.textAlign='center';g.textBaseline='middle';
   for(var i=0;i<RW.length;i++){var r=RW[i];
     if(Math.abs((r[2]-center.lat)*60)>lim||Math.abs((r[3]-center.lon)*60*cl)>lim)continue;
     var p1=projLL(r[2],r[3]),p2=projLL(r[5],r[6]);
-    g.lineWidth=Math.min(6,Math.max(1.5,(r[7]?r[7]*0.3048:45)/1852/nmpp));
-    g.beginPath();g.moveTo(p1[0],p1[1]);g.lineTo(p2[0],p2[1]);g.stroke();
+    var w=Math.min(40,Math.max(3,(r[7]?r[7]*0.3048:45)/1852/nmpp));
+    g.beginPath();g.moveTo(p1[0],p1[1]);g.lineTo(p2[0],p2[1]);
+    g.strokeStyle='#8a8a8a';g.lineWidth=w+2;g.stroke();          // outline
+    g.strokeStyle='#c4c4c4';g.lineWidth=w;g.stroke();            // surface
+    if(w>7){g.strokeStyle='#ececec';g.lineWidth=1;g.stroke()}     // centre line
     if(lbl){var dx=p2[0]-p1[0],dy=p2[1]-p1[1],L=Math.hypot(dx,dy)||1,ux=dx/L,uy=dy/L;
-      if(L>30){g.fillText(r[1],p1[0]-ux*12,p1[1]-uy*12);g.fillText(r[4],p2[0]+ux*12,p2[1]+uy*12)}}}
+      g.fillStyle='#e0e0e0';
+      if(L>30){g.fillText(r[1],p1[0]-ux*(12+w/2),p1[1]-uy*(12+w/2));g.fillText(r[4],p2[0]+ux*(12+w/2),p2[1]+uy*(12+w/2))}}}
   g.textAlign='start'}
+
+/* ---------- airport surface: taxiways, aprons, terminals (OpenStreetMap via Overpass, cached 30 days) ---------- */
+var SURF={},SURF_REQ={},surfBusy=false;
+var OVP=['https://overpass-api.de/api/interpreter','https://overpass.kumi.systems/api/interpreter','https://maps.mail.ru/osm/tools/overpass/api/interpreter'];
+function setSurfMsg(t){var e=$('sfStatus');if(e)e.textContent=t?' \u00b7 '+t:''}
+function surfQuery(a){var c=a.lat.toFixed(5)+','+a.lon.toFixed(5);
+  return '[out:json][timeout:25];(way["aeroway"~"^(taxiway|taxilane|apron|terminal|hangar)$"](around:5000,'+c+');'
+    +'way["building"~"^(terminal|hangar|airport)$"](around:5000,'+c+'););out geom;'}
+/* keep only what is drawn: [kind, width_m, [lat,lon,lat,lon,...]]; kind T taxiway, L taxilane, A apron, B building */
+function compactSurface(j){var out=[];(j.elements||[]).forEach(function(e){
+  if(e.type!=='way'||!e.geometry||e.geometry.length<2)return;
+  var t=e.tags||{},ae=t.aeroway,b=t.building,k=null,w=0;
+  if(ae==='taxiway'){k='T';w=23}else if(ae==='taxilane'){k='L';w=12}else if(ae==='apron'){k='A'}
+  else if(ae==='terminal'||ae==='hangar'||b==='terminal'||b==='hangar'||b==='airport'){k='B'}
+  if(!k)return;
+  var pw=parseFloat(t.width);if(isFinite(pw)&&pw>2&&pw<80)w=pw;
+  var pts=[];e.geometry.forEach(function(p){pts.push(Math.round(p.lat*1e5)/1e5,Math.round(p.lon*1e5)/1e5)});
+  out.push([k,w,pts])});return out}
+function fetchSurface(icao){var a=APT[icao];if(!a)return Promise.resolve();
+  return idbGet('surf:'+icao).then(function(c){
+    if(c&&c.w&&Date.now()-c.t<30*86400000){SURF[icao]=c.w;return}
+    return new Promise(function(res){var i=0;(function next(){if(i>=OVP.length){res();return}
+      fetch(OVP[i++]+'?data='+encodeURIComponent(surfQuery(a))).then(function(r){if(!r.ok)throw 0;return r.json()}).then(function(j){
+        if(j.remark&&/runtime error|timed out/i.test(j.remark))throw 0;
+        var w=compactSurface(j);SURF[icao]=w;idbSet('surf:'+icao,{t:Date.now(),w:w});res()}).catch(next)})()})})}
+/* loads the surface of the airport nearest to the scope centre (one at a time) once zoomed in to airport scale */
+function ensureSurface(){if(nmpp>=0.08||rwState!=='ready'||surfBusy)return;
+  var cl=Math.cos(center.lat*Math.PI/180),best=null,bd=4;
+  for(var k in APT){if(SURF[k]||(SURF_REQ[k]&&Date.now()-SURF_REQ[k]<300000))continue;var a=APT[k];
+    var d=Math.hypot((a.lat-center.lat)*60,(a.lon-center.lon)*60*cl);if(d<bd){bd=d;best=k}}
+  if(!best)return;surfBusy=true;SURF_REQ[best]=Date.now();setSurfMsg(best+' taxiways: loading...');
+  fetchSurface(best).then(function(){surfBusy=false;
+    setSurfMsg(SURF[best]?(SURF[best].length?best+' taxiways: ok':best+' taxiways: no OSM data'):best+' taxiways unavailable');draw()}).catch(function(){surfBusy=false})}
+function drawSurface(){
+  if(nmpp>=0.08)return;clearTimeout(ensureSurface.t);ensureSurface.t=setTimeout(ensureSurface,400);
+  var ks=Object.keys(SURF);if(!ks.length)return;
+  var cl=Math.cos(center.lat*Math.PI/180),lim=Math.hypot(W,H)/2*nmpp+3;
+  function path(p,close){var q=projLL(p[0],p[1]);g.moveTo(q[0],q[1]);for(var i=2;i<p.length;i+=2){q=projLL(p[i],p[i+1]);g.lineTo(q[0],q[1])}if(close)g.closePath()}
+  g.lineJoin='round';g.lineCap='round';
+  ['A','L','T','B'].forEach(function(kind){ks.forEach(function(k){SURF[k].forEach(function(w){
+    var p=w[2];if(w[0]!==kind||Math.abs((p[0]-center.lat)*60)>lim||Math.abs((p[1]-center.lon)*60*cl)>lim)return;
+    var closed=p.length>=8&&p[0]===p[p.length-2]&&p[1]===p[p.length-1];
+    g.beginPath();path(p,closed);
+    if(kind==='A'){if(closed){g.fillStyle='#3a3a3a';g.fill()}}
+    else if(kind==='B'){if(closed){g.fillStyle='#1d1d1d';g.fill()}}
+    else{g.strokeStyle=kind==='T'?'#4c4c4c':'#444';g.lineWidth=Math.max(1.2,w[1]*1.5/1852/nmpp);g.stroke()}})})});
+  g.lineCap='butt'}
 
 /* ---------- ranges ---------- */
 $('range').innerHTML=ranges.map(function(r){return'<option value="'+r+'">'+r+' nm</option>'}).join('');
@@ -173,16 +225,17 @@ function drawTower(g,x,y,s,col,bg){var k=s/64;g.save();g.translate(x-s/2,y-s/2);
   g.fillRect(13,9,38,4);g.fillRect(31,1,2,8);
   g.fillStyle=bg;g.fillRect(20,15,5,9);g.fillRect(29.5,15,5,9);g.fillRect(39,15,5,9);g.restore()}
 function draw(){
-  g.fillStyle='#040704';g.fillRect(0,0,W,H);
+  g.fillStyle='#2b2b2b';g.fillRect(0,0,W,H);
   var maxR=Math.hypot(W,H)/2*nmpp,steps=[1,2,5,10,20,25,50,100,200,500,1000],step=steps[steps.length-1];
   for(var i=0;i<steps.length;i++){if(steps[i]/nmpp>=55){step=steps[i];break}}
   g.lineWidth=1;g.font='10px ui-monospace,monospace';g.textBaseline='bottom';
   for(var r=step;r<=maxR;r+=step){var px=r/nmpp;
-    g.strokeStyle='#0f3a1f';g.beginPath();g.arc(W/2,H/2,px,0,6.2832);g.stroke();
-    g.fillStyle='#1b7a3d';g.fillText(r+'',W/2+3,H/2-px-1)}
-  g.strokeStyle='#0f3a1f';g.beginPath();g.moveTo(W/2,0);g.lineTo(W/2,H);g.moveTo(0,H/2);g.lineTo(W,H/2);g.stroke();
-  g.fillStyle='#1b7a3d';g.textBaseline='top';g.fillText('N',W/2+4,3);
-  g.fillStyle='#1b7a3d';g.fillText(step+' nm rings',6,H-14);
+    g.strokeStyle='#4a4a4a';g.beginPath();g.arc(W/2,H/2,px,0,6.2832);g.stroke();
+    g.fillStyle='#8c8c8c';g.fillText(r+'',W/2+3,H/2-px-1)}
+  g.strokeStyle='#4a4a4a';g.beginPath();g.moveTo(W/2,0);g.lineTo(W/2,H);g.moveTo(0,H/2);g.lineTo(W,H/2);g.stroke();
+  g.fillStyle='#8c8c8c';g.textBaseline='top';g.fillText('N',W/2+4,3);
+  g.fillStyle='#8c8c8c';g.fillText(step+' nm rings',6,H-14);
+  drawSurface();
   drawRunways(maxR);
   for(var k=0;k<ac.length;k++){var a=ac[k],id=a.icao_address,xy=proj(a),x=xy[0],y=xy[1];
     if(x<-60||y<-40||x>W+60||y>H+40)continue;
@@ -191,7 +244,7 @@ function draw(){
     var tr=trails[id]||[];g.strokeStyle=col;g.globalAlpha=.45;
     for(var t=0;t<tr.length;t++){var q=proj(tr[t]);g.fillStyle=col;g.fillRect(q[0]-1,q[1]-1,2,2)}
     g.globalAlpha=1;
-    if(tw){drawTower(g,x,y,24,col,'#040704')}
+    if(tw){drawTower(g,x,y,24,col,'#2b2b2b')}
     else{g.strokeStyle=col;g.lineWidth=isSel?2:1.5;g.strokeRect(x-4,y-4,8,8);
       var gs=Number(a.ground_speed)||0,hd=(Number(a.heading_true)||0)*Math.PI/180;
       if(gs>3){var len=Math.min(60,(gs/60)/nmpp);g.beginPath();g.moveTo(x,y);g.lineTo(x+Math.sin(hd)*len,y-Math.cos(hd)*len);g.stroke()}}
