@@ -515,11 +515,9 @@ public class MainActivity extends Activity {
         LinearLayout r2 = fieldRow(card);
         EditText model = addField(r2, Api.t(this, "Aircraft model", "Modelo da aeronave"), Api.field(this, "model"), true, false);
         EditText livery = addField(r2, Api.t(this, "Airline / livery", "Companhia / pintura"), Api.field(this, "livery"), false, false);
-        LinearLayout r3 = fieldRow(card);
-        EditText cruise = addField(r3, Api.t(this, "Cruise alt (ft)", "Altitude de cruzeiro (ft)"), Api.field(this, "cruise"), false, true);
-        EditText squawk = addField(r3, Api.t(this, "Squawk (4 digits)", "Squawk (4 dígitos)"), Api.field(this, "squawk"), false, true);
+        EditText cruise = addField(card, Api.t(this, "Cruise alt (ft)", "Altitude de cruzeiro (ft)"), Api.field(this, "cruise"), false, true);
         EditText route = addField(card, Api.t(this, "Route (optional)", "Rota (opcional)"), Api.field(this, "route"), true, false);
-        extra = new EditText[]{dep, arr, model, livery, cruise, squawk, route};   // same order as EXTRA_KEYS
+        extra = new EditText[]{dep, arr, model, livery, cruise, route};   // same order as EXTRA_KEYS
 
         startStop = Ui.button(this, "", Ui.PRIMARY);
         startStop.setOnClickListener(new View.OnClickListener() {
@@ -552,7 +550,7 @@ public class MainActivity extends Activity {
     }
 
     private EditText[] extra;
-    private static final String[] EXTRA_KEYS = {"dep", "arr", "model", "livery", "cruise", "squawk", "route"};
+    private static final String[] EXTRA_KEYS = {"dep", "arr", "model", "livery", "cruise", "route"};
 
     /** Horizontal row that holds two fields side by side. */
     private LinearLayout fieldRow(LinearLayout parent) {

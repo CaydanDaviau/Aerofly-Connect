@@ -44,7 +44,7 @@ final class Api {
         prefs(c).edit().putString("callsign", cs).apply();
     }
 
-    /** Pilot form fields: dep, arr, model, livery, cruise, squawk, route. */
+    /** Pilot form fields: dep, arr, model, livery, cruise, route. */
     static String field(Context c, String name) {
         return prefs(c).getString("f_" + name, "");
     }

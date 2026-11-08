@@ -133,11 +133,9 @@ public class PilotService extends Service {
                     lastHdg = pos.optDouble("heading_true", 0); lastGs = pos.optDouble("ground_speed", 0);
                     lastAlt = pos.optDouble("altitude_ft", 0); hasPos = true;
                     try {
-                        // The sim sends no model/livery/squawk; the pilot types them in the app.
+                        // The sim sends no model/livery; the pilot types them in the app. Squawk is assigned by the controller.
                         putIf(pos, "airplane_model", Api.field(this, "model"));
                         putIf(pos, "airplane_livery", Api.field(this, "livery"));
-                        String sqk = Api.field(this, "squawk");
-                        if (sqk.matches("\\d{4}")) pos.put("squawk", sqk);
                         // Callsign lives in the flight plan; the app sends it once, so do we.
                         if (!planSent) {
                             JSONObject plan = new JSONObject();
