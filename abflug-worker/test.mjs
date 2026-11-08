@@ -101,3 +101,39 @@ const p4 = JSON.parse((await call("PUT", "/api/position", { latitude: 10, longit
 ok("urgent flag delivered", p4.messages.length === 1 && p4.messages[0].urgent === true);
 const trf = JSON.parse((await call("GET", "/api/traffic?lat=10&lon=10&radius_miles=50")).slice(4)).atc_messages;
 ok("urgent in traffic", trf.some(m => m.text === "Traffic!" && m.urgent === true) && trf.find(m => m.id === sent.id).urgent === false);
+
+// auto-ATC requests
+await call("PUT", "/api/flightplan", { callsign: "REQ1", departure_airport: "SBBR", departure_runway: "29L", arrival_airport: "SBGR", arrival_runway: "9R" }, "rq1");
+await call("PUT", "/api/position", { latitude: -15.87, longitude: -47.92 }, "rq1");
+await call("PUT", "/api/flightplan", { callsign: "REQ2", departure_airport: "SBBR", departure_runway: "29L" }, "rq2");
+await call("PUT", "/api/position", { latitude: -15.87, longitude: -47.92 }, "rq2");
+const rq = async (k, b) => { const r = await call("PUT", "/api/atc/request", b, k); return [r.slice(0, 3), r.length > 4 ? JSON.parse(r.slice(4)) : {}]; };
+ok("req bad type 400", (await rq("rq1", { type: "fly" }))[0] === "400");
+ok("req no flight 404", (await rq("nobody", { type: "taxi" }))[0] === "404");
+let [, t1] = await rq("rq1", { type: "taxi" });
+ok("taxi text", t1.mode === "auto" && t1.messages[0].text === "Taxi to runway 29L, hold short");
+await new Promise(r => setTimeout(r, 2100));
+let [, t2] = await rq("rq1", { type: "takeoff", lang: "pt" });
+ok("takeoff pt", t2.messages[0].text === "Pista 29L, autorizado a decolar");
+ok("rate limit 429", (await rq("rq1", { type: "taxi" }))[0] === "429");
+await new Promise(r => setTimeout(r, 2100));
+let [, t3] = await rq("rq2", { type: "takeoff" });
+ok("runway busy", t3.messages[0].text === "Hold position, runway 29L occupied");
+ok("auto message not redelivered", JSON.parse((await call("PUT", "/api/position", { latitude: -15.87, longitude: -47.92 }, "rq1")).slice(4)).messages.length === 0);
+// runway from request body, 9R normalised to 09R, plan has arrival_runway so plan wins
+await new Promise(r => setTimeout(r, 2100));
+let [, t4] = await rq("rq1", { type: "land" });
+ok("land uses plan runway", t4.messages[0].text === "Runway 09R, cleared to land");
+await call("PUT", "/api/flightplan", { callsign: "REQ3" }, "rq3");
+await call("PUT", "/api/position", { latitude: -15.87, longitude: -47.92 }, "rq3");
+let [, t5] = await rq("rq3", { type: "takeoff", runway: "11r" });
+ok("runway from body", t5.messages[0].text === "Runway 11R, cleared for takeoff");
+let [, t6] = await rq("rq3", { type: "taxi", runway: "99" }).catch(() => [0, {}]);
+// human tower wins
+await call("PUT", "/api/atc/tower", { name: "SBBR", latitude: -15.871, longitude: -47.919 }, "ctl");
+await new Promise(r => setTimeout(r, 2100));
+let [, t7] = await rq("rq3", { type: "taxi" });
+ok("tower takes request", t7.mode === "controller");
+const rqm = JSON.parse((await call("GET", "/api/traffic?lat=-15.8&lon=-47.9&radius_miles=50")).slice(4)).atc_messages.find(m => m.id === t7.id);
+ok("request visible to controller, not delivered", rqm && rqm.kind === "request" && rqm.status === "request" && JSON.parse((await call("PUT", "/api/position", { latitude: -15.87, longitude: -47.92 }, "rq3")).slice(4)).messages.length === 0);
+await call("DELETE", "/api/atc/tower?name=SBBR", null, "ctl");

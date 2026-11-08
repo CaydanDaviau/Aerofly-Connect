@@ -20,21 +20,26 @@ public class ReplyReceiver extends BroadcastReceiver {
         final PendingResult pr = goAsync();
         new Thread(new Runnable() {
             @Override public void run() {
-                try {
-                    JSONObject o = new JSONObject();
-                    o.put("id", id);
-                    o.put("reply", reply);
-                    int code = Api.send("PUT", "/api/messages/reply", o.toString(), Api.key(ctx));
-                    // Keep the notification if sending failed, so the pilot can tap again.
-                    if (code < 400) {
-                        ((NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE)).cancel(nid);
-                        PipReply.done(id);
-                    }
-                } catch (Exception ignored) {
-                } finally {
-                    pr.finish();
-                }
+                try { sendReply(ctx, id, reply, nid); } finally { pr.finish(); }
             }
         }).start();
+    }
+
+    /** Sends Wilco / Unable (blocking). On success the notification is cancelled and the message leaves the answer queue. */
+    static boolean sendReply(Context ctx, String id, String reply, int nid) {
+        try {
+            JSONObject o = new JSONObject();
+            o.put("id", id);
+            o.put("reply", reply);
+            int code = Api.send("PUT", "/api/messages/reply", o.toString(), Api.key(ctx));
+            // Keep the notification if sending failed, so the pilot can tap again.
+            if (code < 400) {
+                ((NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE)).cancel(nid);
+                PipReply.done(id);
+                return true;
+            }
+        } catch (Exception ignored) {
+        }
+        return false;
     }
 }

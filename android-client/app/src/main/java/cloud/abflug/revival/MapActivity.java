@@ -190,7 +190,7 @@ public class MapActivity extends Activity {
     private ArrayList<RemoteAction> buildActions() {
         ArrayList<RemoteAction> acts = new ArrayList<>();
         PipReply.Item it = PipReply.current();
-        if (it != null) {
+        if (it != null && !Overlay.active) {   // with the overlay, Wilco / Unable live there
             acts.add(replyAction(it, true));
             acts.add(replyAction(it, false));
         } else {

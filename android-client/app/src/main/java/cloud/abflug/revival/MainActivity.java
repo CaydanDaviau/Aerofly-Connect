@@ -6,6 +6,7 @@ import android.content.Intent;
 import android.database.Cursor;
 import android.net.Uri;
 import android.provider.OpenableColumns;
+import android.provider.Settings;
 import android.content.pm.PackageManager;
 import android.graphics.Typeface;
 import android.os.Build;
@@ -173,6 +174,14 @@ public class MainActivity extends Activity {
 
     // ---------- Settings ----------
     private boolean inSettings;
+    private boolean awaitingOverlay;
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // Back from the system permission screen: redraw Settings with the new state.
+        if (awaitingOverlay) { awaitingOverlay = false; if (inSettings) showSettings(); }
+    }
 
     private void showSettings() {
         stopTicker();
@@ -192,6 +201,29 @@ public class MainActivity extends Activity {
                 }));
         voice.addView(voiceRow());
         voice.addView(rateRow());
+
+        // ----- Floating ATC window (requests + Wilco / Unable over the sim) -----
+        LinearLayout ov = section(root, Api.t(this, "ATC overlay", "Janela do ATC"));
+        ov.addView(sw(Api.t(this, "Floating ATC window while flying", "Janela flutuante do ATC durante o voo"), Api.overlayOn(this),
+                new CompoundButton.OnCheckedChangeListener() {
+                    @Override public void onCheckedChanged(CompoundButton b, boolean on) { Api.setOverlayOn(MainActivity.this, on); }
+                }));
+        boolean granted = Settings.canDrawOverlays(this);
+        TextView ovState = dim(granted
+                ? Api.t(this, "Permission granted. Takes effect at the next Start.", "Permissão concedida. Vale a partir do próximo Iniciar.")
+                : Api.t(this, "Needs the \"Display over other apps\" permission.", "Precisa da permissão \"Exibir sobre outros apps\"."), 13);
+        ovState.setPadding(0, pad / 4, 0, 0);
+        ov.addView(ovState);
+        if (!granted) {
+            Button allow = Ui.button(this, Api.t(this, "Allow overlay permission", "Permitir janela flutuante"), Ui.SECONDARY);
+            allow.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View v) {
+                    awaitingOverlay = true;
+                    startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:" + getPackageName())));
+                }
+            });
+            ov.addView(allow, Ui.lp(this, 10));
+        }
 
         // ----- Background radio (loops an audio file picked from the phone) -----
         LinearLayout radio = section(root, Api.t(this, "Background radio", "Rádio de fundo"));

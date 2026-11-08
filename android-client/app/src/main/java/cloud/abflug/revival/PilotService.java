@@ -29,6 +29,10 @@ public class PilotService extends Service {
     static volatile double lastLat, lastLon, lastHdg, lastGs, lastAlt;
 
     static volatile boolean mapShown;
+    static volatile PilotService inst;
+    private Overlay overlay;
+
+    interface ReqCb { void done(String feedback); }
 
     /** Notification with Hide/Show map and Stop buttons. */
     static Notification buildNotif(Context c) {
@@ -39,13 +43,19 @@ public class PilotService extends Service {
                 new Intent(c, MapActivity.class).setAction(MapActivity.ACT_TOGGLE)
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
-        return new Notification.Builder(c, "pilot")
+        PendingIntent req = PendingIntent.getBroadcast(c, 12,
+                new Intent(c, RequestReceiver.class).setAction(RequestReceiver.ACT_MENU),
+                PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+        // Without the overlay, requests go through a notification button (only when one fits the phase).
+        boolean reqBtn = !Overlay.active && (Phase.taxi || Phase.takeoff || Phase.land);
+        Notification.Builder nb = new Notification.Builder(c, "pilot")
                 .setContentTitle("Aerofly Connect")
                 .setContentText(Api.t(c, "Sharing your position", "Compartilhando sua posição"))
                 .setSmallIcon(android.R.drawable.ic_menu_mylocation)
                 .setOngoing(true)
-                .addAction(new Notification.Action.Builder(null, mapShown ? Api.t(c, "Hide map", "Ocultar mapa") : Api.t(c, "Show map", "Mostrar mapa"), map).build())
-                .addAction(new Notification.Action.Builder(null, Api.t(c, "Stop", "Parar"), stop).build())
+                .addAction(new Notification.Action.Builder(null, mapShown ? Api.t(c, "Hide map", "Ocultar mapa") : Api.t(c, "Show map", "Mostrar mapa"), map).build());
+        if (reqBtn) nb.addAction(new Notification.Action.Builder(null, Api.t(c, "ATC request", "Pedido ao ATC"), req).build());
+        return nb.addAction(new Notification.Action.Builder(null, Api.t(c, "Stop", "Parar"), stop).build())
                 .build();
     }
 
@@ -89,6 +99,10 @@ public class PilotService extends Service {
             voice = new AtcVoice(this, voiceLang);
         }
 
+        inst = this;
+        Phase.reset();
+        if (Overlay.allowed(this)) { overlay = new Overlay(this); overlay.show(); }
+
         RadioPlayer.start(this, "pilot");   // background radio (only plays if enabled in Settings)
 
         PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
@@ -100,6 +114,15 @@ public class PilotService extends Service {
         running = true;
         final String key = Api.key(this);
         final String callsign = Api.callsign(this).trim().toUpperCase();
+        // Runway data of the flight's airports (cached; a one-time download of a few MB) for the phase logic.
+        final String depIcao = Api.field(this, "dep"), arrIcao = Api.field(this, "arr");
+        new Thread(new Runnable() {
+            @Override public void run() {
+                Airports.Apt d = Airports.load(PilotService.this, depIcao);
+                Phase.setAirports(d, null);
+                Phase.setAirports(d, Airports.load(PilotService.this, arrIcao));
+            }
+        }, "airports").start();
         worker = new Thread(new Runnable() {
             @Override public void run() { loop(key, callsign); }
         }, "pilot-loop");
@@ -132,6 +155,7 @@ public class PilotService extends Service {
                     lastLat = pos.optDouble("latitude"); lastLon = pos.optDouble("longitude");
                     lastHdg = pos.optDouble("heading_true", 0); lastGs = pos.optDouble("ground_speed", 0);
                     lastAlt = pos.optDouble("altitude_ft", 0); hasPos = true;
+                    if (Phase.update(lastLat, lastLon, lastAlt, lastGs, lastHdg, System.currentTimeMillis())) onPhase();
                     try {
                         // The sim sends no model/livery; the pilot types them in the app. Squawk is assigned by the controller.
                         putIf(pos, "airplane_model", Api.field(this, "model"));
@@ -173,6 +197,9 @@ public class PilotService extends Service {
             if (voice != null) { voice.shutdown(); voice = null; }
             try { Api.send("DELETE", "/api/position", null, key); } catch (Exception ignored) { }
             running = false;
+            inst = null;
+            Phase.reset();
+            if (overlay != null) { overlay.hide(); overlay = null; }
             PipReply.clear();
             simState = "-";
             if (wl != null && wl.isHeld()) wl.release();
@@ -186,7 +213,7 @@ public class PilotService extends Service {
     private String voiceLang;
 
     /** Speaks the message with the radio effect, if "Speak" is on. Created on first use. */
-    private void speak(String text, Runnable onStart) {
+    private synchronized void speak(String text, Runnable onStart) {
         if (!Api.speakOn(this)) { onStart.run(); return; }
         String lang = Api.voiceLang(this);
         if (voice == null || !lang.equals(voiceLang)) {
@@ -198,7 +225,7 @@ public class PilotService extends Service {
     }
 
     /** The position response carries new ATC messages: one heads-up notification each. */
-    private void showMessages(String body) {
+    synchronized void showMessages(String body) {
         try {
             JSONArray arr = new JSONObject(body).optJSONArray("messages");
             if (arr == null) return;
@@ -223,9 +250,9 @@ public class PilotService extends Service {
                             .addAction(new Notification.Action.Builder(null, Api.t(this, "Unable", "Impossível"), replyIntent(this, id, "unable", nid)).build());
                     nm.notify(nid, b.build());
                 }
-                final String fid = id; final int fnid = nid;
+                final String fid = id; final int fnid = nid; final String ftext = text;
                 // PiP Wilco/Unable buttons appear when the voice starts (or at once if it is off).
-                speak(text, new Runnable() { @Override public void run() { PipReply.offer(fid, fnid); } });
+                speak(text, new Runnable() { @Override public void run() { PipReply.offer(fid, fnid, ftext); } });
             }
         } catch (Exception ignored) {
         }
@@ -239,6 +266,42 @@ public class PilotService extends Service {
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
     }
 
+    /** The phase changed: redraw the overlay, or the notification button when there is no overlay. */
+    private void onPhase() {
+        Overlay.poke();
+        if (!Overlay.active) refreshNotif(this);
+    }
+
+    /** Sends an auto-ATC request (taxi / takeoff / land) from a background thread; the answer arrives like any ATC message. */
+    static void request(final Context c, final String type, final ReqCb cb) {
+        final Context app = c.getApplicationContext();
+        new Thread(new Runnable() {
+            @Override public void run() {
+                String fb;
+                try {
+                    JSONObject o = new JSONObject();
+                    o.put("type", type);
+                    o.put("lang", Api.voiceLang(app));
+                    String rw = Phase.runwayFor(type);   // only a fallback: the runway typed in the flight form wins on the server
+                    if (!rw.isEmpty()) o.put("runway", rw);
+                    Api.Resp r = Api.request("PUT", "/api/atc/request", o.toString(), Api.key(app));
+                    if (r.code < 400) {
+                        PilotService s = inst;
+                        if (s != null) s.showMessages(r.body);
+                        boolean tower = "controller".equals(new JSONObject(r.body).optString("mode"));
+                        fb = tower ? Api.t(app, "Request sent to the tower", "Pedido enviado à torre")
+                                : Api.t(app, "Request sent", "Pedido enviado");
+                    } else if (r.code == 429) fb = Api.t(app, "Wait a moment", "Aguarde um momento");
+                    else if (r.code == 404) fb = Api.t(app, "Not flying yet", "Voo ainda não iniciado");
+                    else fb = Api.t(app, "Request failed", "Falha no pedido");
+                } catch (Exception e) {
+                    fb = Api.t(app, "No connection", "Sem conexão");
+                }
+                if (cb != null) cb.done(fb);
+            }
+        }, "atc-request").start();
+    }
+
     private static void putIf(JSONObject o, String k, String v) throws Exception {
         if (v != null && !v.trim().isEmpty()) o.put(k, v.trim());
     }
@@ -246,6 +309,7 @@ public class PilotService extends Service {
     @Override
     public void onDestroy() {
         stopFlag = true;
+        if (overlay != null) overlay.hide();
         if (worker != null) worker.interrupt();
         super.onDestroy();
     }

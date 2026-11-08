@@ -1,0 +1,340 @@
+package cloud.abflug.revival;
+
+import android.content.Context;
+import android.graphics.PixelFormat;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
+import android.os.Handler;
+import android.os.Looper;
+import android.provider.Settings;
+import android.util.DisplayMetrics;
+import android.view.Gravity;
+import android.view.MotionEvent;
+import android.view.View;
+import android.view.WindowManager;
+import android.widget.Button;
+import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.TextView;
+
+/**
+ * Floating ATC window drawn over the sim (needs "display over other apps"). Two states:
+ * a small draggable "ATC" bubble, and the expanded panel with the pending ATC message
+ * (Wilco / Unable) and the request buttons (Taxi / Take off / Land) that fit the flight phase.
+ * A new ATC message expands the bubble by itself. Everything here runs on the main thread.
+ */
+final class Overlay {
+    static volatile boolean active;
+    private static volatile Overlay inst;
+
+    /** Switch on in Settings and permission granted. */
+    static boolean allowed(Context c) {
+        return Api.overlayOn(c) && Settings.canDrawOverlays(c);
+    }
+
+    /** Redraw after the phase or the message queue changed (any thread). */
+    static void poke() {
+        Overlay o = inst;
+        if (o != null) o.h.post(o.refreshRun);
+    }
+
+    private final Context ctx;
+    private final WindowManager wm;
+    private final Handler h = new Handler(Looper.getMainLooper());
+    private FrameLayout root;
+    private WindowManager.LayoutParams lp;
+    private TextView bubble, msgText, statusView;
+    private LinearLayout panel, msgRow, reqRow;
+    private Button bWilco, bUnable, bTaxi, bTakeoff, bLand;
+    private boolean expanded, autoExpanded, reqBusy, replyBusy;
+    private String shownId = "", statusMsg = "";
+
+    private final Runnable refreshRun = new Runnable() { @Override public void run() { refresh(); } };
+    private final Runnable autoCollapse = new Runnable() {
+        @Override public void run() {
+            if (autoExpanded && PipReply.current() == null) setExpanded(false);
+            autoExpanded = false;
+        }
+    };
+    private final Runnable clearStatus = new Runnable() {
+        @Override public void run() { statusMsg = ""; refresh(); }
+    };
+    private final Runnable unlockReq = new Runnable() {
+        @Override public void run() { reqBusy = false; refresh(); }
+    };
+
+    Overlay(Context c) {
+        ctx = c;
+        wm = (WindowManager) c.getSystemService(Context.WINDOW_SERVICE);
+    }
+
+    private int dp(float v) { return Ui.dp(ctx, v); }
+
+    void show() {
+        h.post(new Runnable() { @Override public void run() { build(); } });
+    }
+
+    void hide() {
+        h.post(new Runnable() {
+            @Override public void run() {
+                h.removeCallbacksAndMessages(null);
+                if (root != null) { try { wm.removeView(root); } catch (Exception ignored) { } root = null; }
+                if (inst == Overlay.this) { inst = null; PipReply.overlayHook = null; }
+                active = false;
+                PilotService.refreshNotif(ctx);
+            }
+        });
+    }
+
+    // ---------- build ----------
+    private Button small(String text, int kind) {
+        Button b = Ui.button(ctx, text, kind);
+        b.setTextSize(13);
+        b.setMinHeight(dp(40));
+        b.setMinimumHeight(dp(40));
+        b.setPadding(dp(4), 0, dp(4), 0);
+        b.setSingleLine(true);
+        return b;
+    }
+
+    private LinearLayout.LayoutParams weight() {
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        p.leftMargin = dp(2); p.rightMargin = dp(2);
+        return p;
+    }
+
+    private void build() {
+        if (root != null) return;
+        try {
+            root = new FrameLayout(ctx);
+
+            bubble = new TextView(ctx);
+            bubble.setText("ATC");
+            bubble.setTextSize(12);
+            bubble.setTypeface(Typeface.DEFAULT_BOLD);
+            bubble.setTextColor(Ui.CYAN);
+            bubble.setGravity(Gravity.CENTER);
+            GradientDrawable g = new GradientDrawable();
+            g.setShape(GradientDrawable.OVAL);
+            g.setColor(0xF0012C33);
+            g.setStroke(dp(2), Ui.CYAN);
+            bubble.setBackground(g);
+            bubble.setOnTouchListener(dragger);
+            root.addView(bubble, new FrameLayout.LayoutParams(dp(52), dp(52)));
+
+            panel = new LinearLayout(ctx);
+            panel.setOrientation(LinearLayout.VERTICAL);
+            panel.setPadding(dp(10), dp(6), dp(10), dp(10));
+            panel.setBackground(Ui.shape(ctx, 0xF2012C33, Ui.STROKE, 16));
+
+            LinearLayout head = new LinearLayout(ctx);
+            head.setOrientation(LinearLayout.HORIZONTAL);
+            head.setGravity(Gravity.CENTER_VERTICAL);
+            TextView title = new TextView(ctx);
+            title.setText("ATC  ·  " + Api.t(ctx, "drag to move", "arraste para mover"));
+            title.setTextSize(12);
+            title.setTypeface(Typeface.DEFAULT_BOLD);
+            title.setTextColor(Ui.CYAN);
+            title.setGravity(Gravity.CENTER_VERTICAL);
+            title.setOnTouchListener(dragger);
+            head.addView(title, new LinearLayout.LayoutParams(0, dp(40), 1f));
+            TextView min = new TextView(ctx);
+            min.setText("–");
+            min.setTextSize(22);
+            min.setTextColor(Ui.TXT);
+            min.setGravity(Gravity.CENTER);
+            min.setBackground(Ui.ripple(ctx, Ui.FIELD, Ui.STROKE, 10));
+            min.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View v) { autoExpanded = false; setExpanded(false); }
+            });
+            head.addView(min, new LinearLayout.LayoutParams(dp(40), dp(40)));
+            panel.addView(head);
+
+            msgText = new TextView(ctx);
+            msgText.setTextSize(15);
+            msgText.setTextColor(Ui.TXT);
+            msgText.setPadding(0, dp(4), 0, dp(6));
+            msgText.setVisibility(View.GONE);
+            panel.addView(msgText);
+
+            msgRow = new LinearLayout(ctx);
+            msgRow.setOrientation(LinearLayout.HORIZONTAL);
+            bWilco = small("Wilco", Ui.PRIMARY);
+            bUnable = small(Api.t(ctx, "Unable", "Impossível"), Ui.DANGER);
+            bWilco.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { reply("wilco"); } });
+            bUnable.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { reply("unable"); } });
+            msgRow.addView(bWilco, weight());
+            msgRow.addView(bUnable, weight());
+            msgRow.setVisibility(View.GONE);
+            panel.addView(msgRow);
+
+            reqRow = new LinearLayout(ctx);
+            reqRow.setOrientation(LinearLayout.HORIZONTAL);
+            bTaxi = small("Taxi", Ui.SECONDARY);
+            bTakeoff = small(Api.t(ctx, "Take off", "Decolar"), Ui.SECONDARY);
+            bLand = small(Api.t(ctx, "Land", "Pousar"), Ui.SECONDARY);
+            bTaxi.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { request("taxi"); } });
+            bTakeoff.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { request("takeoff"); } });
+            bLand.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { request("land"); } });
+            reqRow.addView(bTaxi, weight());
+            reqRow.addView(bTakeoff, weight());
+            reqRow.addView(bLand, weight());
+            LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            rp.topMargin = dp(6);
+            panel.addView(reqRow, rp);
+
+            statusView = new TextView(ctx);
+            statusView.setTextSize(12);
+            statusView.setTextColor(Ui.DIM);
+            statusView.setPadding(0, dp(6), 0, 0);
+            statusView.setVisibility(View.GONE);
+            panel.addView(statusView);
+
+            panel.setVisibility(View.GONE);
+            root.addView(panel, new FrameLayout.LayoutParams(dp(236), FrameLayout.LayoutParams.WRAP_CONTENT));
+
+            lp = new WindowManager.LayoutParams(
+                    WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
+                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                            | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                    PixelFormat.TRANSLUCENT);
+            lp.gravity = Gravity.TOP | Gravity.START;
+            lp.x = Api.prefs(ctx).getInt("ov_x", dp(12));
+            lp.y = Api.prefs(ctx).getInt("ov_y", dp(120));
+            wm.addView(root, lp);
+            inst = this;
+            active = true;
+            PipReply.overlayHook = refreshRun;
+            PilotService.refreshNotif(ctx);
+            root.post(new Runnable() { @Override public void run() { clamp(); } });
+            refresh();
+        } catch (Throwable t) {
+            // permission revoked, or the window could not be added: the PiP / notification fallback stays in use
+            root = null;
+            active = false;
+            PipReply.overlayHook = null;
+        }
+    }
+
+    // ---------- drag ----------
+    private final View.OnTouchListener dragger = new View.OnTouchListener() {
+        private float sx, sy; private int ox, oy; private boolean moved;
+        @Override public boolean onTouch(View v, MotionEvent e) {
+            switch (e.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    sx = e.getRawX(); sy = e.getRawY(); ox = lp.x; oy = lp.y; moved = false;
+                    return true;
+                case MotionEvent.ACTION_MOVE: {
+                    float mx = e.getRawX() - sx, my = e.getRawY() - sy;
+                    if (!moved && Math.hypot(mx, my) > dp(8)) moved = true;
+                    if (moved) { lp.x = Math.round(ox + mx); lp.y = Math.round(oy + my); clamp(); }
+                    return true;
+                }
+                case MotionEvent.ACTION_UP:
+                    if (moved) {
+                        Api.prefs(ctx).edit().putInt("ov_x", lp.x).putInt("ov_y", lp.y).apply();
+                    } else if (v == bubble) {
+                        autoExpanded = false;
+                        setExpanded(true);
+                    }
+                    return true;
+                default:
+                    return true;
+            }
+        }
+    };
+
+    /** Keeps the window on the screen and applies the new position. */
+    private void clamp() {
+        if (root == null) return;
+        DisplayMetrics dm = ctx.getResources().getDisplayMetrics();
+        int w = root.getWidth() > 0 ? root.getWidth() : dp(52);
+        int hh = root.getHeight() > 0 ? root.getHeight() : dp(52);
+        lp.x = Math.max(0, Math.min(lp.x, dm.widthPixels - w));
+        lp.y = Math.max(0, Math.min(lp.y, dm.heightPixels - hh));
+        try { wm.updateViewLayout(root, lp); } catch (Exception ignored) { }
+    }
+
+    private void setExpanded(boolean e) {
+        if (root == null) return;
+        expanded = e;
+        bubble.setVisibility(e ? View.GONE : View.VISIBLE);
+        panel.setVisibility(e ? View.VISIBLE : View.GONE);
+        root.post(new Runnable() { @Override public void run() { clamp(); } });
+    }
+
+    // ---------- content ----------
+    private void setStatus(String s, long clearAfterMs) {
+        statusMsg = s == null ? "" : s;
+        h.removeCallbacks(clearStatus);
+        if (!statusMsg.isEmpty() && clearAfterMs > 0) h.postDelayed(clearStatus, clearAfterMs);
+        refresh();
+    }
+
+    private void refresh() {
+        if (root == null) return;
+        PipReply.Item it = PipReply.current();
+        if (it != null) {
+            msgText.setText(it.text);
+            msgText.setVisibility(View.VISIBLE);
+            msgRow.setVisibility(View.VISIBLE);
+            h.removeCallbacks(autoCollapse);
+            if (!it.id.equals(shownId)) {
+                shownId = it.id;
+                if (!expanded) { autoExpanded = true; setExpanded(true); }   // a new message must not be missed
+            }
+        } else {
+            msgText.setVisibility(View.GONE);
+            msgRow.setVisibility(View.GONE);
+            if (expanded && autoExpanded) { h.removeCallbacks(autoCollapse); h.postDelayed(autoCollapse, 6000); }
+        }
+        bTaxi.setVisibility(Phase.taxi ? View.VISIBLE : View.GONE);
+        bTakeoff.setVisibility(Phase.takeoff ? View.VISIBLE : View.GONE);
+        bLand.setVisibility(Phase.land ? View.VISIBLE : View.GONE);
+        boolean any = Phase.taxi || Phase.takeoff || Phase.land;
+        reqRow.setVisibility(any ? View.VISIBLE : View.GONE);
+        bTaxi.setEnabled(!reqBusy); bTakeoff.setEnabled(!reqBusy); bLand.setEnabled(!reqBusy);
+        bWilco.setEnabled(!replyBusy); bUnable.setEnabled(!replyBusy);
+        String st = statusMsg;
+        if (st.isEmpty() && !any && it == null) st = Api.t(ctx, "No requests available now", "Nenhum pedido disponível agora");
+        statusView.setText(st);
+        statusView.setVisibility(st.isEmpty() ? View.GONE : View.VISIBLE);
+    }
+
+    private void reply(final String r) {
+        final PipReply.Item it = PipReply.current();
+        if (it == null || replyBusy) return;
+        replyBusy = true;
+        refresh();
+        new Thread(new Runnable() {
+            @Override public void run() {
+                final boolean ok = ReplyReceiver.sendReply(ctx, it.id, r, it.nid);
+                h.post(new Runnable() {
+                    @Override public void run() {
+                        replyBusy = false;
+                        setStatus(ok ? "" : Api.t(ctx, "Not sent, try again", "Não enviado, tente de novo"), 5000);
+                    }
+                });
+            }
+        }).start();
+    }
+
+    private void request(String type) {
+        if (reqBusy) return;
+        reqBusy = true;
+        autoExpanded = false;
+        setStatus(Api.t(ctx, "Sending...", "Enviando..."), 0);
+        PilotService.request(ctx, type, new PilotService.ReqCb() {
+            @Override public void done(final String feedback) {
+                h.post(new Runnable() {
+                    @Override public void run() {
+                        setStatus(feedback, 5000);
+                        h.postDelayed(unlockReq, 2500);   // the server allows one request every 2 s
+                    }
+                });
+            }
+        });
+    }
+}

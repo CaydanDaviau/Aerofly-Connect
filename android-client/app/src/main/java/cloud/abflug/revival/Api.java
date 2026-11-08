@@ -69,6 +69,10 @@ final class Api {
     static boolean speakOn(Context c) { return prefs(c).getBoolean("speak", true); }
     static void setSpeakOn(Context c, boolean on) { prefs(c).edit().putBoolean("speak", on).apply(); }
 
+    /** Floating ATC overlay (requests + Wilco/Unable): on by default, needs the "display over other apps" permission. */
+    static boolean overlayOn(Context c) { return prefs(c).getBoolean("overlay_on", true); }
+    static void setOverlayOn(Context c, boolean on) { prefs(c).edit().putBoolean("overlay_on", on).apply(); }
+
     /** Speech speed: 0 slow, 1 normal, 2 fast. */
     private static final float[] RATES = {0.85f, 1.0f, 1.2f};
     static int rateIdx(Context c) { return Math.max(0, Math.min(2, prefs(c).getInt("rate_idx", 1))); }
