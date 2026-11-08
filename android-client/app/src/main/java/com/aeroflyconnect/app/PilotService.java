@@ -1,4 +1,4 @@
-package cloud.abflug.revival;
+package com.aeroflyconnect.app;
 
 import android.app.Notification;
 import android.app.NotificationChannel;
@@ -15,7 +15,7 @@ import org.json.JSONObject;
 
 /** Foreground service: reads the sim every 3 s and uploads the position to the Worker. */
 public class PilotService extends Service {
-    static final String ACTION_STOP = "cloud.abflug.revival.STOP";
+    static final String ACTION_STOP = "com.aeroflyconnect.app.STOP";
     private static final long PERIOD_MS = 3000;
 
     // Status read by the UI.

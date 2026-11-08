@@ -1,4 +1,4 @@
-package cloud.abflug.revival;
+package com.aeroflyconnect.app;
 
 /**
  * Flight phase from the sim line (position, altitude, ground speed, heading) and the runway data of

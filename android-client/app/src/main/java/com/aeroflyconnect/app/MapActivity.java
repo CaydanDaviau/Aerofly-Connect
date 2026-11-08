@@ -1,4 +1,4 @@
-package cloud.abflug.revival;
+package com.aeroflyconnect.app;
 
 import android.app.Activity;
 import android.app.PendingIntent;
@@ -148,8 +148,8 @@ public class MapActivity extends Activity {
                 Phase.landingShown(System.currentTimeMillis()) ? String.valueOf(Phase.landFpm) : "null"), null);
     }
 
-    static final String ACT_TOGGLE = "cloud.abflug.revival.TOGGLE_MAP";
-    private static final String ACT_ZOOM = "cloud.abflug.revival.ZOOM";
+    static final String ACT_TOGGLE = "com.aeroflyconnect.app.TOGGLE_MAP";
+    private static final String ACT_ZOOM = "com.aeroflyconnect.app.ZOOM";
     private BroadcastReceiver zoomRx;
 
     private Icon glyph(boolean plus) {

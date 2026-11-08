@@ -1,4 +1,4 @@
-package cloud.abflug.revival;
+package com.aeroflyconnect.app;
 
 import android.Manifest;
 import android.app.Activity;

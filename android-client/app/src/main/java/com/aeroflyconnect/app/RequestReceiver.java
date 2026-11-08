@@ -1,4 +1,4 @@
-package cloud.abflug.revival;
+package com.aeroflyconnect.app;
 
 import android.app.Notification;
 import android.app.NotificationManager;
@@ -15,8 +15,8 @@ import android.widget.Toast;
  * notification opens a heads-up notification with the requests that fit the flight phase.
  */
 public class RequestReceiver extends BroadcastReceiver {
-    static final String ACT_MENU = "cloud.abflug.revival.REQ_MENU";
-    static final String ACT_REQ = "cloud.abflug.revival.REQ_SEND";
+    static final String ACT_MENU = "com.aeroflyconnect.app.REQ_MENU";
+    static final String ACT_REQ = "com.aeroflyconnect.app.REQ_SEND";
     private static final int MENU_NID = 2;
 
     private static Notification.Action action(Context c, int code, String type, String label) {

@@ -1,4 +1,4 @@
-package cloud.abflug.revival;
+package com.aeroflyconnect.app;
 
 import android.content.Context;
 import android.graphics.PixelFormat;
@@ -15,6 +15,7 @@ import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 
 /**
@@ -44,6 +45,7 @@ final class Overlay {
     private FrameLayout root;
     private WindowManager.LayoutParams lp;
     private TextView bubble, msgText, statusView;
+    private ScrollView msgScroll;
     private LinearLayout panel, msgRow, reqGrid;
     private Button bWilco, bUnable, bClr, bTaxi, bTakeoff, bLand;
     private boolean expanded, autoExpanded, reqBusy, replyBusy;
@@ -155,8 +157,16 @@ final class Overlay {
             msgText.setTextSize(15);
             msgText.setTextColor(Ui.TXT);
             msgText.setPadding(0, dp(4), 0, dp(6));
-            msgText.setVisibility(View.GONE);
-            panel.addView(msgText);
+            msgScroll = new ScrollView(ctx) {
+                @Override protected void onMeasure(int w, int hs) {
+                    // long messages scroll inside a capped height so Wilco / Unable never leave the screen
+                    super.onMeasure(w, MeasureSpec.makeMeasureSpec(maxMsgHeight(), MeasureSpec.AT_MOST));
+                }
+            };
+            msgScroll.setVerticalScrollBarEnabled(true);
+            msgScroll.setVisibility(View.GONE);
+            msgScroll.addView(msgText);
+            panel.addView(msgScroll);
 
             msgRow = new LinearLayout(ctx);
             msgRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -271,11 +281,25 @@ final class Overlay {
         if (root == null) return;
         DisplayMetrics dm = new DisplayMetrics();
         wm.getDefaultDisplay().getRealMetrics(dm);   // current rotation
-        int w = root.getWidth() > 0 ? root.getWidth() : dp(52);
-        int hh = root.getHeight() > 0 ? root.getHeight() : dp(52);
+        int w = dp(52), hh = dp(52);
+        if (expanded) {
+            // measure the panel ourselves: a wrap-content window gets cut at the screen edge and then reports the cut size
+            w = dp(236);
+            panel.measure(View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(dm.heightPixels, View.MeasureSpec.AT_MOST));
+            hh = Math.min(panel.getMeasuredHeight(), dm.heightPixels);
+            lp.height = hh;
+        }
         lp.x = Math.max(0, Math.min(lp.x, dm.widthPixels - w));
         lp.y = Math.max(0, Math.min(lp.y, dm.heightPixels - hh));
         try { wm.updateViewLayout(root, lp); } catch (Exception ignored) { }
+    }
+
+    /** Max height of the message area: leaves room for header, buttons and status on this screen. */
+    private int maxMsgHeight() {
+        DisplayMetrics dm = new DisplayMetrics();
+        wm.getDefaultDisplay().getRealMetrics(dm);
+        return Math.max(dp(48), Math.min(dp(170), dm.heightPixels - dp(260)));
     }
 
     private void setExpanded(boolean e) {
@@ -304,6 +328,8 @@ final class Overlay {
         if (it != null) {
             msgText.setText(it.text);
             msgText.setVisibility(View.VISIBLE);
+            msgScroll.setVisibility(View.VISIBLE);
+            if (!it.id.equals(shownId)) msgScroll.scrollTo(0, 0);
             msgRow.setVisibility(View.VISIBLE);
             h.removeCallbacks(autoCollapse);
             if (!it.id.equals(shownId)) {
@@ -312,6 +338,7 @@ final class Overlay {
             }
         } else {
             msgText.setVisibility(View.GONE);
+            msgScroll.setVisibility(View.GONE);
             msgRow.setVisibility(View.GONE);
             if (expanded && autoExpanded) { h.removeCallbacks(autoCollapse); h.postDelayed(autoCollapse, 6000); }
         }

@@ -1,4 +1,4 @@
-package cloud.abflug.revival;
+package com.aeroflyconnect.app;
 
 import android.app.NotificationManager;
 import android.content.BroadcastReceiver;
@@ -9,7 +9,7 @@ import org.json.JSONObject;
 
 /** Wilco / Unable button on an ATC message notification: sends the reply to the Worker. */
 public class ReplyReceiver extends BroadcastReceiver {
-    static final String ACTION = "cloud.abflug.revival.ATC_REPLY";
+    static final String ACTION = "com.aeroflyconnect.app.ATC_REPLY";
 
     @Override
     public void onReceive(final Context ctx, Intent intent) {

@@ -11,11 +11,11 @@ def hasReleaseKey = ksFile != null && !ksFile.isEmpty() && new File(ksFile).exis
 def buildNumber = (System.getenv("BUILD_NUMBER") ?: "1").toInteger()
 
 android {
-    namespace 'cloud.abflug.revival'
+    namespace 'com.aeroflyconnect.app'
     compileSdk 34
 
     defaultConfig {
-        applicationId "cloud.abflug.revival"
+        applicationId "com.aeroflyconnect.app"
         minSdk 26
         targetSdk 34
         versionCode = buildNumber
