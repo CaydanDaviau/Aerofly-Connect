@@ -142,6 +142,8 @@ public class PilotService extends Service {
                             if (!callsign.isEmpty()) plan.put("callsign", callsign);
                             putIf(plan, "departure_airport", Api.field(this, "dep").toUpperCase());
                             putIf(plan, "arrival_airport", Api.field(this, "arr").toUpperCase());
+                            putIf(plan, "departure_runway", Api.field(this, "deprwy").toUpperCase());
+                            putIf(plan, "arrival_runway", Api.field(this, "arrrwy").toUpperCase());
                             putIf(plan, "cruise_altitude", Api.field(this, "cruise"));
                             putIf(plan, "flightplan_route", Api.field(this, "route"));
                             int pc = Api.send("PUT", "/api/flightplan", plan.toString(), key);
@@ -208,15 +210,19 @@ public class PilotService extends Service {
                 if (id.isEmpty() || text.isEmpty()) continue;
                 int nid = nextNid++;
                 boolean urgent = m.optBoolean("urgent", false);
-                Notification.Builder b = new Notification.Builder(this, urgent ? "atc_urgent" : "atc_quiet")
-                        .setContentTitle(urgent ? Api.t(this, "ATC - URGENT", "ATC - URGENTE") : "ATC")
-                        .setContentText(text)
-                        .setStyle(new Notification.BigTextStyle().bigText(text))
-                        .setSmallIcon(android.R.drawable.ic_dialog_info)
-                        .setAutoCancel(true)
-                        .addAction(new Notification.Action.Builder(null, "Wilco", replyIntent(this, id, "wilco", nid)).build())
-                        .addAction(new Notification.Action.Builder(null, Api.t(this, "Unable", "Impossível"), replyIntent(this, id, "unable", nid)).build());
-                nm.notify(nid, b.build());
+                // Spoken normal messages get no notification (answer with the PiP buttons).
+                // Urgent ones, or any message when Speak is off, pop up with Wilco / Unable.
+                if (urgent || !Api.speakOn(this)) {
+                    Notification.Builder b = new Notification.Builder(this, "atc_urgent")
+                            .setContentTitle(urgent ? Api.t(this, "ATC - URGENT", "ATC - URGENTE") : "ATC")
+                            .setContentText(text)
+                            .setStyle(new Notification.BigTextStyle().bigText(text))
+                            .setSmallIcon(android.R.drawable.ic_dialog_info)
+                            .setAutoCancel(true)
+                            .addAction(new Notification.Action.Builder(null, "Wilco", replyIntent(this, id, "wilco", nid)).build())
+                            .addAction(new Notification.Action.Builder(null, Api.t(this, "Unable", "Impossível"), replyIntent(this, id, "unable", nid)).build());
+                    nm.notify(nid, b.build());
+                }
                 final String fid = id; final int fnid = nid;
                 // PiP Wilco/Unable buttons appear when the voice starts (or at once if it is off).
                 speak(text, new Runnable() { @Override public void run() { PipReply.offer(fid, fnid); } });

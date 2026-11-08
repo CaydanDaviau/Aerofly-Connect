@@ -511,12 +511,15 @@ public class MainActivity extends Activity {
         LinearLayout r1 = fieldRow(card);
         EditText dep = addField(r1, Api.t(this, "Departure (ICAO)", "Partida (ICAO)"), Api.field(this, "dep"), true, false);
         EditText arr = addField(r1, Api.t(this, "Arrival (ICAO)", "Chegada (ICAO)"), Api.field(this, "arr"), true, false);
+        LinearLayout rw = fieldRow(card);
+        EditText deprwy = addField(rw, Api.t(this, "Dep runway (e.g. 29L)", "Pista de partida (ex. 29L)"), Api.field(this, "deprwy"), true, false);
+        EditText arrrwy = addField(rw, Api.t(this, "Arr runway (e.g. 11R)", "Pista de chegada (ex. 11R)"), Api.field(this, "arrrwy"), true, false);
         LinearLayout r2 = fieldRow(card);
         EditText model = addField(r2, Api.t(this, "Aircraft model", "Modelo da aeronave"), Api.field(this, "model"), true, false);
         EditText livery = addField(r2, Api.t(this, "Airline / livery", "Companhia / pintura"), Api.field(this, "livery"), false, false);
         EditText cruise = addField(card, Api.t(this, "Cruise alt (ft)", "Altitude de cruzeiro (ft)"), Api.field(this, "cruise"), false, true);
         EditText route = addField(card, Api.t(this, "Route (optional)", "Rota (opcional)"), Api.field(this, "route"), true, false);
-        extra = new EditText[]{dep, arr, model, livery, cruise, route};   // same order as EXTRA_KEYS
+        extra = new EditText[]{dep, arr, deprwy, arrrwy, model, livery, cruise, route};   // same order as EXTRA_KEYS
 
         startStop = Ui.button(this, "", Ui.PRIMARY);
         startStop.setOnClickListener(new View.OnClickListener() {
@@ -549,7 +552,7 @@ public class MainActivity extends Activity {
     }
 
     private EditText[] extra;
-    private static final String[] EXTRA_KEYS = {"dep", "arr", "model", "livery", "cruise", "route"};
+    private static final String[] EXTRA_KEYS = {"dep", "arr", "deprwy", "arrrwy", "model", "livery", "cruise", "route"};
 
     /** Horizontal row that holds two fields side by side. */
     private LinearLayout fieldRow(LinearLayout parent) {
