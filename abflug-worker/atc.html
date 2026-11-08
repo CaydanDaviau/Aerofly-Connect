@@ -186,11 +186,19 @@ function ovGet(url){return new Promise(function(res,rej){
 function fetchSurface(icao,onTry){var a=APT[icao];if(!a)return Promise.resolve('no airport');
   return idbGet('surf:'+icao).then(function(c){
     if(c&&c.w&&Date.now()-c.t<30*86400000){SURF[icao]=c.w;return''}
-    return new Promise(function(res){var i=0,last='';(function next(){if(i>=OVP.length){res(last||'failed');return}
-      if(onTry)onTry(i+1,OVP.length);
-      ovGet(OVP[i++]+'?data='+encodeURIComponent(surfQuery(a))).then(function(j){
-        if(j.remark&&/runtime error|timed out/i.test(j.remark))throw new Error('server busy');
-        var w=compactSurface(j);SURF[icao]=w;idbSet('surf:'+icao,{t:Date.now(),w:w});res('')}).catch(function(e){last=(e&&e.message)||'error';next()})})()})})}
+    var done=function(w){SURF[icao]=w;idbSet('surf:'+icao,{t:Date.now(),w:w})};
+    /* 1st: our Worker fetches Overpass for us (no CORS, cached); 2nd: direct from the browser */
+    return new Promise(function(res){var last='';
+      if(onTry)onTry(1,1+OVP.length);
+      var ctl=typeof AbortController!=='undefined'?new AbortController():null,t=setTimeout(function(){if(ctl)ctl.abort()},40000);
+      api('/api/surface?lat='+a.lat+'&lon='+a.lon,ctl?{signal:ctl.signal}:{}).then(function(r){
+        if(!r.ok)return r.json().then(function(j){throw new Error(j.error||('http '+r.status))},function(){throw new Error('http '+r.status)});
+        return r.json()}).then(function(w){clearTimeout(t);if(!Array.isArray(w))throw new Error('bad reply');done(w);res('')}).catch(function(e){clearTimeout(t);last=(e&&e.message)||'error';
+        var i=0;(function next(){if(i>=OVP.length){res(last||'failed');return}
+          if(onTry)onTry(i+2,1+OVP.length);
+          ovGet(OVP[i++]+'?data='+encodeURIComponent(surfQuery(a))).then(function(j){
+            if(j.remark&&/runtime error|timed out/i.test(j.remark))throw new Error('server busy');
+            done(compactSurface(j));res('')}).catch(function(e2){last=(e2&&e2.message)||last;next()})})()})})})}
 /* loads the surface of the airport nearest to the scope centre (one at a time) once zoomed in to airport scale */
 function ensureSurface(){if(nmpp>=0.08||rwState!=='ready'||surfBusy)return;
   var cl=Math.cos(center.lat*Math.PI/180),best=null,bd=4;
