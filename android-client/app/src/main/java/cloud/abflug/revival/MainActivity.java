@@ -140,8 +140,8 @@ public class MainActivity extends Activity {
         root.setGravity(Gravity.CENTER_HORIZONTAL);
 
         android.widget.ImageView logo = new android.widget.ImageView(this);
-        logo.setImageResource(R.mipmap.ic_launcher);
-        root.addView(logo, new LinearLayout.LayoutParams(Ui.dp(this, 84), Ui.dp(this, 84)));
+        logo.setImageResource(R.drawable.logo);
+        root.addView(logo, new LinearLayout.LayoutParams(Ui.dp(this, 112), Ui.dp(this, 112)));
         TextView title = text("AEROFLY CONNECT", 22, true);
         title.setLetterSpacing(0.12f);
         title.setPadding(0, pad / 2, 0, 0);
