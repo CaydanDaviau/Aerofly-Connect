@@ -78,6 +78,7 @@ final class Overlay {
         h.post(new Runnable() {
             @Override public void run() {
                 h.removeCallbacksAndMessages(null);
+                try { ctx.unregisterComponentCallbacks(cfgCb); } catch (Exception ignored) { }
                 if (root != null) { try { wm.removeView(root); } catch (Exception ignored) { } root = null; }
                 if (inst == Overlay.this) { inst = null; PipReply.overlayHook = null; }
                 active = false;
@@ -195,7 +196,7 @@ final class Overlay {
             root.addView(panel, new FrameLayout.LayoutParams(dp(236), FrameLayout.LayoutParams.WRAP_CONTENT));
 
             lp = new WindowManager.LayoutParams(
-                    WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
+                    dp(52), dp(52),   // explicit sizes per state: a wrap-content window stayed bubble-sized and clipped the panel
                     WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
                             | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
@@ -207,6 +208,7 @@ final class Overlay {
             inst = this;
             active = true;
             PipReply.overlayHook = refreshRun;
+            ctx.registerComponentCallbacks(cfgCb);
             PilotService.refreshNotif(ctx);
             root.post(new Runnable() { @Override public void run() { clamp(); } });
             refresh();
@@ -246,10 +248,20 @@ final class Overlay {
         }
     };
 
+    /** Screen rotated: fit the window into the new screen size once the system has settled. */
+    private final android.content.ComponentCallbacks cfgCb = new android.content.ComponentCallbacks() {
+        @Override public void onConfigurationChanged(android.content.res.Configuration c) {
+            h.postDelayed(new Runnable() { @Override public void run() { clamp(); } }, 300);
+            h.postDelayed(new Runnable() { @Override public void run() { clamp(); } }, 1000);
+        }
+        @Override public void onLowMemory() { }
+    };
+
     /** Keeps the window on the screen and applies the new position. */
     private void clamp() {
         if (root == null) return;
-        DisplayMetrics dm = ctx.getResources().getDisplayMetrics();
+        DisplayMetrics dm = new DisplayMetrics();
+        wm.getDefaultDisplay().getRealMetrics(dm);   // current rotation
         int w = root.getWidth() > 0 ? root.getWidth() : dp(52);
         int hh = root.getHeight() > 0 ? root.getHeight() : dp(52);
         lp.x = Math.max(0, Math.min(lp.x, dm.widthPixels - w));
@@ -262,7 +274,11 @@ final class Overlay {
         expanded = e;
         bubble.setVisibility(e ? View.GONE : View.VISIBLE);
         panel.setVisibility(e ? View.VISIBLE : View.GONE);
+        lp.width = e ? dp(236) : dp(52);
+        lp.height = e ? WindowManager.LayoutParams.WRAP_CONTENT : dp(52);
+        try { wm.updateViewLayout(root, lp); } catch (Exception ignored) { }
         root.post(new Runnable() { @Override public void run() { clamp(); } });
+        h.postDelayed(new Runnable() { @Override public void run() { clamp(); } }, 150);   // after the panel has been measured
     }
 
     // ---------- content ----------
@@ -301,6 +317,7 @@ final class Overlay {
         if (st.isEmpty() && !any && it == null) st = Api.t(ctx, "No requests available now", "Nenhum pedido disponível agora");
         statusView.setText(st);
         statusView.setVisibility(st.isEmpty() ? View.GONE : View.VISIBLE);
+        if (expanded) root.post(new Runnable() { @Override public void run() { clamp(); } });
     }
 
     private void reply(final String r) {
