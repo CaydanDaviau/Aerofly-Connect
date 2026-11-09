@@ -148,6 +148,7 @@ public class MainActivity extends Activity {
         title.setPadding(0, pad / 2, 0, 0);
         root.addView(title);
         TextView info = dim("v" + BuildConfig.VERSION_NAME, 12);
+        info.setTextColor(0xFFFFFFFF);
         info.setPadding(0, pad / 6, 0, pad);
         root.addView(info);
 
@@ -232,7 +233,8 @@ public class MainActivity extends Activity {
                         if (v == null) return;
                         if (fn < 0) { v.setVisibility(View.GONE); return; }
                         v.setText("\u25CF " + fn + Api.t(MainActivity.this, fn == 1 ? " pilot flying" : " pilots flying", fn == 1 ? " piloto voando" : " pilotos voando"));
-                        v.setTextColor(fn > 0 ? Ui.GREEN : Ui.DIM);
+                        v.setTextColor(Ui.CYAN);
+                        v.setTypeface(Typeface.DEFAULT_BOLD);
                         v.setVisibility(View.VISIBLE);
                     }
                 });
