@@ -7,6 +7,11 @@ const ASSIGN_TTL_MS = 12 * 3600_000;
 const TOWER_TTL_MS = 24 * 3600_000;   // a virtual tower expires this long after it was last opened/refreshed
 const MAX_TOWERS = 50;
 const MAX_TRAFFIC = 500;
+const CRASH_TIMEOUT_MS = 5 * 60_000;   // a pilot who crashes is locked out this long
+const CRASH_SHOW_MS = 10 * 60_000;     // the X stays on the maps this long
+const HARD_LANDING_FPM = -1500;        // landing_fpm at or below this = crash
+const TA_COOLDOWN_MS = 30_000;         // per viewer + other aircraft
+const TA_MIN_GS = 60;                  // both aircraft must be airborne-fast
 
 // The Android app refuses callsigns starting with "ATC_". Controllers can use
 // "ATC-SBBR", "ATC SBBR" or "TWR-SBBR" instead; we present them as "ATC_SBBR".
@@ -59,6 +64,33 @@ function haversineMi(lat1, lon1, lat2, lon2) {
 }
 
 
+// ---- Traffic advisory (TA only): is aircraft b a threat to aircraft a? Null or {clock, rel_alt_ft, vs_trend, range_nm, tau_s} ----
+// Normal: closest approach within 40 s, < 1.0 nm, < 1000 ft vertical. Relaxed (either plane near its airport): 20 s, 0.4 nm, 600 ft.
+// Formation flying (relative speed < 20 kt) and diverging traffic never alert.
+function computeTA(a, b) {
+  const n = v => { const x = Number(v); return v === null || v === undefined || v === "" || !Number.isFinite(x) ? null : x; };
+  const A = { la: n(a.latitude), lo: n(a.longitude), h: n(a.heading_true), g: n(a.ground_speed), z: n(a.altitude_ft), v: n(a.vertical_speed_ft_min) ?? 0 };
+  const B = { la: n(b.latitude), lo: n(b.longitude), h: n(b.heading_true), g: n(b.ground_speed), z: n(b.altitude_ft), v: n(b.vertical_speed_ft_min) ?? 0 };
+  for (const o of [A, B]) if (o.la === null || o.lo === null || o.h === null || o.g === null || o.z === null) return null;
+  if (A.g < TA_MIN_GS || B.g < TA_MIN_GS) return null;
+  const rad = Math.PI / 180, relaxed = a.terminal === true || b.terminal === true;
+  const x = (B.lo - A.lo) * 60 * Math.cos((A.la + B.la) / 2 * rad), y = (B.la - A.la) * 60;   // nm, b relative to a
+  const rvx = (B.g * Math.sin(B.h * rad) - A.g * Math.sin(A.h * rad)) / 3600;                  // nm/s
+  const rvy = (B.g * Math.cos(B.h * rad) - A.g * Math.cos(A.h * rad)) / 3600;
+  const v2 = rvx * rvx + rvy * rvy;
+  if (Math.sqrt(v2) * 3600 < 20) return null;
+  const dot = x * rvx + y * rvy;
+  if (dot >= 0) return null;
+  const t = -dot / v2;
+  if (t > (relaxed ? 20 : 40)) return null;
+  if (Math.hypot(x + rvx * t, y + rvy * t) > (relaxed ? 0.4 : 1.0)) return null;
+  const dz = B.z - A.z, dzAt = Math.abs(dz + (B.v - A.v) / 60 * t);
+  if (dzAt > (relaxed ? 600 : 1000) || Math.abs(dz) > (relaxed ? 1000 : 1500)) return null;
+  const rel = ((Math.atan2(x, y) / rad - A.h) % 360 + 360) % 360;
+  let clock = Math.round(rel / 30); if (clock === 0) clock = 12;
+  return { clock, rel_alt_ft: Math.round(dz / 100) * 100, vs_trend: B.v > 300 ? 1 : B.v < -300 ? -1 : 0, range_nm: Math.round(Math.hypot(x, y) * 10) / 10, tau_s: Math.round(t) };
+}
+
 // ---- Auto-ATC (basic clearances for pilots when no human controller covers the airport) ----
 const REQ_TYPES = ["clearance", "taxi", "takeoff", "land"];
 const REQ_LOCK_MS = { takeoff: 90_000, land: 120_000 };
@@ -110,9 +142,10 @@ export default {
 
 export class Hub {
   constructor(ctx) {
-    this.towers = new Map();
+    this.towers = new Map(); this.crashes = new Map(); this.ta = new Map();
     ctx.blockConcurrencyWhile(async () => {
       for (const [k, v] of await ctx.storage.list({ prefix: "tower:" })) this.towers.set(k.slice(6), v);
+      for (const [k, v] of await ctx.storage.list({ prefix: "crash:" })) this.crashes.set(k.slice(6), v);
     }); this.ctx = ctx; this.clients = new Map(); this.msgs = new Map(); this.rwy = new Map(); this.msgSeq = 0; this.since = Date.now(); this.counts = {}; }
 
   purge() {
@@ -120,6 +153,8 @@ export class Hub {
     for (const [k, c] of this.clients) if (now - c.seen > TTL_MS) this.clients.delete(k);
     for (const [k, m] of this.msgs) if (now - m.at > 30 * 60 * 1000) this.msgs.delete(k);
     for (const [k, l] of this.rwy) if (now > l.until) this.rwy.delete(k);
+    for (const [k, t] of this.ta) if (now - t > 120_000) this.ta.delete(k);
+    for (const [k, cr] of this.crashes) if (now - cr.at > CRASH_SHOW_MS) { this.crashes.delete(k); this.ctx.storage.delete("crash:" + k); }
     for (const [k, t] of this.towers) if (now - t.at > TOWER_TTL_MS) { this.towers.delete(k); this.ctx.storage.delete("tower:" + k); }
   }
 
@@ -145,6 +180,26 @@ export class Hub {
       if (!used.has(cand)) return cand;
     }
     return null;
+  }
+
+  crashBlock(key) {
+    const cr = this.crashes.get(key), now = Date.now();
+    if (!cr || now >= cr.until) return null;
+    return json({ error: "crashed", crashed: true, until: cr.until, remaining_s: Math.ceil((cr.until - now) / 1000), latitude: cr.latitude, longitude: cr.longitude, landing_fpm: cr.landing_fpm }, 423);
+  }
+
+  trafficAlerts(key, c) {
+    const now = Date.now(), out = [];
+    for (const [k2, o] of this.clients) {
+      if (k2 === key || !o.pos || now - o.seen > 15_000) continue;
+      const al = computeTA(c.pos, o.pos);
+      if (!al) continue;
+      const pk = key + "|" + k2;
+      if (now - (this.ta.get(pk) || 0) < TA_COOLDOWN_MS) continue;
+      this.ta.set(pk, now);
+      out.push({ ...al, callsign: normCallsign(o.plan.callsign ?? o.pos.callsign), icao_address: o.pos.icao_address });
+    }
+    return out.sort((x, y) => x.tau_s - y.tau_s).slice(0, 2);
   }
 
   async fetch(request) {
@@ -274,7 +329,7 @@ export class Hub {
     }
 
     if (m === "GET" && p === "/api/health")
-      return json({ status: "ok", active_clients: this.clients.size });
+      return json({ status: "ok", active_clients: this.clients.size, pilots: [...this.clients.values()].filter(c => c.pos).length, towers: this.towers.size });
 
     if (m === "GET" && p === "/api/traffic") {
       const q = url.searchParams;
@@ -299,10 +354,13 @@ export class Hub {
       const truncated = out.length > MAX_TRAFFIC;
       out = out.slice(0, MAX_TRAFFIC);
       const atc_messages = [...this.msgs.values()].map(x => ({ id: x.id, icao_address: x.icao, text: x.text, kind: x.kind, urgent: !!x.urgent, status: x.status, at: x.at }));
-      return json({ aircraft: out, traffic: out, truncated, active_clients: this.clients.size, atc_messages });
+      const crashes = [...this.crashes.values()].map(x => ({ callsign: x.callsign, icao_address: x.icao, latitude: x.latitude, longitude: x.longitude, landing_fpm: x.landing_fpm, at: x.at, until: x.until }));
+      return json({ aircraft: out, traffic: out, truncated, active_clients: this.clients.size, atc_messages, crashes });
     }
 
     if ((m === "POST" || m === "PUT") && p === "/api/position") {
+      const blocked = this.crashBlock(key);
+      if (blocked) { this.clients.delete(key); return blocked; }
       let d = await request.json().catch(() => ({}));
       if (d.position && typeof d.position === "object") d = d.position;
       const lat = pick(d, "latitude", "lat"), lon = pick(d, "longitude", "lon", "lng");
@@ -324,6 +382,7 @@ export class Hub {
         heading_mag: pick(d, "heading_mag"),
         eta_min: pick(d, "eta_min"),
         landing_fpm: pick(d, "landing_fpm"),
+        terminal: pick(d, "terminal") === true,
         airplane_model: pick(d, "airplane_model"),
         airplane_livery: pick(d, "airplane_livery", "livery"),
         timestamp: pick(d, "timestamp") ?? Math.floor(Date.now() / 1000),
@@ -335,13 +394,25 @@ export class Hub {
               assigned: rec && Date.now() - rec.at < ASSIGN_TTL_MS ? rec : null };
       }
       c.pos = pos; c.seen = Date.now();
+      const lf = Number(pos.landing_fpm);
+      if (pos.landing_fpm !== undefined && Number.isFinite(lf) && lf <= HARD_LANDING_FPM) {
+        // hard landing = crash: the plane vanishes from traffic, an X is marked, the pilot waits CRASH_TIMEOUT_MS
+        const now = Date.now();
+        const cr = { key, icao, callsign: normCallsign(c.plan.callsign ?? pos.callsign), latitude: lat, longitude: lon, landing_fpm: Math.round(lf), at: now, until: now + CRASH_TIMEOUT_MS };
+        this.crashes.set(key, cr);
+        await this.ctx.storage.put("crash:" + key, cr);
+        this.clients.delete(key);
+        return this.crashBlock(key);
+      }
       this.clients.set(key, c);
       const messages = [];
       for (const x of this.msgs.values()) if (x.icao === icao && x.status === "sent") { x.status = "delivered"; messages.push({ id: x.id, text: x.text, kind: x.kind, urgent: !!x.urgent, at: x.at }); }
-      return json({ success: true, messages });
+      return json({ success: true, messages, traffic_alerts: this.trafficAlerts(key, c) });
     }
 
     if ((m === "POST" || m === "PUT") && p === "/api/flightplan") {
+      const blocked = this.crashBlock(key);
+      if (blocked) return blocked;
       let d = await request.json().catch(() => ({}));
       if (d.flightplan && typeof d.flightplan === "object") d = d.flightplan;
       const plan = {};

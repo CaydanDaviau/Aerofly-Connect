@@ -26,7 +26,7 @@ body.pip #bar,body.pip #info,body.pip .maplibregl-ctrl-attrib{display:none!impor
 var P=new URLSearchParams(location.search), KEY=P.get('key')||'', BASE=location.origin;
 var STYLES=[['Liberty','https://tiles.openfreemap.org/styles/liberty'],['Positron','https://tiles.openfreemap.org/styles/positron'],['Bright','https://tiles.openfreemap.org/styles/bright']];
 var si=0; try{si=Math.min(STYLES.length-1,Math.max(0,parseInt(localStorage.getItem('rv_style')||'0',10)||0))}catch(e){}
-var own=null, follow=true, hdgUp=false, trails={}, lastTraffic=[], towers=[], ready=false;
+var own=null, follow=true, hdgUp=false, trails={}, lastTraffic=[], lastCrashes=[], towers=[], ready=false;
 var info=document.getElementById('info');
 function setInfo(t){info.textContent=t}
 
@@ -55,7 +55,7 @@ function addIcons(){
 var EMPTY={type:'FeatureCollection',features:[]};
 function addLayers(){
   addIcons();
-  ['trails','planes','towers','ownsrc'].forEach(function(id){ if(!map.getSource(id))map.addSource(id,{type:'geojson',data:EMPTY}) });
+  ['trails','planes','towers','ownsrc','crashes'].forEach(function(id){ if(!map.getSource(id))map.addSource(id,{type:'geojson',data:EMPTY}) });
   var halo={'text-halo-color':'#fff','text-halo-width':1.6};
   if(!map.getLayer('trails'))map.addLayer({id:'trails',type:'line',source:'trails',layout:{'line-cap':'round','line-join':'round'},paint:{'line-color':['get','c'],'line-width':2.5,'line-opacity':.65}});
   if(!map.getLayer('towers'))map.addLayer({id:'towers',type:'symbol',source:'towers',layout:{'icon-image':'tower','icon-size':.7,'icon-allow-overlap':true,'text-field':['get','label'],'text-font':['Noto Sans Bold'],'text-size':12,'text-offset':[0,1.9],'text-anchor':'top','text-allow-overlap':true},paint:{'icon-color':'#c2189a','icon-halo-color':'#fff','icon-halo-width':1.2,'text-color':'#7a0f62','text-halo-color':'#fff','text-halo-width':1.6}});
@@ -65,6 +65,8 @@ function addLayers(){
   var pt2={'text-color':'#0b3d91','text-halo-color':'#fff','text-halo-width':1.6};
   if(!map.getLayer('ownleft'))map.addLayer({id:'ownleft',type:'symbol',source:'ownsrc',layout:Object.assign({'text-field':['get','left'],'text-anchor':'right','text-justify':'right','text-offset':[-2.3,0]},hl),paint:pt2});
   if(!map.getLayer('ownfpm'))map.addLayer({id:'ownfpm',type:'symbol',source:'ownsrc',filter:['!=',['get','fpm'],''],layout:Object.assign({'text-field':['get','fpm'],'text-anchor':'top','text-offset':[0,2.4]},hl),paint:{'text-color':'#b3261e','text-halo-color':'#fff','text-halo-width':1.8}});
+  if(!map.getLayer('crashx'))map.addLayer({id:'crashx',type:'symbol',source:'crashes',layout:{'text-field':'X','text-font':['Noto Sans Bold'],'text-size':34,'text-allow-overlap':true,'text-ignore-placement':true},paint:{'text-color':'#d93025','text-halo-color':'#fff','text-halo-width':2.2}});
+  if(!map.getLayer('crashlbl'))map.addLayer({id:'crashlbl',type:'symbol',source:'crashes',layout:{'text-field':['get','label'],'text-font':['Noto Sans Bold'],'text-size':12,'text-anchor':'top','text-offset':[0,1.2],'text-allow-overlap':true,'text-ignore-placement':true},paint:{'text-color':'#b3261e','text-halo-color':'#fff','text-halo-width':1.8}});
   ready=true; render();
 }
 map.on('style.load',addLayers);
@@ -96,6 +98,7 @@ function render(){
   }
   map.getSource('ownsrc').setData({type:'FeatureCollection',features:ow});
   map.getSource('trails').setData({type:'FeatureCollection',features:tr});
+  if(map.getSource('crashes'))map.getSource('crashes').setData({type:'FeatureCollection',features:lastCrashes.map(function(c){return pt(c.longitude,c.latitude,{label:'CRASH '+(c.callsign||'')})})});
 }
 function pushTrail(id,lon,lat){
   var t=trails[id]||(trails[id]=[]),l=t[t.length-1];
@@ -122,7 +125,7 @@ function poll(){
   fetch(BASE+'/api/traffic?lat='+c.lat+'&lon='+c.lon+'&radius_miles=13000',{headers:{'X-API-Key':KEY||'viewer'}})
    .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json()})
    .then(function(d){
-     failures=0;lastTraffic=d.aircraft||[];
+     failures=0;lastTraffic=d.aircraft||[];lastCrashes=d.crashes||[];
      lastTraffic.forEach(function(a){
        if(a.virtual_tower)return;
        var id=a.icao_address||a.callsign;

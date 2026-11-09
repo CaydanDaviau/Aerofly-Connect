@@ -159,3 +159,64 @@ await new Promise(r => setTimeout(r, 2100));
 let [, c4] = await rq("cl2", { type: "clearance" });
 ok("tower takes clearance request", c4.mode === "controller" && c4.messages === undefined);
 await call("DELETE", "/api/atc/tower?name=SBBR", null, "ctl");
+
+// ---- TA / crash / online count ----
+{
+  const up = (k, o) => call("PUT", "/api/position", o, k);
+  const P = (lat, lon, hdg, gs, alt, vs = 0, extra = {}) => ({ latitude: lat, longitude: lon, heading_true: hdg, ground_speed: gs, altitude_ft: alt, vertical_speed_ft_min: vs, ...extra });
+  const alerts = r => JSON.parse(r.slice(4)).traffic_alerts;
+  // head-on, 6 nm apart on the same latitude, 250 kt each (closing 500 kt = 60 s... tau 43 s -> inside 40 s at 5 nm)
+  await up("ta2", P(10, 20.0833, 270, 250, 10000));            // 5 nm east of ta1, flying west
+  let r = await up("ta1", P(10, 20, 90, 250, 10000));          // flying east
+  let al = alerts(r);
+  console.log("TA head-on:", al.length === 1 && al[0].clock === 12 && al[0].rel_alt_ft === 0 ? "PASS" : "FAIL " + r);
+  r = await up("ta1", P(10, 20, 90, 250, 10000));
+  console.log("TA cooldown:", alerts(r).length === 0 ? "PASS" : "FAIL " + r);
+  // vertical separation 3000 ft: no alert
+  await up("ta4", P(11, 20.0833, 270, 250, 13000));
+  r = await up("ta3", P(11, 20, 90, 250, 10000));
+  console.log("TA vertical:", alerts(r).length === 0 ? "PASS" : "FAIL " + r);
+  // formation (same heading/speed, 0.1 nm apart): no alert
+  await up("ta6", P(12, 20.002, 90, 250, 10000));
+  r = await up("ta5", P(12, 20, 90, 250, 10000));
+  console.log("TA formation:", alerts(r).length === 0 ? "PASS" : "FAIL " + r);
+  // diverging: no alert
+  await up("ta8", P(13, 20.01, 90, 250, 10000));
+  r = await up("ta7", P(13, 20, 270, 250, 10000));
+  console.log("TA diverging:", alerts(r).length === 0 ? "PASS" : "FAIL " + r);
+  // relaxed near an airport: 0.3 nm miss-distance converging in 30 s alerts only when not terminal
+  await up("ta10", P(14.003, 20.0833, 270, 250, 10000));        // passes 0.18 nm north of ta9
+  r = await up("ta9", P(14, 20, 90, 250, 10000));
+  console.log("TA 40s window (5 nm, 0.18 nm miss):", alerts(r).length === 1 ? "PASS" : "FAIL " + r);
+  await up("ta12", P(15.003, 20.0833, 270, 250, 10000, 0, { terminal: true }));
+  r = await up("ta11", P(15, 20, 90, 250, 10000, 0, { terminal: true }));
+  console.log("TA relaxed (terminal, tau 43 s > 20 s):", alerts(r).length === 0 ? "PASS" : "FAIL " + r);
+  // clock + above + climbing: other plane 2 o'clock, 400 ft above, climbing
+  await up("ta14", P(16.02, 20.0384, 225, 250, 10400, 800));
+  r = await up("ta13", P(16, 20, 90, 250, 10000));
+  al = alerts(r);
+  console.log("TA clock/alt/trend:", al.length === 1 && al[0].clock === 11 && al[0].rel_alt_ft === 400 && al[0].vs_trend === 1 ? "PASS " + JSON.stringify(al[0]) : "FAIL " + r);
+
+  // hard landing: 423 + removed from traffic + X listed + stays blocked
+  await call("PUT", "/api/flightplan", { callsign: "CRASH1" }, "cr1");
+  await up("cr1", P(-15.87, -47.92, 90, 5, 3400));
+  r = await up("cr1", P(-15.87, -47.92, 90, 5, 3400, 0, { landing_fpm: -1800 }));
+  console.log("crash 423:", r.startsWith("423") && r.includes('"crashed":true') && r.includes('"remaining_s":300') ? "PASS" : "FAIL " + r);
+  r = await up("cr1", P(-15.87, -47.92, 90, 5, 3400));
+  console.log("crash stays blocked:", r.startsWith("423") ? "PASS" : "FAIL " + r);
+  console.log("crash flightplan blocked:", (await call("PUT", "/api/flightplan", { callsign: "CRASH1" }, "cr1")).startsWith("423") ? "PASS" : "FAIL");
+  const tr2 = JSON.parse((await call("GET", "/api/traffic?lat=-15.87&lon=-47.92&radius_miles=50")).slice(4));
+  console.log("crash X listed, plane gone:", tr2.crashes.length === 1 && tr2.crashes[0].callsign === "CRASH1" && !tr2.aircraft.some(a => a.callsign === "CRASH1") ? "PASS" : "FAIL");
+  // survives restart; soft landing is fine
+  hub = new Hub(ctx); await new Promise(r => setTimeout(r, 0));   // the mock ctx does not block while the constructor loads storage
+  r = await up("cr1", P(-15.87, -47.92, 90, 5, 3400));
+  console.log("crash survives restart:", r.startsWith("423") ? "PASS" : "FAIL " + r);
+  r = await up("soft1", P(-15.87, -47.92, 90, 5, 3400, 0, { landing_fpm: -300 }));
+  console.log("soft landing ok:", r.startsWith("200") ? "PASS" : "FAIL " + r);
+  // timeout over: allowed again
+  store.set("crash:cr1", { ...store.get("crash:cr1"), until: Date.now() - 1 }); hub = new Hub(ctx); await new Promise(r => setTimeout(r, 0));
+  r = await up("cr1", P(-15.87, -47.92, 90, 5, 3400));
+  console.log("after timeout ok:", r.startsWith("200") ? "PASS" : "FAIL " + r);
+  const h = JSON.parse((await call("GET", "/api/health", null, null)).slice(4));
+  console.log("health pilots:", typeof h.pilots === "number" && h.pilots > 0 ? "PASS " + JSON.stringify(h) : "FAIL");
+}

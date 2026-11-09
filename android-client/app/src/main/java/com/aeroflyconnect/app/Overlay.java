@@ -33,6 +33,21 @@ final class Overlay {
         return Api.overlayOn(c) && Settings.canDrawOverlays(c);
     }
 
+    /** Traffic advisory: shows a red line at the top of the panel for 10 s and opens the panel (any thread). */
+    static void alert(final String text) {
+        final Overlay o = inst;
+        if (o == null) return;
+        o.h.post(new Runnable() {
+            @Override public void run() {
+                o.alertText = text;
+                o.h.removeCallbacks(o.alertExpire);
+                o.h.postDelayed(o.alertExpire, 10000);
+                if (o.root != null && !o.expanded) { o.autoExpanded = true; o.setExpanded(true); }
+                o.refresh();
+            }
+        });
+    }
+
     /** Redraw after the phase or the message queue changed (any thread). */
     static void poke() {
         Overlay o = inst;
@@ -44,7 +59,8 @@ final class Overlay {
     private final Handler h = new Handler(Looper.getMainLooper());
     private FrameLayout root;
     private WindowManager.LayoutParams lp;
-    private TextView bubble, msgText, statusView;
+    private TextView bubble, msgText, statusView, alertView;
+    private String alertText = "";
     private ScrollView msgScroll;
     private LinearLayout panel, msgRow, reqGrid;
     private Button bWilco, bUnable, bClr, bTaxi, bTakeoff, bLand;
@@ -57,6 +73,9 @@ final class Overlay {
             if (autoExpanded && PipReply.current() == null) setExpanded(false);
             autoExpanded = false;
         }
+    };
+    private final Runnable alertExpire = new Runnable() {
+        @Override public void run() { alertText = ""; refresh(); }
     };
     private final Runnable clearStatus = new Runnable() {
         @Override public void run() { statusMsg = ""; refresh(); }
@@ -152,6 +171,18 @@ final class Overlay {
             });
             head.addView(min, new LinearLayout.LayoutParams(dp(40), dp(40)));
             panel.addView(head);
+
+            alertView = new TextView(ctx);
+            alertView.setTextSize(14);
+            alertView.setTypeface(Typeface.DEFAULT_BOLD);
+            alertView.setTextColor(0xFFFFFFFF);
+            alertView.setPadding(dp(8), dp(6), dp(8), dp(6));
+            alertView.setBackground(Ui.shape(ctx, 0xFFB3261E, 0xFFFF6B5E, 8));
+            alertView.setVisibility(View.GONE);
+            LinearLayout.LayoutParams alp = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            alp.bottomMargin = dp(4);
+            panel.addView(alertView, alp);
 
             msgText = new TextView(ctx);
             msgText.setTextSize(15);
@@ -340,8 +371,10 @@ final class Overlay {
             msgText.setVisibility(View.GONE);
             msgScroll.setVisibility(View.GONE);
             msgRow.setVisibility(View.GONE);
-            if (expanded && autoExpanded) { h.removeCallbacks(autoCollapse); h.postDelayed(autoCollapse, 6000); }
+            if (expanded && autoExpanded && alertText.isEmpty()) { h.removeCallbacks(autoCollapse); h.postDelayed(autoCollapse, 6000); }
         }
+        alertView.setText(alertText);
+        alertView.setVisibility(alertText.isEmpty() ? View.GONE : View.VISIBLE);
         dim(bClr, Phase.clearance); dim(bTaxi, Phase.taxi); dim(bTakeoff, Phase.takeoff); dim(bLand, Phase.land);
         bWilco.setEnabled(!replyBusy); bUnable.setEnabled(!replyBusy);
         String st = statusMsg;

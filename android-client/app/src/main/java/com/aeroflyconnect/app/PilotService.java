@@ -162,6 +162,7 @@ public class PilotService extends Service {
                         putIf(pos, "airplane_livery", Api.field(this, "livery"));
                         // Shared with other players (shown when they tap this aircraft on the map).
                         if (Phase.etaMin >= 0) pos.put("eta_min", Phase.etaMin);
+                        pos.put("terminal", Phase.terminal);
                         if (Phase.landingShown(System.currentTimeMillis())) pos.put("landing_fpm", Phase.landFpm);
                         // Callsign lives in the flight plan; the app sends it once, so do we.
                         if (!planSent) {
@@ -178,9 +179,14 @@ public class PilotService extends Service {
                         }
                         Api.Resp r = Api.request("PUT", "/api/position", pos.toString(), key);
                         int code = r.code;
+                        if (code == 423) {   // hard landing: the server grounds this pilot for a while
+                            onCrashed(r.body);
+                            break;
+                        }
                         if (code < 400) {
                             okCount++; serverState = "OK (HTTP " + code + ")";
                             showMessages(r.body);
+                            showTraffic(r.body);
                         }
                         else { failCount++; serverState = "HTTP " + code; }
                     } catch (Exception e) {
@@ -267,6 +273,51 @@ public class PilotService extends Service {
         // Distinct request code per notification and button, otherwise extras get overwritten.
         return PendingIntent.getBroadcast(c, nid * 2 + (reply.equals("wilco") ? 0 : 1), i,
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+    }
+
+    /** Hard landing: remember the timeout, tell the pilot, and end the flight (the loop stops right after). */
+    private void onCrashed(String body) {
+        long rem = 300; int fpm = 0;
+        try {
+            JSONObject j = new JSONObject(body);
+            rem = j.optLong("remaining_s", 300); fpm = j.optInt("landing_fpm", 0);
+        } catch (Exception ignored) { }
+        Api.setCrashUntil(this, System.currentTimeMillis() + rem * 1000);
+        stopFlag = true;
+        try {
+            NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+            String text = Api.t(this, "Hard landing", "Pouso forte") + (fpm != 0 ? " (" + fpm + " ft/min)" : "") + ". "
+                    + Api.t(this, "You can fly again in ", "Você poderá voar de novo em ") + Api.mmss(rem * 1000);
+            nm.notify(900, new Notification.Builder(this, "atc_urgent")
+                    .setContentTitle(Api.t(this, "CRASH", "ACIDENTE"))
+                    .setContentText(text)
+                    .setStyle(new Notification.BigTextStyle().bigText(text))
+                    .setSmallIcon(android.R.drawable.ic_dialog_alert)
+                    .setAutoCancel(true).build());
+        } catch (Exception ignored) { }
+    }
+
+    /** Traffic advisory from the position response: spoken ("Traffic, traffic ...") and shown in the overlay. Always on. */
+    private void showTraffic(String body) {
+        try {
+            JSONArray arr = new JSONObject(body).optJSONArray("traffic_alerts");
+            if (arr == null || arr.length() == 0) return;
+            JSONObject a = arr.getJSONObject(0);   // most urgent first
+            int clock = a.optInt("clock", 12), dz = a.optInt("rel_alt_ft", 0), tr = a.optInt("vs_trend", 0);
+            String shown = TrafficText.shown(Api.uiLang(this).equals("pt"), clock, dz, tr);
+            Overlay.alert(shown);
+            boolean speakOn = Api.speakOn(this);
+            if (!Overlay.active || !speakOn) {   // no overlay or no voice: a heads-up notification makes sure it is seen
+                NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+                nm.notify(901, new Notification.Builder(this, "atc_urgent")
+                        .setContentTitle(Api.t(this, "Traffic advisory", "Alerta de tráfego"))
+                        .setContentText(shown)
+                        .setSmallIcon(android.R.drawable.ic_dialog_alert)
+                        .setTimeoutAfter(10000).build());
+            }
+            if (speakOn) speak(TrafficText.speech(Api.voiceLang(this).equals("pt"), clock, dz, tr), new Runnable() { @Override public void run() { } });
+        } catch (Exception ignored) {
+        }
     }
 
     /** The phase changed: redraw the overlay, or the notification button when there is no overlay. */

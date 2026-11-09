@@ -151,6 +151,18 @@ public class MainActivity extends Activity {
         info.setPadding(0, pad / 6, 0, pad);
         root.addView(info);
 
+        menuOnline = dim("", 13);
+        menuOnline.setGravity(Gravity.CENTER);
+        menuOnline.setVisibility(View.GONE);
+        root.addView(menuOnline, Ui.lp(this, 10));
+        menuCrash = text("", 15, true);
+        menuCrash.setGravity(Gravity.CENTER);
+        menuCrash.setTextColor(Ui.RED);
+        menuCrash.setPadding(pad / 2, pad / 2, pad / 2, pad / 2);
+        menuCrash.setBackground(Ui.shape(this, 0xE6012C33, Ui.RED, 14));
+        menuCrash.setVisibility(View.GONE);
+        root.addView(menuCrash, Ui.lp(this, 12));
+
         root.addView(menuCard(Api.t(this, "Pilot", "Piloto"),
                 Api.t(this, "Share your position and receive ATC messages", "Compartilhe sua posição e receba mensagens do ATC"),
                 new View.OnClickListener() { @Override public void onClick(View v) { showPilot(); } }), Ui.lp(this, 12));
@@ -170,6 +182,62 @@ public class MainActivity extends Activity {
         sv.setFillViewport(true);
         sv.addView(root);
         setContentView(Ui.withBackground(this, sv, R.drawable.bg_start));
+        startMenuTick();
+    }
+
+    // ---------- Start screen: online count + crash timeout ----------
+    private TextView menuOnline, menuCrash;
+    private Runnable menuTick;
+    private int menuTicks;
+
+    private void startMenuTick() {
+        stopMenuTick();
+        menuTicks = 0;
+        menuTick = new Runnable() {
+            @Override public void run() {
+                if (menuOnline == null || menuTick != this) return;
+                long left = Api.crashLeftMs(MainActivity.this);
+                if (left > 0) {
+                    menuCrash.setText(Api.t(MainActivity.this, "Crash timeout - you can fly again in ", "Tempo de espera após o acidente - você poderá voar em ") + Api.mmss(left));
+                    menuCrash.setVisibility(View.VISIBLE);
+                } else menuCrash.setVisibility(View.GONE);
+                if (menuTicks++ % 15 == 0) fetchOnline();   // right away, then every 15 s
+                ui.postDelayed(this, 1000);
+            }
+        };
+        menuTick.run();
+    }
+
+    private void stopMenuTick() {
+        if (menuTick != null) ui.removeCallbacks(menuTick);
+        menuTick = null;
+    }
+
+    private void fetchOnline() {
+        final String key = Api.key(this);
+        new Thread(new Runnable() {
+            @Override public void run() {
+                int n = -1;
+                try {
+                    Api.Resp r = Api.request("GET", "/api/health", null, key);
+                    if (r.code < 400) {
+                        org.json.JSONObject j = new org.json.JSONObject(r.body);
+                        n = j.has("pilots") ? j.optInt("pilots", -1) : j.optInt("active_clients", -1);
+                    }
+                } catch (Exception ignored) { }
+                final int fn = n;
+                ui.post(new Runnable() {
+                    @Override public void run() {
+                        TextView v = menuOnline;
+                        if (v == null) return;
+                        if (fn < 0) { v.setVisibility(View.GONE); return; }
+                        v.setText("\u25CF " + fn + Api.t(MainActivity.this, fn == 1 ? " pilot flying" : " pilots flying", fn == 1 ? " piloto voando" : " pilotos voando"));
+                        v.setTextColor(fn > 0 ? Ui.GREEN : Ui.DIM);
+                        v.setVisibility(View.VISIBLE);
+                    }
+                });
+            }
+        }, "online-count").start();
     }
 
     // ---------- Settings ----------
@@ -622,6 +690,11 @@ public class MainActivity extends Activity {
             i.setAction(PilotService.ACTION_STOP);
             startService(i);
         } else {
+            long crashLeft = Api.crashLeftMs(this);
+            if (crashLeft > 0) {   // hard-landing timeout
+                Toast.makeText(this, Api.t(this, "Crash timeout - you can fly again in ", "Tempo de espera após o acidente - você poderá voar em ") + Api.mmss(crashLeft), Toast.LENGTH_LONG).show();
+                return;
+            }
             if (Build.VERSION.SDK_INT >= 33
                     && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
                 requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1);
@@ -645,6 +718,8 @@ public class MainActivity extends Activity {
     }
 
     private void stopTicker() {
+        stopMenuTick();
+        menuOnline = null; menuCrash = null;
         if (ticker != null) ui.removeCallbacks(ticker);
         ticker = null;
     }

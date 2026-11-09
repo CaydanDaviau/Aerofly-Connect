@@ -11,6 +11,8 @@ final class Phase {
     private Phase() {}
 
     static volatile boolean clearance, taxi, takeoff, land;
+    /** Near the departure or arrival airport: traffic advisories use relaxed limits (shared with the server in each upload). */
+    static volatile boolean terminal;
     /** Minutes to the arrival airport (straight line / ground speed), -1 = unknown. */
     static volatile int etaMin = -1;
     /** Last touchdown rate (ft/min, negative = descending), shown until landUntil (ms). */
@@ -28,7 +30,7 @@ final class Phase {
 
     static synchronized void reset() {
         dep = null; arr = null; init = false; airborne = false; cleared = false; slowSince = 0;
-        clearance = false; taxi = false; takeoff = false; land = false;
+        clearance = false; taxi = false; takeoff = false; land = false; terminal = false;
         etaMin = -1; landFpm = 0; landUntil = 0; candAt = 0;
     }
 
@@ -76,6 +78,7 @@ final class Phase {
             }
         }
 
+        terminal = (dep != null && distNm(la, lo, dep.lat, dep.lon) <= 6) || (arr != null && distNm(la, lo, arr.lat, arr.lon) <= 8);
         boolean changed = cl != clearance || t != taxi || o != takeoff || l != land;
         clearance = cl; taxi = t; takeoff = o; land = l;
         return changed;
