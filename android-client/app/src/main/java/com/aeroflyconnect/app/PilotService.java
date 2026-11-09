@@ -131,7 +131,6 @@ public class PilotService extends Service {
         simState = "connecting..."; serverState = "-";
         running = true;
         final String key = Api.key(this);
-        final String simHost = Api.simHost(this);
         final String callsign = Api.callsign(this).trim().toUpperCase();
         // Runway data of the flight's airports (cached; a one-time download of a few MB) for the phase logic.
         final String depIcao = Api.field(this, "dep"), arrIcao = Api.field(this, "arr");
@@ -151,6 +150,7 @@ public class PilotService extends Service {
 
     private void loop(String key, String callsign) {
         SimLink sim = new SimLink();
+        final String simHost = Api.simHost(this);
         boolean planSent = false;
         try {
             while (!stopFlag) {
