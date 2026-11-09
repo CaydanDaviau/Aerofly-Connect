@@ -122,10 +122,13 @@ public class MapActivity extends Activity {
     protected void onStart() {
         super.onStart();
         PilotService.mapShown = true; PilotService.refreshNotif(this);
+        trafficPushed = 0;
+        web.evaluateJavascript("window.setActive&&window.setActive(true)", null);
         // Push our own plane (from the sim link) into the page once a second.
         feed = new Runnable() {
             @Override public void run() {
                 pushOwn();
+                pushTraffic();
                 ui.postDelayed(this, 1000);
             }
         };
@@ -135,7 +138,18 @@ public class MapActivity extends Activity {
     @Override
     protected void onStop() {
         ui.removeCallbacks(feed);
+        web.evaluateJavascript("window.setActive&&window.setActive(false)", null);   // hidden: no polling
         super.onStop();
+    }
+
+    private long trafficPushed;
+
+    /** Hands the traffic that came back with the position upload to the page (it then skips its own poll). */
+    private void pushTraffic() {
+        String j = PilotService.trafficJson; long at = PilotService.trafficAt;
+        if (!pageReady || j == null || at == trafficPushed || System.currentTimeMillis() - at > 10000) return;
+        trafficPushed = at;
+        web.evaluateJavascript("window.setTraffic&&window.setTraffic(" + j + ")", null);
     }
 
     private void pushOwn() {

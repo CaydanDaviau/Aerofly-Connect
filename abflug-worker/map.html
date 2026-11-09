@@ -119,26 +119,34 @@ window.setOwn=function(lat,lon,hdg,gs,alt,callsign,eta,fpm){
 window.zoomBy=function(d){map.easeTo({zoom:map.getZoom()+d,duration:200})};
 window.setPip=function(on){document.body.classList.toggle('pip',!!on);render();map.resize()};
 
-var firstFix=true, failures=0;
+var firstFix=true, failures=0, lastPush=0, paused=false;
+function applyTraffic(d){
+  failures=0;lastTraffic=d.aircraft||[];lastCrashes=d.crashes||[];
+  lastTraffic.forEach(function(a){
+    if(a.virtual_tower)return;
+    var id=a.icao_address||a.callsign;
+    if(a.self){ if(!window.__appOwn){own={lat:a.latitude,lon:a.longitude,hdg:Number(a.heading_true)||0,alt:a.altitude_ft,callsign:a.callsign};pushTrail('__own',a.longitude,a.latitude);followNow()} }
+    else pushTrail(id,a.longitude,a.latitude);
+  });
+  if(firstFix&&own){firstFix=false;map.jumpTo({center:[own.lon,own.lat],zoom:13})}
+  var nt=lastTraffic.filter(function(a){return a.virtual_tower}).length, n=lastTraffic.length-nt;
+  setInfo(n+' aircraft'+' · '+nt+(nt===1?' tower':' towers')+(KEY?'':' · view only'));
+  render();
+}
+// traffic pushed by the Android app (it comes back with the position upload, no extra request)
+window.setTraffic=function(d){lastPush=Date.now();applyTraffic(d)};
+// the app tells us when the map is hidden: no polling then
+window.setActive=function(on){paused=!on;if(on)poll()};
 function poll(){
+  if(paused||document.hidden)return;
+  if(window.Android&&Date.now()-lastPush<10000)return;   // app feed is fresh
   var c=own?{lat:own.lat,lon:own.lon}:{lat:map.getCenter().lat,lon:map.getCenter().lng};
   fetch(BASE+'/api/traffic?lat='+c.lat+'&lon='+c.lon+'&radius_miles=13000',{headers:{'X-API-Key':KEY||'viewer'}})
    .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json()})
-   .then(function(d){
-     failures=0;lastTraffic=d.aircraft||[];lastCrashes=d.crashes||[];
-     lastTraffic.forEach(function(a){
-       if(a.virtual_tower)return;
-       var id=a.icao_address||a.callsign;
-       if(a.self){ if(!window.__appOwn){own={lat:a.latitude,lon:a.longitude,hdg:Number(a.heading_true)||0,alt:a.altitude_ft,callsign:a.callsign};pushTrail('__own',a.longitude,a.latitude);followNow()} }
-       else pushTrail(id,a.longitude,a.latitude);
-     });
-     if(firstFix&&own){firstFix=false;map.jumpTo({center:[own.lon,own.lat],zoom:13})}
-     var nt=lastTraffic.filter(function(a){return a.virtual_tower}).length, n=lastTraffic.length-nt;
-     setInfo(n+' aircraft'+' · '+nt+(nt===1?' tower':' towers')+(KEY?'':' · view only'));
-     render();
-   }).catch(function(e){failures++;setInfo('server error: '+e.message)});
+   .then(applyTraffic).catch(function(e){failures++;setInfo('server error: '+e.message)});
 }
 setInterval(poll,3000);poll();
+document.addEventListener('visibilitychange',function(){if(!document.hidden)poll()});
 
 // ---- tap another aircraft: details popup ----
 var popup=null;

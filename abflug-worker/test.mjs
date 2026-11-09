@@ -220,3 +220,11 @@ await call("DELETE", "/api/atc/tower?name=SBBR", null, "ctl");
   const h = JSON.parse((await call("GET", "/api/health", null, null)).slice(4));
   console.log("health pilots:", typeof h.pilots === "number" && h.pilots > 0 ? "PASS " + JSON.stringify(h) : "FAIL");
 }
+
+// traffic in the position reply (opt-in)
+{
+  await call("PUT", "/api/position", { latitude: 10, longitude: 10, altitude_ft: 3000 }, "tp2");
+  const a = JSON.parse((await call("PUT", "/api/position?traffic=1", { latitude: 10.1, longitude: 10.1, altitude_ft: 3000 }, "tp1")).slice(4));
+  const b = JSON.parse((await call("PUT", "/api/position", { latitude: 10.1, longitude: 10.1, altitude_ft: 3000 }, "tp1")).slice(4));
+  console.log("position reply traffic:", Array.isArray(a.aircraft) && a.aircraft.length >= 2 && a.aircraft.some(x => x.self) && Array.isArray(a.crashes) && b.aircraft === undefined ? "PASS" : "FAIL");
+}

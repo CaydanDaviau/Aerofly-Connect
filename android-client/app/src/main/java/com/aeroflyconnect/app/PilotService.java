@@ -29,6 +29,8 @@ public class PilotService extends Service {
     static volatile double lastLat, lastLon, lastHdg, lastGs, lastAlt;
 
     static volatile boolean mapShown;
+    /** Last position response that carried traffic (aircraft[] + crashes[]), pushed to the map page. */
+    static volatile String trafficJson; static volatile long trafficAt;
     static volatile PilotService inst;
     private Overlay overlay;
 
@@ -177,7 +179,7 @@ public class PilotService extends Service {
                             int pc = Api.send("PUT", "/api/flightplan", plan.toString(), key);
                             planSent = pc < 400;
                         }
-                        Api.Resp r = Api.request("PUT", "/api/position", pos.toString(), key);
+                        Api.Resp r = Api.request("PUT", mapShown ? "/api/position?traffic=1" : "/api/position", pos.toString(), key);
                         int code = r.code;
                         if (code == 423) {   // hard landing: the server grounds this pilot for a while
                             onCrashed(r.body);
@@ -187,6 +189,7 @@ public class PilotService extends Service {
                             okCount++; serverState = "OK (HTTP " + code + ")";
                             showMessages(r.body);
                             showTraffic(r.body);
+                            if (mapShown && r.body.contains("\"aircraft\"")) { trafficJson = r.body; trafficAt = System.currentTimeMillis(); }
                         }
                         else { failCount++; serverState = "HTTP " + code; }
                     } catch (Exception e) {
@@ -208,6 +211,7 @@ public class PilotService extends Service {
             running = false;
             inst = null;
             Phase.reset();
+            trafficJson = null; trafficAt = 0;
             if (overlay != null) { overlay.hide(); overlay = null; }
             PipReply.clear();
             simState = "-";

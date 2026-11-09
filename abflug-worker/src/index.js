@@ -188,6 +188,30 @@ export class Hub {
     return json({ error: "crashed", crashed: true, until: cr.until, remaining_s: Math.ceil((cr.until - now) / 1000), latitude: cr.latitude, longitude: cr.longitude, landing_fpm: cr.landing_fpm }, 423);
   }
 
+  trafficList(key, lat, lon, rad, max) {
+    let out = [];
+    for (const [ck, c] of this.clients) {
+      const pos = c.pos;
+      if (!pos) continue;
+      const d = haversineMi(lat, lon, pos.latitude, pos.longitude);
+      if (d <= rad) {
+        const callsign = normCallsign(c.plan.callsign ?? pos.callsign);
+        out.push({ ...pos, ...c.plan, callsign, ...towerFields(callsign), assigned_squawk: c.assigned ? c.assigned.squawk : null, ...(ck === key ? { self: true } : {}), distance_miles: Math.round(d * 10) / 10 });
+      }
+    }
+    for (const t of this.towers.values()) {
+      const d = haversineMi(lat, lon, t.latitude, t.longitude);
+      if (d <= rad) out.push(towerAircraft(t, d));
+    }
+    out.sort((a, b) => a.distance_miles - b.distance_miles);
+    const truncated = out.length > max;
+    return { out: out.slice(0, max), truncated };
+  }
+
+  crashList() {
+    return [...this.crashes.values()].map(x => ({ callsign: x.callsign, icao_address: x.icao, latitude: x.latitude, longitude: x.longitude, landing_fpm: x.landing_fpm, at: x.at, until: x.until }));
+  }
+
   trafficAlerts(key, c) {
     const now = Date.now(), out = [];
     for (const [k2, o] of this.clients) {
@@ -336,25 +360,9 @@ export class Hub {
       const lat = parseFloat(q.get("lat") ?? q.get("latitude") ?? "0") || 0;
       const lon = parseFloat(q.get("lon") ?? q.get("lng") ?? q.get("longitude") ?? "0") || 0;
       const rad = parseFloat(q.get("radius_miles") ?? q.get("radius") ?? "250") || 250;
-      let out = [];
-      for (const [ck, c] of this.clients) {
-        const pos = c.pos;
-        if (!pos) continue;
-        const d = haversineMi(lat, lon, pos.latitude, pos.longitude);
-        if (d <= rad) {
-          const callsign = normCallsign(c.plan.callsign ?? pos.callsign);
-          out.push({ ...pos, ...c.plan, callsign, ...towerFields(callsign), assigned_squawk: c.assigned ? c.assigned.squawk : null, ...(ck === key ? { self: true } : {}), distance_miles: Math.round(d * 10) / 10 });
-        }
-      }
-      for (const t of this.towers.values()) {
-        const d = haversineMi(lat, lon, t.latitude, t.longitude);
-        if (d <= rad) out.push(towerAircraft(t, d));
-      }
-      out.sort((a, b) => a.distance_miles - b.distance_miles);
-      const truncated = out.length > MAX_TRAFFIC;
-      out = out.slice(0, MAX_TRAFFIC);
+      const { out, truncated } = this.trafficList(key, lat, lon, rad, MAX_TRAFFIC);
       const atc_messages = [...this.msgs.values()].map(x => ({ id: x.id, icao_address: x.icao, text: x.text, kind: x.kind, urgent: !!x.urgent, status: x.status, at: x.at }));
-      const crashes = [...this.crashes.values()].map(x => ({ callsign: x.callsign, icao_address: x.icao, latitude: x.latitude, longitude: x.longitude, landing_fpm: x.landing_fpm, at: x.at, until: x.until }));
+      const crashes = this.crashList();
       return json({ aircraft: out, traffic: out, truncated, active_clients: this.clients.size, atc_messages, crashes });
     }
 
@@ -407,7 +415,13 @@ export class Hub {
       this.clients.set(key, c);
       const messages = [];
       for (const x of this.msgs.values()) if (x.icao === icao && x.status === "sent") { x.status = "delivered"; messages.push({ id: x.id, text: x.text, kind: x.kind, urgent: !!x.urgent, at: x.at }); }
-      return json({ success: true, messages, traffic_alerts: this.trafficAlerts(key, c) });
+      const reply = { success: true, messages, traffic_alerts: this.trafficAlerts(key, c) };
+      if (url.searchParams.get("traffic") === "1") {
+        // our client: nearest 100 entries (whole planet) + crashes, so it needs no separate /api/traffic poll
+        const t = this.trafficList(key, lat, lon, 13000, 100);
+        reply.aircraft = t.out; reply.truncated = t.truncated; reply.crashes = this.crashList();
+      }
+      return json(reply);
     }
 
     if ((m === "POST" || m === "PUT") && p === "/api/flightplan") {
