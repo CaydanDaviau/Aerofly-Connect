@@ -9,7 +9,7 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 
 /**
- * Link to the sim: TCP 127.0.0.1:58585, send "req_gmap_dat\n", read one '|'-separated line.
+ * Link to the sim: TCP <sim host>:58585 (127.0.0.1 on the same phone, or the Wi-Fi IP of the device running the sim), send "req_gmap_dat\n", read one '|'-separated line.
  *
  * FIELD ORDER BELOW IS A PLACEHOLDER (not yet verified against a real sim line).
  * Fix the indices in F_* once a real raw line is known; nothing else needs to change.
@@ -26,10 +26,11 @@ final class SimLink {
     private BufferedReader in;
     private OutputStream out;
 
-    void connect() throws Exception {
+    void connect(String host) throws Exception {
         close();
         Socket s = new Socket();
-        s.connect(new InetSocketAddress("127.0.0.1", 58585), 1500);
+        s.connect(new InetSocketAddress(host, 58585), SimHost.isLocal(host) ? 1500 : 3000);
+        s.setTcpNoDelay(true);
         s.setSoTimeout(2000);
         socket = s;
         in = new BufferedReader(new InputStreamReader(s.getInputStream()));

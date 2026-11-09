@@ -131,6 +131,7 @@ public class PilotService extends Service {
         simState = "connecting..."; serverState = "-";
         running = true;
         final String key = Api.key(this);
+        final String simHost = Api.simHost(this);
         final String callsign = Api.callsign(this).trim().toUpperCase();
         // Runway data of the flight's airports (cached; a one-time download of a few MB) for the phase logic.
         final String depIcao = Api.field(this, "dep"), arrIcao = Api.field(this, "arr");
@@ -157,7 +158,7 @@ public class PilotService extends Service {
 
                 String raw = null;
                 try {
-                    if (!sim.isOpen()) sim.connect();
+                    if (!sim.isOpen()) sim.connect(simHost);
                     raw = sim.readLine();
                     lastRaw = raw;
                     simState = "connected";

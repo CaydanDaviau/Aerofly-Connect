@@ -45,6 +45,9 @@ final class Api {
     }
 
     /** Pilot form fields: dep, arr, model, livery, cruise, route. */
+    /** Host of the sim link (field "simip"; empty = this phone). */
+    static String simHost(Context c) { return SimHost.normalize(field(c, "simip")); }
+
     static String field(Context c, String name) {
         return prefs(c).getString("f_" + name, "");
     }

@@ -621,7 +621,8 @@ public class MainActivity extends Activity {
         EditText livery = addField(r2, Api.t(this, "Airline / livery", "Companhia / pintura"), Api.field(this, "livery"), false, false);
         EditText cruise = addField(card, Api.t(this, "Cruise alt (ft)", "Altitude de cruzeiro (ft)"), Api.field(this, "cruise"), false, true);
         EditText route = addField(card, Api.t(this, "Route (optional)", "Rota (opcional)"), Api.field(this, "route"), true, false);
-        extra = new EditText[]{dep, arr, deprwy, arrrwy, model, livery, cruise, route};   // same order as EXTRA_KEYS
+        EditText simip = addField(card, Api.t(this, "Sim IP (127.0.0.1 = this phone)", "IP do sim (127.0.0.1 = este celular)"), Api.field(this, "simip"), false, false);
+        extra = new EditText[]{dep, arr, deprwy, arrrwy, model, livery, cruise, route, simip};   // same order as EXTRA_KEYS
 
         startStop = Ui.button(this, "", Ui.PRIMARY);
         startStop.setOnClickListener(new View.OnClickListener() {
@@ -654,7 +655,7 @@ public class MainActivity extends Activity {
     }
 
     private EditText[] extra;
-    private static final String[] EXTRA_KEYS = {"dep", "arr", "deprwy", "arrrwy", "model", "livery", "cruise", "route"};
+    private static final String[] EXTRA_KEYS = {"dep", "arr", "deprwy", "arrrwy", "model", "livery", "cruise", "route", "simip"};
 
     /** Horizontal row that holds two fields side by side. */
     private LinearLayout fieldRow(LinearLayout parent) {
@@ -701,6 +702,13 @@ public class MainActivity extends Activity {
                     && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
                 requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1);
             }
+            String bad = SimHost.problem(extra[extra.length - 1].getText().toString());
+            if (bad != null) {
+                Toast.makeText(this, "mobile".equals(bad)
+                        ? Api.t(this, "That is a mobile-network address. Use the Wi-Fi IP of the device running the sim.", "Esse é um endereço da rede móvel. Use o IP do Wi-Fi do aparelho que roda o sim.")
+                        : Api.t(this, "Sim IP is not a valid address.", "O IP do sim não é um endereço válido."), Toast.LENGTH_LONG).show();
+                return;
+            }
             Api.setCallsign(this, callsignBox.getText().toString().trim());
             for (int i = 0; i < extra.length; i++)
                 Api.setField(this, EXTRA_KEYS[i], extra[i].getText().toString().trim());
@@ -741,6 +749,7 @@ public class MainActivity extends Activity {
         String raw = PilotService.lastRaw;
         if (raw.length() > 300) raw = raw.substring(0, 300) + "...";
         String shown = (Api.t(this, "Sim link: ", "Link do sim: ") + PilotService.simState
+                + (SimHost.isLocal(Api.simHost(this)) ? "" : " @ " + Api.simHost(this))
                 + Api.t(this, "\nServer: ", "\nServidor: ") + PilotService.serverState
                 + Api.t(this, "\nUploads: ", "\nEnvios: ") + PilotService.okCount + " ok / " + PilotService.failCount + Api.t(this, " failed", " falhas")
                 + (Api.radioOn(this) ? "\nRadio: " + RadioPlayer.state : "")
