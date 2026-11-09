@@ -43,6 +43,12 @@ public class ControllerActivity extends Activity {
     }
 
     @Override
+    protected void onStop() {
+        web.evaluateJavascript("window.saveTrails&&window.saveTrails()", null);   // keep the 30 min traces
+        super.onStop();
+    }
+
+    @Override
     protected void onDestroy() {
         RadioPlayer.stop("ctl");
         super.onDestroy();

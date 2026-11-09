@@ -53,7 +53,7 @@ public class MapActivity extends Activity {
         s.setCacheMode(WebSettings.LOAD_DEFAULT);
         web.addJavascriptInterface(new Bridge(), "Android");
         web.setWebViewClient(new WebViewClient() {
-            @Override public void onPageFinished(WebView v, String url) { if (!failed) { pageReady = true; syncPip(); } }
+            @Override public void onPageFinished(WebView v, String url) { if (!failed) { pageReady = true; syncPip(); pushOwnTrace(); } }
             @Override public void onReceivedError(WebView v, WebResourceRequest r, WebResourceError e) {
                 if (r.isForMainFrame()) showError();
             }
@@ -123,6 +123,7 @@ public class MapActivity extends Activity {
         super.onStart();
         PilotService.mapShown = true; PilotService.refreshNotif(this);
         trafficPushed = 0;
+        pushOwnTrace();
         web.evaluateJavascript("window.setActive&&window.setActive(true)", null);
         // Push our own plane (from the sim link) into the page once a second.
         feed = new Runnable() {
@@ -138,11 +139,19 @@ public class MapActivity extends Activity {
     @Override
     protected void onStop() {
         ui.removeCallbacks(feed);
+        web.evaluateJavascript("window.saveTrails&&window.saveTrails()", null);
         web.evaluateJavascript("window.setActive&&window.setActive(false)", null);   // hidden: no polling
         super.onStop();
     }
 
     private long trafficPushed;
+
+    /** The full own track from the service (30 min), so the blue trace has no gap while the map was closed. */
+    private void pushOwnTrace() {
+        String j = PilotService.traceJson();
+        if (!pageReady || j == null) return;
+        web.evaluateJavascript("window.setOwnTrace&&window.setOwnTrace(" + j + ")", null);
+    }
 
     /** Hands the traffic that came back with the position upload to the page (it then skips its own poll). */
     private void pushTraffic() {

@@ -26,7 +26,23 @@ body.pip #bar,body.pip #info,body.pip .maplibregl-ctrl-attrib{display:none!impor
 var P=new URLSearchParams(location.search), KEY=P.get('key')||'', BASE=location.origin;
 var STYLES=[['Liberty','https://tiles.openfreemap.org/styles/liberty'],['Positron','https://tiles.openfreemap.org/styles/positron'],['Bright','https://tiles.openfreemap.org/styles/bright']];
 var si=0; try{si=Math.min(STYLES.length-1,Math.max(0,parseInt(localStorage.getItem('rv_style')||'0',10)||0))}catch(e){}
-var own=null, follow=true, hdgUp=false, trails={}, lastTraffic=[], lastCrashes=[], towers=[], ready=false;
+var own=null, follow=true, hdgUp=false, trails={}, ttimes={}, lastTraffic=[], lastCrashes=[], towers=[], ready=false;
+var TRACE_MS=30*60*1000, GAP_MS=60000, TK='afc_trails_v1';
+// traces live 30 min and survive closing the map (saved in the WebView's local storage)
+function loadTrails(){try{var j=JSON.parse(localStorage.getItem(TK)||'null');if(!j||!j.tr)return;var now=Date.now();
+  Object.keys(j.tr).forEach(function(id){var o=j.tr[id],c=[],ts=[];if(!o||!o.t)return;
+    for(var i=0;i<o.t.length;i++){if(now-o.t[i]<=TRACE_MS){c.push(o.c[i]);ts.push(o.t[i])}}
+    if(c.length){trails[id]=c;ttimes[id]=ts}})}catch(e){}}
+function saveTrails(){try{var now=Date.now(),o={};
+  Object.keys(trails).forEach(function(id){var ts=ttimes[id];if(!ts||!ts.length||now-ts[ts.length-1]>TRACE_MS)return;
+    var c=[],t=[];for(var i=0;i<ts.length;i++){if(now-ts[i]<=TRACE_MS){c.push([Math.round(trails[id][i][0]*1e5)/1e5,Math.round(trails[id][i][1]*1e5)/1e5]);t.push(ts[i])}}
+    if(c.length)o[id]={c:c,t:t}});
+  localStorage.setItem(TK,JSON.stringify({tr:o}))}catch(e){}}
+window.saveTrails=saveTrails;
+function segs(id){var t=trails[id],ts=ttimes[id];if(!t||t.length<2)return[];var out=[],cur=[t[0]];
+  for(var i=1;i<t.length;i++){if(ts[i]-ts[i-1]>GAP_MS){if(cur.length>1)out.push(cur);cur=[]}cur.push(t[i])}
+  if(cur.length>1)out.push(cur);return out}
+loadTrails();
 var info=document.getElementById('info');
 function setInfo(t){info.textContent=t}
 
@@ -87,23 +103,36 @@ function render(){
     if(a.virtual_tower){tw.push(pt(a.longitude,a.latitude,{label:a.callsign||'TWR'}));return}
     if(a.self)return;
     pl.push(pt(a.longitude,a.latitude,{label:a.callsign||id,h:Number(a.heading_true)||0,id:String(id)}));
-    var t=trails[id];if(t&&t.length>1)tr.push({type:'Feature',geometry:{type:'LineString',coordinates:t},properties:{c:'#e8710a'}});
+    var sg=segs(id);if(sg.length)tr.push({type:'Feature',geometry:{type:'MultiLineString',coordinates:sg},properties:{c:'#e8710a'}});
   });
   map.getSource('planes').setData({type:'FeatureCollection',features:pl});
   map.getSource('towers').setData({type:'FeatureCollection',features:tw});
   var ow=[];
   if(own){
     ow.push(pt(own.lon,own.lat,{label:own.callsign||'YOU',h:own.hdg||0,left:'ETA: '+etaStr(own.eta)+'\nALT: '+altStr(own.alt),fpm:own.fpm==null?'':fpmStr(own.fpm)}));
-    var ot=trails.__own;if(ot&&ot.length>1)tr.push({type:'Feature',geometry:{type:'LineString',coordinates:ot},properties:{c:'#1a73e8'}});
+    var os=segs('__own');if(os.length)tr.push({type:'Feature',geometry:{type:'MultiLineString',coordinates:os},properties:{c:'#1a73e8'}});
   }
   map.getSource('ownsrc').setData({type:'FeatureCollection',features:ow});
   map.getSource('trails').setData({type:'FeatureCollection',features:tr});
   if(map.getSource('crashes'))map.getSource('crashes').setData({type:'FeatureCollection',features:lastCrashes.map(function(c){return pt(c.longitude,c.latitude,{label:'CRASH '+(c.callsign||'')})})});
 }
 function pushTrail(id,lon,lat){
-  var t=trails[id]||(trails[id]=[]),l=t[t.length-1];
-  if(!l||Math.abs(l[0]-lon)>1e-5||Math.abs(l[1]-lat)>1e-5){t.push([lon,lat]);if(t.length>150)t.shift()}
+  var now=Date.now(),t=trails[id]||(trails[id]=[]),ts=ttimes[id]||(ttimes[id]=[]),n=t.length,l=t[n-1];
+  var minGap=id==='__own'?2500:9000;   // own: ~3 s, others: ~10 s (keeps 30 min light)
+  if(!l||(now-ts[n-1]>=minGap&&(Math.abs(l[0]-lon)>1e-5||Math.abs(l[1]-lat)>1e-5))){t.push([lon,lat]);ts.push(now)}
+  while(ts.length&&now-ts[0]>TRACE_MS){t.shift();ts.shift()}
 }
+// full own trace recorded by the app service (no hole while the map was closed)
+window.setOwnTrace=function(a){
+  if(!a||!a.length)return;
+  var first=a[0][2],t=trails.__own||[],tt=ttimes.__own||[],c=[],ts=[],i;
+  for(i=0;i<t.length;i++){if(tt[i]<first){c.push(t[i]);ts.push(tt[i])}}
+  for(i=0;i<a.length;i++){c.push([a[i][0],a[i][1]]);ts.push(a[i][2])}
+  trails.__own=c;ttimes.__own=ts;render();
+};
+setInterval(saveTrails,10000);
+document.addEventListener('visibilitychange',function(){if(document.hidden)saveTrails()});
+window.addEventListener('pagehide',saveTrails);
 function followNow(){
   if(!follow||!own)return;
   var o={center:[own.lon,own.lat],duration:900,essential:true};

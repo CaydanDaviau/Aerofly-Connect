@@ -29,6 +29,22 @@ public class PilotService extends Service {
     static volatile double lastLat, lastLon, lastHdg, lastGs, lastAlt;
 
     static volatile boolean mapShown;
+    /** Own track, one point per upload, kept 30 min (also while the map is closed); handed to the map page when it opens. */
+    private static final java.util.ArrayList<double[]> ownTrace = new java.util.ArrayList<>();
+    static synchronized void addTrace(double lat, double lon, long now) {
+        ownTrace.add(new double[]{lon, lat, now});
+        while (!ownTrace.isEmpty() && now - (long) ownTrace.get(0)[2] > 30 * 60 * 1000L) ownTrace.remove(0);
+    }
+    static synchronized String traceJson() {
+        if (ownTrace.isEmpty()) return null;
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < ownTrace.size(); i++) {
+            double[] p = ownTrace.get(i);
+            if (i > 0) sb.append(',');
+            sb.append(String.format(java.util.Locale.US, "[%.5f,%.5f,%d]", p[0], p[1], (long) p[2]));
+        }
+        return sb.append(']').toString();
+    }
     /** Last position response that carried traffic (aircraft[] + crashes[]), pushed to the map page. */
     static volatile String trafficJson; static volatile long trafficAt;
     static volatile PilotService inst;
@@ -157,6 +173,7 @@ public class PilotService extends Service {
                     lastLat = pos.optDouble("latitude"); lastLon = pos.optDouble("longitude");
                     lastHdg = pos.optDouble("heading_true", 0); lastGs = pos.optDouble("ground_speed", 0);
                     lastAlt = pos.optDouble("altitude_ft", 0); hasPos = true;
+                    addTrace(lastLat, lastLon, System.currentTimeMillis());
                     if (Phase.update(lastLat, lastLon, lastAlt, lastGs, lastHdg, pos.optDouble("vertical_speed_ft_min", 0), System.currentTimeMillis())) onPhase();
                     try {
                         // The sim sends no model/livery; the pilot types them in the app. Squawk is assigned by the controller.

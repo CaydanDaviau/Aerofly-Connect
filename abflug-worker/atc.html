@@ -103,7 +103,20 @@ if(LANG==='pt'){document.documentElement.lang='pt';
 var urgent=false;
 var key='';try{key=new URLSearchParams(location.search).get('key')||localStorage.getItem('abflug_key')||''}catch(e){}
 var ac=[],crashes=[],confl={},hasViol=false,msgs=[],sel=null,center={lat:0,lon:0},manual=false,centroidDone=false,nmpp=0.25,W=300,H=300;
-var trails={},ranges=[1,2,5,10,25,50,100,250,500,1000];
+var trails={},TRACE_MS=30*60*1000,RK='afc_rtrails_v1',ranges=[1,2,5,10,25,50,100,250,500,1000];
+
+// traces live 30 min and survive closing the radar (saved in local storage)
+function loadTrails(){try{var j=JSON.parse(localStorage.getItem(RK)||'null');if(!j)return;var now=Date.now();
+  Object.keys(j).forEach(function(id){var o=j[id],r=[];if(!o)return;
+    for(var i=0;i<o.length;i++)if(now-o[i][2]<=TRACE_MS)r.push({latitude:o[i][0],longitude:o[i][1],t:o[i][2]});
+    if(r.length)trails[id]=r})}catch(e){}}
+function saveTrails(){try{var now=Date.now(),o={};
+  Object.keys(trails).forEach(function(id){var r=[];trails[id].forEach(function(p){if(now-p.t<=TRACE_MS)r.push([Math.round(p.latitude*1e5)/1e5,Math.round(p.longitude*1e5)/1e5,p.t])});if(r.length)o[id]=r});
+  localStorage.setItem(RK,JSON.stringify(o))}catch(e){}}
+loadTrails();setInterval(saveTrails,15000);
+document.addEventListener('visibilitychange',function(){if(document.hidden)saveTrails()});
+window.addEventListener('pagehide',saveTrails);
+window.saveTrails=saveTrails;
 
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
 function p3(n){n=Math.round(n);return (n<100?'0':'')+(n<10?'0':'')+n}
@@ -251,7 +264,7 @@ function draw(){
     var col=isSel?'#7ae9ff':tw?'#ff7ae9':!asg?'#ffb000':'#3dff7a';
     var cf=confl[id];if(cf&&cf.lvl===2&&blinkOn)col='#ff3b30';
     var tr=trails[id]||[];g.strokeStyle=col;g.globalAlpha=.45;
-    for(var t=0;t<tr.length;t++){var q=proj(tr[t]);g.fillStyle=col;g.fillRect(q[0]-1,q[1]-1,2,2)}
+    g.fillStyle=col;for(var t=0;t<tr.length;t++){var q=proj(tr[t]);if(q[0]<-5||q[1]<-5||q[0]>W+5||q[1]>H+5)continue;g.fillRect(q[0]-1,q[1]-1,2,2)}
     g.globalAlpha=1;
     if(tw){drawTower(g,x,y,24,col,'#2b2b2b')}
     else{g.strokeStyle=col;g.lineWidth=isSel?2:1.5;g.strokeRect(x-4,y-4,8,8);
@@ -376,7 +389,7 @@ function poll(force){
     msgs=j.atc_messages||[];crashes=j.crashes||[];
     ac=(j.aircraft||[]).filter(function(a){return isFinite(a.latitude)&&isFinite(a.longitude)&&a.icao_address});
     ac.forEach(function(a){var t=trails[a.icao_address]=trails[a.icao_address]||[],l=t[t.length-1];
-      if(!l||Math.abs(l.latitude-a.latitude)+Math.abs(l.longitude-a.longitude)>0.0005){t.push({latitude:a.latitude,longitude:a.longitude});if(t.length>14)t.shift()}});
+      if(!l||Math.abs(l.latitude-a.latitude)+Math.abs(l.longitude-a.longitude)>0.0005){var now=Date.now();t.push({latitude:a.latitude,longitude:a.longitude,t:now});while(t.length&&now-t[0].t>TRACE_MS)t.shift()}});
     if(!manual){var tw=ac.filter(isTwr)[0];if(tw){center.lat=tw.latitude;center.lon=tw.longitude}
       else if(!centroidDone&&ac.length){center.lat=ac.reduce(function(s,a){return s+a.latitude},0)/ac.length;
         center.lon=ac.reduce(function(s,a){return s+a.longitude},0)/ac.length;centroidDone=true}}
