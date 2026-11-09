@@ -260,6 +260,30 @@ public class MainActivity extends Activity {
         LinearLayout root = column();
         root.addView(text(Api.t(this, "Settings", "Configurações"), 24, true));
 
+        // ----- Sim on another device (first card) -----
+        LinearLayout simc = section(root, Api.t(this, "Sim on a different device", "Sim em outro aparelho"));
+        final LinearLayout simBox = new LinearLayout(this);
+        simBox.setOrientation(LinearLayout.VERTICAL);
+        simc.addView(sw(Api.t(this, "Aerofly runs on another device", "O Aerofly roda em outro aparelho"), Api.simRemote(this),
+                new CompoundButton.OnCheckedChangeListener() {
+                    @Override public void onCheckedChanged(CompoundButton b, boolean on) {
+                        Api.setSimRemote(MainActivity.this, on);
+                        simBox.setVisibility(on ? View.VISIBLE : View.GONE);
+                    }
+                }));
+        final EditText simip = addField(simBox, Api.t(this, "IP address of the device running the sim", "Endereço IP do aparelho que roda o sim"), Api.field(this, "simip"), false, false);
+        simip.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence c, int a, int b, int d) { }
+            @Override public void onTextChanged(CharSequence c, int a, int b, int d) { }
+            @Override public void afterTextChanged(android.text.Editable e) { Api.setField(MainActivity.this, "simip", e.toString().trim()); }
+        });
+        TextView simHint = dim(Api.t(this, "Use its Wi-Fi IP on the same network or hotspot (not a 192.0.0.x mobile address). Takes effect at the next Start.",
+                "Use o IP do Wi-Fi dele, na mesma rede ou ponto de acesso (não um endereço móvel 192.0.0.x). Vale a partir do próximo Iniciar."), 13);
+        simHint.setPadding(0, pad / 4, 0, 0);
+        simBox.addView(simHint);
+        simBox.setVisibility(Api.simRemote(this) ? View.VISIBLE : View.GONE);
+        simc.addView(simBox);
+
         LinearLayout lang = section(root, Api.t(this, "Language", "Idioma"));
         lang.addView(langRow(Api.t(this, "App language", "Idioma do app"), Api.uiLang(this), true));
         lang.addView(langRow(Api.t(this, "Voice language", "Idioma da voz"), Api.voiceLang(this), false));
@@ -621,8 +645,7 @@ public class MainActivity extends Activity {
         EditText livery = addField(r2, Api.t(this, "Airline / livery", "Companhia / pintura"), Api.field(this, "livery"), false, false);
         EditText cruise = addField(card, Api.t(this, "Cruise alt (ft)", "Altitude de cruzeiro (ft)"), Api.field(this, "cruise"), false, true);
         EditText route = addField(card, Api.t(this, "Route (optional)", "Rota (opcional)"), Api.field(this, "route"), true, false);
-        EditText simip = addField(card, Api.t(this, "Sim IP (127.0.0.1 = this phone)", "IP do sim (127.0.0.1 = este celular)"), Api.field(this, "simip"), false, false);
-        extra = new EditText[]{dep, arr, deprwy, arrrwy, model, livery, cruise, route, simip};   // same order as EXTRA_KEYS
+        extra = new EditText[]{dep, arr, deprwy, arrrwy, model, livery, cruise, route};   // same order as EXTRA_KEYS
 
         startStop = Ui.button(this, "", Ui.PRIMARY);
         startStop.setOnClickListener(new View.OnClickListener() {
@@ -655,7 +678,7 @@ public class MainActivity extends Activity {
     }
 
     private EditText[] extra;
-    private static final String[] EXTRA_KEYS = {"dep", "arr", "deprwy", "arrrwy", "model", "livery", "cruise", "route", "simip"};
+    private static final String[] EXTRA_KEYS = {"dep", "arr", "deprwy", "arrrwy", "model", "livery", "cruise", "route"};
 
     /** Horizontal row that holds two fields side by side. */
     private LinearLayout fieldRow(LinearLayout parent) {
@@ -702,7 +725,7 @@ public class MainActivity extends Activity {
                     && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
                 requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1);
             }
-            String bad = SimHost.problem(extra[extra.length - 1].getText().toString());
+            String bad = Api.simRemote(this) ? SimHost.problem(Api.field(this, "simip")) : null;
             if (bad != null) {
                 Toast.makeText(this, "mobile".equals(bad)
                         ? Api.t(this, "That is a mobile-network address. Use the Wi-Fi IP of the device running the sim.", "Esse é um endereço da rede móvel. Use o IP do Wi-Fi do aparelho que roda o sim.")

@@ -46,7 +46,9 @@ final class Api {
 
     /** Pilot form fields: dep, arr, model, livery, cruise, route. */
     /** Host of the sim link (field "simip"; empty = this phone). */
-    static String simHost(Context c) { return SimHost.normalize(field(c, "simip")); }
+    static String simHost(Context c) { return simRemote(c) ? SimHost.normalize(field(c, "simip")) : SimHost.LOCAL; }
+    static boolean simRemote(Context c) { return prefs(c).getBoolean("sim_remote", false); }
+    static void setSimRemote(Context c, boolean on) { prefs(c).edit().putBoolean("sim_remote", on).apply(); }
 
     static String field(Context c, String name) {
         return prefs(c).getString("f_" + name, "");
