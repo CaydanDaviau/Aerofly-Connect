@@ -49,6 +49,10 @@ await hub.webSocketMessage(socks[0], JSON.stringify({ id: 7, method: "PUT", path
 await worker.fetch(new Request("https://x/api/position", { method: "PUT", body: JSON.stringify({ latitude: 12, longitude: 22, callsign: "HTTP1" }), headers: { "X-API-Key": "other" } }), env);
 await hub.pushAll();
 T("push sees HTTP client too", JSON.parse(rd.sent.at(-1)).aircraft.length === 2);
+// sub.max caps the pushed list (the app asks for 100)
+a = await msg(rd, { sub: { lat: 0, lon: 0, radius_miles: 13000, max: 1 } });
+T("sub max caps list", a.aircraft.length === 1 && a.truncated === true && rd.att.sub.max === 1);
+await msg(rd, { sub: { lat: 0, lon: 0, radius_miles: 13000 } });
 // ATC action over the radar socket reaches the pilot
 const icao = JSON.parse(rd.sent.at(-1)).aircraft.find(x => x.callsign === "WS1").icao_address;
 a = await msg(rd, { id: 8, method: "PUT", path: "/api/atc/squawk", body: { icao_address: icao, squawk: "2314" } });

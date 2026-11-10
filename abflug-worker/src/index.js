@@ -387,14 +387,14 @@ export class Hub {
     for (const ws of socks) {
       const a = ws.deserializeAttachment() || {};
       if (!a.sub) continue;
-      const sk = a.key + "|" + a.sub.lat + "|" + a.sub.lon + "|" + a.sub.rad;
+      const sk = a.key + "|" + a.sub.lat + "|" + a.sub.lon + "|" + a.sub.rad + "|" + a.sub.max;
       let body = cache.get(sk);
-      if (!body) { body = JSON.stringify({ push: "traffic", ...this.trafficBody(a.key, a.sub.lat, a.sub.lon, a.sub.rad) }); cache.set(sk, body); }
+      if (!body) { body = JSON.stringify({ push: "traffic", ...this.trafficBody(a.key, a.sub.lat, a.sub.lon, a.sub.rad, a.sub.max) }); cache.set(sk, body); }
       try { ws.send(body); } catch (e) {}
     }
   }
-  trafficBody(key, lat, lon, rad) {
-    const { out, truncated } = this.trafficList(key, lat, lon, rad, MAX_TRAFFIC);
+  trafficBody(key, lat, lon, rad, max) {
+    const { out, truncated } = this.trafficList(key, lat, lon, rad, Math.max(1, Math.min(MAX_TRAFFIC, Number(max) || MAX_TRAFFIC)));
     const atc_messages = [...this.msgs.values()].map(x => ({ id: x.id, icao_address: x.icao, text: x.text, kind: x.kind, urgent: !!x.urgent, status: x.status, at: x.at }));
     return { aircraft: out, traffic: out, truncated, active_clients: this.clients.size, atc_messages, crashes: this.crashList() };
   }
@@ -405,8 +405,9 @@ export class Hub {
     if (!d || typeof d !== "object") return;
     if (d.sub !== undefined) {
       const s = d.sub, lat = Number(s && s.lat) || 0, lon = Number(s && s.lon) || 0, rad = Number(s && s.radius_miles) || 250;
-      a.sub = s ? { lat, lon, rad } : null; ws.serializeAttachment(a);
-      if (a.sub) { try { ws.send(JSON.stringify({ push: "traffic", ...this.trafficBody(a.key, lat, lon, rad) })); } catch (e) {} }
+      const max = Math.max(1, Math.min(MAX_TRAFFIC, Number(s && s.max) || MAX_TRAFFIC));
+      a.sub = s ? { lat, lon, rad, max } : null; ws.serializeAttachment(a);
+      if (a.sub) { try { ws.send(JSON.stringify({ push: "traffic", ...this.trafficBody(a.key, lat, lon, rad, max) })); } catch (e) {} }
       return;
     }
     const method = String(d.method || "GET").toUpperCase(), path = String(d.path || "");

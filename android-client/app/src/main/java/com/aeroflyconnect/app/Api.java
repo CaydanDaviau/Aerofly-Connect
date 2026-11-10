@@ -123,6 +123,10 @@ final class Api {
 
     /** Like send, but also returns the response body. Throws on network failure. */
     static Resp request(String method, String path, String json, String key) throws Exception {
+        if (WsLink.live()) {   // WebSocket first (only open during a flight); null = unusable -> HTTP below
+            Resp w = WsLink.request(method, path, json, 6000);
+            if (w != null) return w;
+        }
         HttpURLConnection c = (HttpURLConnection) new URL(BuildConfig.SERVER_URL + path).openConnection();
         try {
             c.setRequestMethod(method);
