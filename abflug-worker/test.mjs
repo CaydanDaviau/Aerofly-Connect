@@ -298,3 +298,33 @@ await call("DELETE", "/api/atc/tower?name=SBBR", null, "ctl");
   T("human tower: no auto violation", r.messages.length === 0 && !hub.clients.get("s4").viol);
   T("violations stored", hub.violations.length >= 3 && hub.violations[0].callsign === "AAA1");
 }
+
+// stage 2: mayday
+{
+  const P = (k, o) => call("PUT", "/api/position", { latitude: -15.87, longitude: -47.92, altitude_ft: 3500, ground_speed: 120, ...o }, k).then(r => JSON.parse(r.slice(4)));
+  const R = async (k, b) => { hub.clients.get(k).lastReq = 0; return JSON.parse((await call("PUT", "/api/atc/request", b, k)).slice(4)); };
+  const T = (name, v) => console.log(name + ":", v ? "PASS" : "FAIL");
+  for (const n of ["SBBR", "SBGL", "SBSP"]) await call("DELETE", "/api/atc/tower?name=" + n, null, "atc");
+  await call("PUT", "/api/flightplan", { callsign: "EMG1", arrival_airport: "SBSP", arrival_runway: "35L" }, "m1");
+  await call("PUT", "/api/flightplan", { callsign: "NEAR2", arrival_airport: "SBSP", arrival_runway: "35L" }, "m2");
+  await call("PUT", "/api/flightplan", { callsign: "FAR3" }, "m3");
+  await P("m1", { phase: "air", arr_nm: 10 }); await P("m2", { phase: "air", latitude: -15.9, longitude: -47.95, arr_nm: 12 });
+  await P("m3", { phase: "air", latitude: 10, longitude: 10 });
+  const r = await R("m1", { type: "mayday" });
+  T("mayday reply", r.mode === "auto" && r.messages[0].text === "Roger Mayday, say intentions" && r.messages[0].urgent);
+  const n = await P("m2", { phase: "air", latitude: -15.9, longitude: -47.95, arr_nm: 12 });
+  T("nearby pilot warned", n.messages.some(m => /Mayday traffic, EMG1/.test(m.text) && m.urgent));
+  T("far pilot not warned", (await P("m3", { phase: "air", latitude: 10, longitude: 10 })).messages.length === 0);
+  const tr = JSON.parse((await call("GET", "/api/traffic?lat=-15.87&lon=-47.92&radius_miles=50", null, "m2")).slice(4));
+  T("emergency flag in traffic", tr.aircraft.find(a => a.callsign === "EMG1").emergency === true && tr.aircraft.find(a => a.callsign === "NEAR2").emergency === false);
+  const q = await R("m2", { type: "land" });
+  T("runway held for emergency", /occupied, number 2/.test(q.messages[0].text));
+  const c = await R("m1", { type: "mayday_cancel" });
+  T("cancel", c.messages[0].text === "Mayday cancelled" && !hub.clients.get("m1").emerg && ![...hub.rwy.values()].some(l => l.type === "emerg"));
+  await R("m1", { type: "mayday" });
+  await P("m1", { phase: "runway", rwy_on: "17R/35L", on_rwy: "35L", rwy_apt: "SBSP", ground_speed: 90 });
+  T("no violation on emergency landing", (await P("m1", { phase: "runway", rwy_on: "17R/35L", on_rwy: "35L", rwy_apt: "SBSP", ground_speed: 60 })).messages.length === 0);
+  await call("PUT", "/api/atc/tower", { name: "SBSP", latitude: -15.87, longitude: -47.92 }, "atc");
+  await P("m1", { phase: "air" }); const h = await R("m1", { type: "mayday" });
+  T("human tower gets mayday as request", h.mode === "controller");
+}

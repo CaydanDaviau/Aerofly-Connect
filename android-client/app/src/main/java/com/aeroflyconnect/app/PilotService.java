@@ -118,7 +118,7 @@ public class PilotService extends Service {
         }
 
         inst = this;
-        Phase.reset();
+        Phase.reset(); emergency = false; wasAir = false;
         if (Overlay.allowed(this)) { overlay = new Overlay(this); overlay.show(); }
 
         RadioPlayer.start(this, "pilot");   // background radio (only plays if enabled in Settings)
@@ -176,6 +176,9 @@ public class PilotService extends Service {
                     lastHdg = pos.optDouble("heading_true", 0); lastGs = pos.optDouble("ground_speed", 0);
                     lastAlt = pos.optDouble("altitude_ft", 0); hasPos = true;
                     addTrace(lastLat, lastLon, System.currentTimeMillis());
+                    boolean airNow = Phase.phaseName.equals("air");
+                    if (emergency && wasAir && !airNow) emergency = false;   // the server ends it at touchdown too
+                    wasAir = airNow;
                     if (Phase.update(lastLat, lastLon, lastAlt, lastGs, lastHdg, pos.optDouble("vertical_speed_ft_min", 0), System.currentTimeMillis())) onPhase();
                     try {
                         // The sim sends no model/livery; the pilot types them in the app. Squawk is assigned by the controller.
@@ -371,6 +374,7 @@ public class PilotService extends Service {
                     if (r.code < 400) {
                         PilotService s = inst;
                         if (s != null) s.showMessages(r.body);
+                        if (type.equals("mayday")) emergency = true; else if (type.equals("mayday_cancel")) emergency = false;
                         if (type.equals("clearance")) {
                             Phase.markCleared();
                             PilotService s2 = inst;
@@ -389,6 +393,10 @@ public class PilotService extends Service {
             }
         }, "atc-request").start();
     }
+
+    /** Mayday declared and not yet cancelled (cleared at Start and when the aircraft lands). */
+    static volatile boolean emergency;
+    private boolean wasAir;
 
     private static void putIf(JSONObject o, String k, String v) throws Exception {
         if (v != null && !v.trim().isEmpty()) o.put(k, v.trim());

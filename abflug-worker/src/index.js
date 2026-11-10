@@ -92,7 +92,8 @@ function computeTA(a, b) {
 }
 
 // ---- Auto-ATC (basic clearances for pilots when no human controller covers the airport) ----
-const REQ_TYPES = ["clearance", "taxi", "takeoff", "land"];
+const REQ_TYPES = ["clearance", "taxi", "takeoff", "land", "mayday", "mayday_cancel"];
+const MAYDAY_MS = 30 * 60_000, MAYDAY_NEAR_MI = 30;
 const REQ_LOCK_MS = { takeoff: 90_000, land: 120_000 };
 const TOWER_COVER_MI = 8;   // a human tower this close to the aircraft (or named like its airport) takes the request
 const PHRASE = {
@@ -103,6 +104,9 @@ const PHRASE = {
     land: r => r ? `Runway ${r}, cleared to land` : "Cleared to land",
     busyTakeoff: (r, n) => `Hold position, runway ${r} occupied, number ${n}`,
     busyLand: (r, n) => `Runway ${r} occupied, number ${n}, extend and request again`,
+    mayday: "Roger Mayday, say intentions",
+    maydayNear: (cs, mi) => `Mayday traffic, ${cs} declared an emergency ${mi} miles from you, keep clear`,
+    maydayEnd: "Mayday cancelled",
     departure: "Contact departure",
     welcome: a => `Welcome to ${a}, taxi to the gate`,
     goAround: r => `Go around, runway ${r} occupied`,
@@ -117,6 +121,9 @@ const PHRASE = {
     land: r => r ? `Pista ${r}, autorizado a pousar` : "Autorizado a pousar",
     busyTakeoff: (r, n) => `Aguarde na posição, pista ${r} ocupada, número ${n}`,
     busyLand: (r, n) => `Pista ${r} ocupada, número ${n}, prolongue e solicite novamente`,
+    mayday: "Mayday recebido, informe intenções",
+    maydayNear: (cs, mi) => `Tráfego em Mayday, ${cs} declarou emergência a ${mi} milhas, mantenha-se afastado`,
+    maydayEnd: "Mayday cancelado",
     departure: "Contate a saída",
     welcome: a => `Bem-vindo a ${a}, táxi para o portão`,
     goAround: r => `Arremeta, pista ${r} ocupada`,
@@ -266,6 +273,7 @@ export class Hub {
           if (!cleared || busy) this.violate(key, c, st, "landing", apt, lr, now, () => say(ph.vLand(lr), true));
         }
         st.gr.land = 0; st.gr.taxi = now + 30 * 60_000;
+        c.emerg = null;   // an emergency ends on the ground (its landing is never a violation)
         if (cleared && !busy && apt && apt === arr) say(ph.welcome(apt), false);
       } else if (now > st.grace) {
         if (cur === "ground" && gs >= 10 && !(st.gr.taxi > now) && !(st.gr.takeoff > now))
@@ -279,6 +287,7 @@ export class Hub {
   }
 
   violate(key, c, st, type, apt, rwy, now, notify) {
+    if (c.emerg && now < c.emerg.until) return;   // declared emergency: no unauthorised-action calls
     const v = st.viol[type];
     if (!v || now - v.said > VIOL_RENEW_MS) { st.viol[type] = { said: now }; notify(); }
     if (!v || now - v.logged > 60_000) {
@@ -301,7 +310,7 @@ export class Hub {
       const d = haversineMi(lat, lon, pos.latitude, pos.longitude);
       if (d <= rad) {
         const callsign = normCallsign(c.plan.callsign ?? pos.callsign);
-        out.push({ ...pos, ...c.plan, callsign, ...towerFields(callsign), assigned_squawk: c.assigned ? c.assigned.squawk : null, no_clnc: !!(c.viol && Date.now() - c.viol.at < VIOL_SHOW_MS), ...(ck === key ? { self: true } : {}), distance_miles: Math.round(d * 10) / 10 });
+        out.push({ ...pos, ...c.plan, callsign, ...towerFields(callsign), assigned_squawk: c.assigned ? c.assigned.squawk : null, emergency: !!(c.emerg && Date.now() < c.emerg.until), no_clnc: !!(c.viol && Date.now() - c.viol.at < VIOL_SHOW_MS), ...(ck === key ? { self: true } : {}), distance_miles: Math.round(d * 10) / 10 });
       }
     }
     for (const t of this.towers.values()) {
@@ -397,7 +406,7 @@ export class Hub {
     if ((m === "PUT" || m === "POST") && p === "/api/atc/request") {
       const d = await request.json().catch(() => ({}));
       const type = String(d.type || "");
-      if (!REQ_TYPES.includes(type)) return json({ error: "type must be taxi, takeoff or land" }, 400);
+      if (!REQ_TYPES.includes(type)) return json({ error: "type must be clearance, taxi, takeoff, land, mayday or mayday_cancel" }, 400);
       const c = this.clients.get(key);
       if (!c || !c.pos) return json({ error: "start flying first" }, 404);
       const now = Date.now();
@@ -405,11 +414,42 @@ export class Hub {
       c.lastReq = now;
       const plan = c.plan || {};
       const ph = PHRASE[d.lang === "pt" ? "pt" : "en"];
+      if (d.lang === "pt" || d.lang === "en") c.lang = d.lang;
+      if (type === "mayday_cancel") {
+        if (!c.emerg) return json({ success: true, mode: "auto", messages: [] });
+        c.emerg = null;
+        for (const [k, l] of this.rwy) if (l.key === key && l.type === "emerg") this.rwy.delete(k);
+        const m0 = this.addMsg(c, PHRASE[c.lang === "pt" ? "pt" : "en"].maydayEnd, "auto", {}); m0.status = "delivered";
+        return json({ success: true, mode: "auto", messages: [{ id: m0.id, text: m0.text, kind: "auto", urgent: false, at: m0.at }] });
+      }
       const rwy = cleanRunway(plan[type === "land" ? "arrival_runway" : "departure_runway"]) || cleanRunway(d.runway);
       const apt = String(plan[type === "land" ? "arrival_airport" : "departure_airport"] || "").trim().toUpperCase();
       const dest = String(plan.arrival_airport || "").trim().toUpperCase();
+      const apt0 = String(plan.departure_airport || "").trim().toUpperCase();
+      if (type === "mayday") {
+        // Emergency: always accepted. Flag for the radar, warn nearby pilots, hold the runway; a human tower gets it as a request.
+        const air = c.pos.phase === "air";
+        const eapt = air ? dest : apt0;
+        const erwy = cleanRunway(air ? plan.arrival_runway : plan.departure_runway) || cleanRunway(d.runway);
+        c.emerg = { at: now, until: now + MAYDAY_MS };
+        if (erwy && eapt) this.rwy.set(rwyKey(eapt, erwy), { key, type: "emerg", until: now + 10 * 60_000 });
+        const cs = normCallsign(plan.callsign ?? c.pos.callsign);
+        for (const [k2, o] of this.clients) {
+          if (k2 === key || !o.pos || now - o.seen > 15_000) continue;
+          const mi = haversineMi(o.pos.latitude, o.pos.longitude, c.pos.latitude, c.pos.longitude);
+          if (mi <= MAYDAY_NEAR_MI) this.addMsg(o, PHRASE[o.lang === "pt" ? "pt" : "en"].maydayNear(cs, Math.round(mi)), "auto", { urgent: true });
+        }
+        this.violations.push({ at: now, callsign: cs, icao: c.pos.icao_address, type: "mayday", airport: eapt, runway: erwy });
+        if (this.violations.length > MAX_VIOL) this.violations.shift();
+        if (this.humanCovers(c, eapt)) {
+          const msg = this.addMsg(c, "Declares MAYDAY", "request", { urgent: true });
+          msg.status = "request";
+          return json({ success: true, mode: "controller", id: msg.id });
+        }
+        const m1 = this.addMsg(c, ph.mayday, "auto", { urgent: true }); m1.status = "delivered";
+        return json({ success: true, mode: "auto", messages: [{ id: m1.id, text: m1.text, kind: "auto", urgent: true, at: m1.at }] });
+      }
       // A human controller wins: a tower named like the airport, or one close to the aircraft.
-      if (d.lang === "pt" || d.lang === "en") c.lang = d.lang;
       if (this.humanCovers(c, apt)) {
         const msg = this.addMsg(c, "Requests " + REQ_LABEL[type] + (rwy ? ", runway " + rwy : ""), "request", {});
         msg.status = "request";

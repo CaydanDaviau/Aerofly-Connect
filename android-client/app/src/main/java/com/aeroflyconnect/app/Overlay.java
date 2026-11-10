@@ -63,7 +63,9 @@ final class Overlay {
     private String alertText = "";
     private ScrollView msgScroll;
     private LinearLayout panel, msgRow, reqGrid;
-    private Button bWilco, bUnable, bClr, bTaxi, bTakeoff, bLand;
+    private Button bWilco, bUnable, bClr, bTaxi, bTakeoff, bLand, bEmerg;
+    private boolean emergArmed;
+    private final Runnable disarm = new Runnable() { @Override public void run() { emergArmed = false; refresh(); } };
     private boolean expanded, autoExpanded, reqBusy, replyBusy;
     private String shownId = "", statusMsg = "";
 
@@ -235,6 +237,26 @@ final class Overlay {
             rp.topMargin = dp(6);
             panel.addView(reqGrid, rp);
 
+            // Emergency (Mayday): two taps, the second within 4 s; once declared the same button cancels it.
+            bEmerg = small(Api.t(ctx, "Emergency", "Emergência"), Ui.DANGER);
+            bEmerg.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View v) {
+                    if (PilotService.emergency) { request("mayday_cancel"); return; }
+                    if (!emergArmed) {
+                        emergArmed = true;
+                        h.removeCallbacks(disarm); h.postDelayed(disarm, 4000);
+                        refresh();
+                    } else {
+                        emergArmed = false; h.removeCallbacks(disarm);
+                        request("mayday");
+                    }
+                }
+            });
+            LinearLayout.LayoutParams ep = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            ep.topMargin = dp(6);
+            panel.addView(bEmerg, ep);
+
             statusView = new TextView(ctx);
             statusView.setTextSize(12);
             statusView.setTextColor(Ui.DIM);
@@ -330,7 +352,7 @@ final class Overlay {
     private int maxMsgHeight() {
         DisplayMetrics dm = new DisplayMetrics();
         wm.getDefaultDisplay().getRealMetrics(dm);
-        return Math.max(dp(48), Math.min(dp(170), dm.heightPixels - dp(260)));
+        return Math.max(dp(48), Math.min(dp(170), dm.heightPixels - dp(310)));
     }
 
     private void setExpanded(boolean e) {
@@ -377,6 +399,9 @@ final class Overlay {
         alertView.setVisibility(alertText.isEmpty() ? View.GONE : View.VISIBLE);
         dim(bClr, Phase.clearance); dim(bTaxi, Phase.taxi); dim(bTakeoff, Phase.takeoff); dim(bLand, Phase.land);
         bWilco.setEnabled(!replyBusy); bUnable.setEnabled(!replyBusy);
+        bEmerg.setEnabled(!reqBusy);
+        bEmerg.setText(PilotService.emergency ? Api.t(ctx, "Cancel Mayday", "Cancelar Mayday")
+                : emergArmed ? Api.t(ctx, "Tap again: MAYDAY", "Toque de novo: MAYDAY") : Api.t(ctx, "Emergency", "Emergência"));
         String st = statusMsg;
         statusView.setText(st);
         statusView.setVisibility(st.isEmpty() ? View.GONE : View.VISIBLE);

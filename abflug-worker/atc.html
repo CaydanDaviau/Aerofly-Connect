@@ -28,6 +28,8 @@ input::placeholder{color:var(--dim)}
 .strip.twr{border-left-color:#ff7ae9}
 .strip.nocode{border-left-color:var(--amber)}
 .strip.noclnc{border-color:var(--amber);border-left-color:var(--amber)}
+.strip.emerg{border-color:#ff3b30;border-left-color:#ff3b30;background:#3a0f0c}
+.mayday{background:#ff3b30;color:#fff;font-weight:700;border-radius:3px;padding:0 5px;margin-left:6px}
 .noc{background:var(--amber);color:#000;font-weight:700;border-radius:3px;padding:0 5px;margin-left:6px}
 .strip .h{display:flex;justify-content:space-between;gap:8px}
 .strip .cs{font-weight:700;font-size:14px}
@@ -226,6 +228,7 @@ function drawTower(g,x,y,s,col,bg){var k=s/64;g.save();g.translate(x-s/2,y-s/2);
 /* minima: 3 nm / 1000 ft, relaxed to 1 nm / 500 ft when either plane is near its airport; circle appears at 2x. Ground traffic and formations (rel. speed < 20 kt) are ignored. */
 function computeConfl(){
   confl={};hasViol=false;
+  for(var e=0;e<ac.length;e++)if(ac[e].emergency)hasViol=true;   // keeps the redraw timer running so the emergency blinks
   var A=ac.filter(function(a){return !isTwr(a)&&(Number(a.ground_speed)||0)>=60&&isFinite(a.altitude_ft)&&isFinite(a.heading_true)});
   function mark(a,lvl,H){var c=confl[a.icao_address];if(!c||lvl>c.lvl||(lvl===c.lvl&&H<c.r))confl[a.icao_address]={lvl:lvl,r:H}}
   for(var i=0;i<A.length;i++)for(var j=i+1;j<A.length;j++){var a=A[i],b=A[j];
@@ -264,7 +267,7 @@ function draw(){
     if(x<-60||y<-40||x>W+60||y>H+40)continue;
     var tw=isTwr(a),isSel=sel===id,asg=a.assigned_squawk;
     var col=isSel?'#7ae9ff':tw?'#ff7ae9':!asg?'#ffb000':'#3dff7a';
-    var cf=confl[id];if(cf&&cf.lvl===2&&blinkOn)col='#ff3b30';
+    var cf=confl[id];if(cf&&cf.lvl===2&&blinkOn)col='#ff3b30';if(a.emergency)col=blinkOn?'#ff3b30':'#ffd0cc';
     var tr=trails[id]||[];g.strokeStyle=col;g.globalAlpha=.45;
     g.fillStyle=col;for(var t=0;t<tr.length;t++){var q=proj(tr[t]);if(q[0]<-5||q[1]<-5||q[0]>W+5||q[1]>H+5)continue;g.fillRect(q[0]-1,q[1]-1,2,2)}
     g.globalAlpha=1;
@@ -333,8 +336,8 @@ function renderStrips(force){
       '<button data-act="set">'+L('Assign','Atribuir')+'</button><button data-act="auto">Auto</button><button data-act="clear">'+L('Clear','Limpar')+'</button></div>'+
       '<div class="ctl"><input id="msgin" maxlength="300" placeholder="'+L('Message to pilot','Mensagem ao piloto')+'"><label class="urg"><input type="checkbox" id="urg"'+(urgent?' checked':'')+'> '+L('Urgent','Urgente')+'</label><button data-act="msg">'+L('Send','Enviar')+'</button></div>':'';
     var ml=msgs.filter(function(m){return m.icao_address===id}).slice(-3).map(function(m){return'<div class="mlog">&rsaquo; '+esc(m.text)+' &mdash; <b class="'+esc(m.status)+'">'+esc(m.status.toUpperCase())+'</b></div>'}).join('');
-    return'<div class="strip'+(isSel?' sel':'')+(tw?' twr':(asg?'':' nocode'))+(a.no_clnc?' noclnc':'')+'" data-id="'+esc(id)+'">'+
-      '<div class="h"><span class="cs">'+esc(a.callsign||id)+(tw?' &#9650;':'')+(a.no_clnc?'<span class="noc">NO CLNC</span>':'')+'</span><span class="m">'+Math.round(r.dist)+' nm / '+p3(r.brg)+'&deg;</span></div>'+
+    return'<div class="strip'+(isSel?' sel':'')+(tw?' twr':(asg?'':' nocode'))+(a.no_clnc?' noclnc':'')+(a.emergency?' emerg':'')+'" data-id="'+esc(id)+'">'+
+      '<div class="h"><span class="cs">'+esc(a.callsign||id)+(tw?' &#9650;':'')+(a.emergency?'<span class="mayday">MAYDAY</span>':'')+(a.no_clnc?'<span class="noc">NO CLNC</span>':'')+'</span><span class="m">'+Math.round(r.dist)+' nm / '+p3(r.brg)+'&deg;</span></div>'+
       (tw?'':'<div>'+altStr(a.altitude_ft)+' &middot; '+Math.round(Number(a.ground_speed)||0)+' kt &middot; HDG '+p3(Number(a.heading_mag!=null?a.heading_mag:a.heading_true)||0)+'&deg;'+(a.heading_mag==null?'T':'')+' &middot; '+(Number(a.vertical_speed_ft_min)>100?'&uarr;':Number(a.vertical_speed_ft_min)<-100?'&darr;':'&rarr;')+'</div>')+
       (tw?'':'<div>'+st+'</div>')+
       (!tw&&(a.airplane_model||a.departure_runway||a.arrival_runway)?'<div class="m">'+(a.airplane_model?esc(a.airplane_model):'')+((a.departure_runway||a.arrival_runway)?(a.airplane_model?' &middot; ':'')+'RWY '+esc(a.departure_runway||'--')+' &rarr; '+esc(a.arrival_runway||'--'):'')+'</div>':'')+
