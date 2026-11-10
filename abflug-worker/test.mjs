@@ -344,3 +344,26 @@ await call("DELETE", "/api/atc/tower?name=SBBR", null, "ctl");
   await P("m1", { phase: "air" }); const h = await R("m1", { type: "mayday" });
   T("human tower gets mayday as request", h.mode === "controller");
 }
+
+// pilot -> controller chat
+{
+  const CH = async (k, b) => JSON.parse((await call("PUT", "/api/atc/chat", b, k)).slice(4));
+  const T = (n, v) => console.log("chat " + n + ":", v ? "PASS" : "FAIL");
+  hub = new Hub(ctx);
+  T("not flying -> 404", (await call("PUT", "/api/atc/chat", { text: "hi" }, "ch1")).startsWith("404"));
+  await call("PUT", "/api/flightplan", { callsign: "CHAT1" }, "ch1");
+  await call("PUT", "/api/position", { latitude: -15.87, longitude: -47.92 }, "ch1");
+  T("empty -> 400", (await call("PUT", "/api/atc/chat", { text: "  " }, "ch1")).startsWith("400"));
+  hub.towers.clear();
+  const a = await CH("ch1", { text: "Request pushback" });
+  T("no tower -> mode none", a.success && a.mode === "none");
+  hub.clients.get("ch1").lastChat = 0;
+  await call("PUT", "/api/atc/tower", { name: "SBBR", latitude: -15.87, longitude: -47.92 }, "atc");
+  T("tower open -> controller", (await CH("ch1", { text: "x".repeat(500) })).mode === "controller");
+  T("rate limit", (await call("PUT", "/api/atc/chat", { text: "again" }, "ch1")).startsWith("429"));
+  const tr = JSON.parse((await call("GET", "/api/traffic?lat=-15.87&lon=-47.92&radius_miles=50", null, "atc")).slice(4));
+  const ms = tr.atc_messages.filter(m => m.kind === "chat");
+  T("listed for radar, status request, text capped", ms.length === 2 && ms.every(m => m.status === "request") && ms[1].text.length === 200);
+  const up = JSON.parse((await call("PUT", "/api/position", { latitude: -15.87, longitude: -47.92 }, "ch1")).slice(4));
+  T("never delivered back to pilot", !up.messages.some(m => m.kind === "chat"));
+}

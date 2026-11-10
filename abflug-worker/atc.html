@@ -40,7 +40,7 @@ input::placeholder{color:var(--dim)}
 .ctl input{width:84px;text-align:center;letter-spacing:.2em}
 .ctl input#msgin{flex:1 1 140px;width:auto;text-align:left;letter-spacing:0}
 .urg{display:flex;align-items:center;gap:4px;white-space:nowrap}.urg input{width:auto;letter-spacing:0}
-.mlog{font-size:12px;margin-top:4px;color:var(--dim2,#8aa)}.mlog b.wilco{color:#3dff7a}.mlog b.unable{color:#ff6b6b}
+.mlog{font-size:12px;margin-top:4px;color:var(--dim2,#8aa)}.mlog b.wilco{color:#3dff7a}.mlog b.unable{color:#ff6b6b}.mlog.chat{color:#4fe3d0;font-size:13px}.mlog.chat b{color:#4fe3d0}
 #toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:var(--panel);border:1px solid var(--fg);padding:8px 14px;border-radius:6px;opacity:0;transition:opacity .2s;pointer-events:none}
 #toast.on{opacity:1}
 #login{position:fixed;inset:0;background:rgba(0,0,0,.88);display:none;align-items:center;justify-content:center;padding:20px}
@@ -335,7 +335,7 @@ function renderStrips(force){
     var ctl=isSel&&!tw?'<div class="ctl"><input id="sqin" inputmode="numeric" maxlength="4" placeholder="'+(asg||'0000')+'" value="'+esc(asg||'')+'">'+
       '<button data-act="set">'+L('Assign','Atribuir')+'</button><button data-act="auto">Auto</button><button data-act="clear">'+L('Clear','Limpar')+'</button></div>'+
       '<div class="ctl"><input id="msgin" maxlength="300" placeholder="'+L('Message to pilot','Mensagem ao piloto')+'"><label class="urg"><input type="checkbox" id="urg"'+(urgent?' checked':'')+'> '+L('Urgent','Urgente')+'</label><button data-act="msg">'+L('Send','Enviar')+'</button></div>':'';
-    var ml=msgs.filter(function(m){return m.icao_address===id}).slice(-3).map(function(m){return'<div class="mlog">&rsaquo; '+esc(m.text)+' &mdash; <b class="'+esc(m.status)+'">'+esc(m.status.toUpperCase())+'</b></div>'}).join('');
+    var ml=msgs.filter(function(m){return m.icao_address===id}).slice(-3).map(function(m){return m.kind==='chat'?'<div class="mlog chat"><b>'+L('PILOT','PILOTO')+':</b> '+esc(m.text)+'</div>':'<div class="mlog">&rsaquo; '+esc(m.text)+' &mdash; <b class="'+esc(m.status)+'">'+esc(m.status.toUpperCase())+'</b></div>'}).join('');
     return'<div class="strip'+(isSel?' sel':'')+(tw?' twr':(asg?'':' nocode'))+(a.no_clnc?' noclnc':'')+(a.emergency?' emerg':'')+'" data-id="'+esc(id)+'">'+
       '<div class="h"><span class="cs">'+esc(a.callsign||id)+(tw?' &#9650;':'')+(a.emergency?'<span class="mayday">MAYDAY</span>':'')+(a.no_clnc?'<span class="noc">NO CLNC</span>':'')+'</span><span class="m">'+Math.round(r.dist)+' nm / '+p3(r.brg)+'&deg;</span></div>'+
       (tw?'':'<div>'+altStr(a.altitude_ft)+' &middot; '+Math.round(Number(a.ground_speed)||0)+' kt &middot; HDG '+p3(Number(a.heading_mag!=null?a.heading_mag:a.heading_true)||0)+'&deg;'+(a.heading_mag==null?'T':'')+' &middot; '+(Number(a.vertical_speed_ft_min)>100?'&uarr;':Number(a.vertical_speed_ft_min)<-100?'&darr;':'&rarr;')+'</div>')+

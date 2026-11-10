@@ -1,6 +1,9 @@
 package com.aeroflyconnect.app;
 
 import android.content.Context;
+import android.graphics.Canvas;
+import android.graphics.Paint;
+import android.graphics.Path;
 import android.graphics.PixelFormat;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -9,10 +12,15 @@ import android.os.Looper;
 import android.provider.Settings;
 import android.util.DisplayMetrics;
 import android.view.Gravity;
+import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
+import android.view.inputmethod.EditorInfo;
+import android.view.inputmethod.InputMethodManager;
+import android.text.InputType;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -64,6 +72,10 @@ final class Overlay {
     private ScrollView msgScroll;
     private LinearLayout panel, msgRow, reqGrid;
     private Button bWilco, bUnable, bClr, bTaxi, bTakeoff, bLand, bEmerg;
+    private EditText chatIn;
+    private View sendBtn;
+    private boolean typing, chatBusy;
+    private int savedY;
     private boolean emergArmed;
     private final Runnable disarm = new Runnable() { @Override public void run() { emergArmed = false; refresh(); } };
     private boolean expanded, autoExpanded, reqBusy, replyBusy;
@@ -101,6 +113,7 @@ final class Overlay {
         h.post(new Runnable() {
             @Override public void run() {
                 h.removeCallbacksAndMessages(null);
+                typing = false;
                 try { ctx.unregisterComponentCallbacks(cfgCb); } catch (Exception ignored) { }
                 if (root != null) { try { wm.removeView(root); } catch (Exception ignored) { } root = null; }
                 if (inst == Overlay.this) { inst = null; PipReply.overlayHook = null; }
@@ -130,7 +143,16 @@ final class Overlay {
     private void build() {
         if (root != null) return;
         try {
-            root = new FrameLayout(ctx);
+            root = new FrameLayout(ctx) {
+                @Override public boolean dispatchKeyEvent(KeyEvent e) {
+                    // Back closes the keyboard and hands the focus back to the sim
+                    if (typing && e.getKeyCode() == KeyEvent.KEYCODE_BACK) {
+                        if (e.getAction() == KeyEvent.ACTION_UP) endTyping();
+                        return true;
+                    }
+                    return super.dispatchKeyEvent(e);
+                }
+            };
 
             bubble = new TextView(ctx);
             bubble.setText("ATC");
@@ -264,6 +286,65 @@ final class Overlay {
             statusView.setVisibility(View.GONE);
             panel.addView(statusView);
 
+            // Pilot -> ATC text: the window only takes focus while the field is being used, so the sim keeps its input otherwise.
+            LinearLayout chatRow = new LinearLayout(ctx);
+            chatRow.setOrientation(LinearLayout.HORIZONTAL);
+            chatRow.setGravity(Gravity.CENTER_VERTICAL);
+            chatIn = new EditText(ctx);
+            chatIn.setHint(Api.t(ctx, "Message to ATC", "Mensagem ao ATC"));
+            chatIn.setHintTextColor(Ui.DIM);
+            chatIn.setTextColor(Ui.TXT);
+            chatIn.setTextSize(14);
+            chatIn.setSingleLine(true);
+            chatIn.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+            chatIn.setImeOptions(EditorInfo.IME_ACTION_SEND | EditorInfo.IME_FLAG_NO_EXTRACT_UI);
+            chatIn.setFilters(new android.text.InputFilter[] { new android.text.InputFilter.LengthFilter(200) });
+            chatIn.setPadding(dp(10), 0, dp(10), 0);
+            chatIn.setBackground(Ui.shape(ctx, Ui.FIELD, Ui.STROKE, 10));
+            chatIn.setOnTouchListener(new View.OnTouchListener() {
+                @Override public boolean onTouch(View v, MotionEvent e) {
+                    if (e.getActionMasked() == MotionEvent.ACTION_DOWN && !typing) beginTyping();
+                    return false;
+                }
+            });
+            chatIn.setOnEditorActionListener(new android.widget.TextView.OnEditorActionListener() {
+                @Override public boolean onEditorAction(TextView v, int actionId, KeyEvent ev) {
+                    if (actionId == EditorInfo.IME_ACTION_SEND) { sendChat(); return true; }
+                    return false;
+                }
+            });
+            chatRow.addView(chatIn, new LinearLayout.LayoutParams(0, dp(40), 1f));
+            // send symbol: a paper plane drawn on a canvas (no text, no emoji font dependency)
+            sendBtn = new View(ctx) {
+                private final Paint pt = new Paint(Paint.ANTI_ALIAS_FLAG);
+                private final Path path = new Path();
+                @Override protected void onDraw(Canvas c) {
+                    super.onDraw(c);
+                    float w = getWidth(), hh = getHeight();
+                    pt.setColor(isEnabled() ? 0xFF00414B : 0x8000414B);
+                    pt.setStyle(Paint.Style.FILL);
+                    path.reset();
+                    path.moveTo(w * 0.24f, hh * 0.24f);          // nose-left of the plane
+                    path.lineTo(w * 0.80f, hh * 0.50f);          // tip
+                    path.lineTo(w * 0.24f, hh * 0.76f);
+                    path.lineTo(w * 0.34f, hh * 0.54f);          // tail notch
+                    path.lineTo(w * 0.56f, hh * 0.50f);
+                    path.lineTo(w * 0.34f, hh * 0.46f);
+                    path.close();
+                    c.drawPath(path, pt);
+                }
+            };
+            sendBtn.setBackground(Ui.ripple(ctx, Ui.CYAN, Ui.CYAN, 10));
+            sendBtn.setContentDescription(Api.t(ctx, "Send", "Enviar"));
+            sendBtn.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { sendChat(); } });
+            LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(dp(40), dp(40));
+            sp.leftMargin = dp(4);
+            chatRow.addView(sendBtn, sp);
+            LinearLayout.LayoutParams crp = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            crp.topMargin = dp(8);
+            panel.addView(chatRow, crp);
+
             panel.setVisibility(View.GONE);
             root.addView(panel, new FrameLayout.LayoutParams(dp(236), FrameLayout.LayoutParams.WRAP_CONTENT));
 
@@ -352,11 +433,12 @@ final class Overlay {
     private int maxMsgHeight() {
         DisplayMetrics dm = new DisplayMetrics();
         wm.getDefaultDisplay().getRealMetrics(dm);
-        return Math.max(dp(48), Math.min(dp(170), dm.heightPixels - dp(310)));
+        return Math.max(dp(48), Math.min(dp(170), dm.heightPixels - dp(370)));
     }
 
     private void setExpanded(boolean e) {
         if (root == null) return;
+        if (!e) endTyping();
         expanded = e;
         bubble.setVisibility(e ? View.GONE : View.VISIBLE);
         panel.setVisibility(e ? View.VISIBLE : View.GONE);
@@ -431,6 +513,64 @@ final class Overlay {
                 });
             }
         }).start();
+    }
+
+    // ---------- typing ----------
+    /** Gives the overlay window keyboard focus (and parks it at the top so the keyboard does not cover it). */
+    private void beginTyping() {
+        if (root == null || typing) return;
+        typing = true;
+        autoExpanded = false;
+        savedY = lp.y;
+        lp.flags &= ~WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
+        lp.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING;
+        lp.y = 0;
+        try { wm.updateViewLayout(root, lp); } catch (Exception ignored) { }
+        h.post(new Runnable() {
+            @Override public void run() {
+                if (!typing || chatIn == null) return;
+                chatIn.requestFocus();
+                InputMethodManager imm = (InputMethodManager) ctx.getSystemService(Context.INPUT_METHOD_SERVICE);
+                if (imm != null) imm.showSoftInput(chatIn, InputMethodManager.SHOW_IMPLICIT);
+            }
+        });
+    }
+
+    /** Hides the keyboard, makes the window non-focusable again so the sim gets its input back, restores the position. */
+    private void endTyping() {
+        if (!typing) return;
+        typing = false;
+        try {
+            InputMethodManager imm = (InputMethodManager) ctx.getSystemService(Context.INPUT_METHOD_SERVICE);
+            if (imm != null && chatIn != null) imm.hideSoftInputFromWindow(chatIn.getWindowToken(), 0);
+            if (chatIn != null) chatIn.clearFocus();
+        } catch (Exception ignored) { }
+        if (root == null) return;
+        lp.flags |= WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
+        lp.y = savedY;
+        clamp();
+    }
+
+    private void sendChat() {
+        if (chatBusy || chatIn == null) return;
+        final String text = chatIn.getText().toString().trim();
+        if (text.isEmpty()) return;
+        chatBusy = true;
+        sendBtn.setEnabled(false); sendBtn.invalidate();
+        chatIn.setText("");
+        endTyping();
+        setStatus(Api.t(ctx, "Sending...", "Enviando..."), 0);
+        PilotService.chat(ctx, text, new PilotService.ReqCb() {
+            @Override public void done(final String feedback) {
+                h.post(new Runnable() {
+                    @Override public void run() {
+                        chatBusy = false;
+                        if (sendBtn != null) { sendBtn.setEnabled(true); sendBtn.invalidate(); }
+                        setStatus(feedback, 6000);
+                    }
+                });
+            }
+        });
     }
 
     private void request(String type) {

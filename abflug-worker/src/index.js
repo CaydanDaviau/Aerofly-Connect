@@ -492,6 +492,21 @@ export class Hub {
       return json({ success: true });
     }
 
+    // Pilot -> controller free text. Stored like a request (status "request": never delivered back to the pilot).
+    if ((m === "PUT" || m === "POST") && p === "/api/atc/chat") {
+      const d = await request.json().catch(() => ({}));
+      const text = String(d.text || "").trim().slice(0, 200);
+      const c = this.clients.get(key);
+      if (!c || !c.pos) return json({ error: "start flying first" }, 404);
+      if (!text) return json({ error: "empty message" }, 400);
+      const now = Date.now();
+      if (c.lastChat && now - c.lastChat < 2000) return json({ error: "too many messages" }, 429);
+      c.lastChat = now;
+      const msg = this.addMsg(c, text, "chat", {});
+      msg.status = "request";
+      return json({ success: true, id: msg.id, mode: this.towers.size > 0 ? "controller" : "none" });
+    }
+
     if ((m === "PUT" || m === "POST") && p === "/api/atc/request") {
       const d = await request.json().catch(() => ({}));
       const type = String(d.type || "");

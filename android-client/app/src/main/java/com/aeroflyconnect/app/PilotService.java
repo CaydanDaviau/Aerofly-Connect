@@ -402,6 +402,31 @@ public class PilotService extends Service {
         }, "atc-request").start();
     }
 
+    /** Sends a free-text message to the controller from a background thread; the controller answers like any ATC message. */
+    static void chat(final Context c, final String text, final ReqCb cb) {
+        final Context app = c.getApplicationContext();
+        new Thread(new Runnable() {
+            @Override public void run() {
+                String fb;
+                try {
+                    JSONObject o = new JSONObject();
+                    o.put("text", text);
+                    Api.Resp r = Api.request("PUT", "/api/atc/chat", o.toString(), Api.key(app));
+                    if (r.code < 400) {
+                        boolean tower = "controller".equals(new JSONObject(r.body).optString("mode"));
+                        fb = tower ? Api.t(app, "Sent to ATC", "Enviado ao ATC")
+                                : Api.t(app, "Sent, but no controller is online", "Enviado, mas não há controlador online");
+                    } else if (r.code == 429) fb = Api.t(app, "Wait a moment", "Aguarde um momento");
+                    else if (r.code == 404) fb = Api.t(app, "Not flying yet", "Voo ainda não iniciado");
+                    else fb = Api.t(app, "Not sent", "Não enviado");
+                } catch (Exception e) {
+                    fb = Api.t(app, "No connection", "Sem conexão");
+                }
+                if (cb != null) cb.done(fb);
+            }
+        }, "atc-chat").start();
+    }
+
     /** Mayday declared and not yet cancelled (cleared at Start and when the aircraft lands). */
     static volatile boolean emergency;
     static volatile String fqDep = "", fqArr = "";
