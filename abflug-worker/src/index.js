@@ -415,7 +415,7 @@ export class Hub {
       try { ws.send(JSON.stringify({ id: d.id, status: 400, body: { error: "bad request" } })); } catch (e) {}
       return;
     }
-    const init = { method, headers: { "X-API-Key": a.key, "Content-Type": "application/json" } };
+    const init = { method, headers: { "X-API-Key": a.key, "Content-Type": "application/json", "X-Via": "ws" } };
     if (method !== "GET" && method !== "DELETE" && d.body !== undefined) init.body = JSON.stringify(d.body);
     let status = 500, body = { error: "server error" };
     try {
@@ -439,8 +439,9 @@ export class Hub {
       const mask = k => k.slice(0, 2) + "***" + k.slice(-1);
       return json({ towers: [...this.towers.values()], players: [...this.clients].map(([k, c]) => ({ key: mask(k), age_s: Math.round((now - c.seen) / 1000), position: c.pos || null, plan: c.plan || {} })) });
     }
-    if (p !== "/api/stats" && p !== "/api/debug") { const k = m + " " + p; this.counts[k] = (this.counts[k] || 0) + 1; }
+    if (p !== "/api/stats" && p !== "/api/debug") { const k = (request.headers.get("X-Via") === "ws" ? "WS " : "") + m + " " + p; this.counts[k] = (this.counts[k] || 0) + 1; }
     if (m === "GET" && p === "/api/stats") {
+      if (url.searchParams.get("reset") === "1") { this.counts = {}; this.since = Date.now(); }   // /api/stats?reset=1 starts the counters over
       const secs = Math.max(1, (Date.now() - this.since) / 1000);
       const per_minute = {};
       for (const [k, v] of Object.entries(this.counts)) per_minute[k] = Math.round((v / secs) * 600) / 10;

@@ -67,4 +67,12 @@ socks.splice(0, socks.length); await hub.pushAll(); T("timer stops with no socke
 // HTTP still intact
 const h = await worker.fetch(new Request("https://x/api/traffic?lat=0&lon=0&radius_miles=13000", { headers: { "X-API-Key": "k" } }), env);
 const hj = await h.json(); T("HTTP /api/traffic unchanged", h.status === 200 && hj.aircraft.length >= 2 && "crashes" in hj && "atc_messages" in hj);
+// stats: socket requests counted separately, reset works
+{
+  const st = async q => (await (await worker.fetch(new Request("https://x/api/stats" + q), env)).json());
+  let j = await st("");
+  T("stats: WS requests listed separately", (j.counts["WS PUT /api/position"] || 0) > 0 && !("PUT /api/position" in j.counts && j.counts["PUT /api/position"] > j.counts["WS PUT /api/position"] + 5));
+  j = await st("?reset=1");
+  T("stats: reset empties counters", Object.keys(j.counts).length === 0 && j.seconds_since_start <= 2);
+}
 process.exit(fails ? 1 : 0);
