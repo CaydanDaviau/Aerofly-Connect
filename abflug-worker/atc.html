@@ -412,6 +412,7 @@ function applyTraffic(j){
 /* ---------- voice (push-to-talk, both directions) ---------- */
 var voiceOn=true,vclips=[],heard=null,pttBusy=false,actx=null,rec=null;
 try{voiceOn=localStorage.getItem('afc_voice')!=='0'}catch(e){}
+if(/[?&]voice=0/.test(location.search))voiceOn=false;
 function ac_(){if(!actx){try{actx=new (window.AudioContext||window.webkitAudioContext)()}catch(e){}}if(actx&&actx.state==='suspended')actx.resume();return actx}
 document.addEventListener('pointerdown',function(){ac_()},{once:true});
 function wsCall(path,body){var o={id:'v'+Date.now(),method:'PUT',path:path,body:body};

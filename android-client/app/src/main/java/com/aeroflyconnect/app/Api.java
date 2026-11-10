@@ -81,6 +81,10 @@ final class Api {
     static long crashLeftMs(Context c) { return Math.max(0, crashUntil(c) - System.currentTimeMillis()); }
     static String mmss(long ms) { long s = (ms + 999) / 1000; return (s / 60) + ":" + (s % 60 < 10 ? "0" : "") + (s % 60); }
 
+    /** Voice chat (push-to-talk, both directions); default on. */
+    static boolean voiceOn(Context c) { return prefs(c).getBoolean("voice_on", true); }
+    static void setVoiceOn(Context c, boolean on) { prefs(c).edit().putBoolean("voice_on", on).apply(); }
+
     static boolean overlayOn(Context c) { return prefs(c).getBoolean("overlay_on", true); }
     static void setOverlayOn(Context c, boolean on) { prefs(c).edit().putBoolean("overlay_on", on).apply(); }
 

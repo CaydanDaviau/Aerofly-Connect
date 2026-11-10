@@ -110,7 +110,11 @@ public class PilotService extends Service {
         // Urgent messages: heads-up pop up.
         nm.createNotificationChannel(new NotificationChannel("atc_urgent", Api.t(this, "ATC urgent messages", "Mensagens urgentes do ATC"), NotificationManager.IMPORTANCE_HIGH));
         Notification n = buildNotif(this);
-        startForeground(1, n);
+        if (android.os.Build.VERSION.SDK_INT >= 29) {
+            int fgType = android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC;
+            if (Mic.available(this)) fgType |= android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE;
+            try { startForeground(1, n, fgType); } catch (Exception e) { startForeground(1, n, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC); }
+        } else startForeground(1, n);
         // Warm up the radio voice now so the first ATC message is spoken without init delay.
         if (Api.speakOn(this)) {
             voiceLang = Api.voiceLang(this);
@@ -190,6 +194,7 @@ public class PilotService extends Service {
                         // Shared with other players (shown when they tap this aircraft on the map).
                         if (Phase.etaMin >= 0) pos.put("eta_min", Phase.etaMin);
                         pos.put("terminal", Phase.terminal);
+                        pos.put("voice", Api.voiceOn(this));
                         // Auto-ATC: where the aircraft is (ground / runway / air), which runway, distance to the arrival airport.
                         pos.put("phase", Phase.phaseName);
                         pos.put("lang", Api.voiceLang(this));
@@ -221,6 +226,7 @@ public class PilotService extends Service {
                         if (code < 400) {
                             okCount++; serverState = "OK (HTTP " + code + ")";
                             showMessages(r.body);
+                            showVoice(r.body);
                             showTraffic(r.body);
                             if (mapShown && r.body.contains("\"aircraft\"")) { trafficJson = r.body; trafficAt = System.currentTimeMillis(); }
                         }
@@ -269,6 +275,52 @@ public class PilotService extends Service {
             voiceLang = lang;
         }
         voice.speak(text, onStart);
+    }
+
+    /** Voice clips from a controller arrive in the position reply ("voice":[{audio,...}]): played with the radio effect. */
+    synchronized void showVoice(String body) {
+        if (!body.contains("\"voice\":[") || !Api.voiceOn(this)) return;
+        try {
+            JSONArray arr = new JSONObject(body).optJSONArray("voice");
+            if (arr == null) return;
+            String lang = Api.voiceLang(this);
+            if (voice == null || !lang.equals(voiceLang)) {
+                if (voice != null) voice.shutdown();
+                voice = new AtcVoice(this, lang);
+                voiceLang = lang;
+            }
+            for (int i = 0; i < arr.length(); i++) {
+                byte[] data = android.util.Base64.decode(arr.getJSONObject(i).optString("audio"), android.util.Base64.DEFAULT);
+                if (data.length > 0) voice.playClip(data, new Runnable() { @Override public void run() { Overlay.poke(); } });
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    /** Sends a recorded push-to-talk clip to the controllers from a background thread. */
+    static void voiceSend(final Context c, final byte[] data, final long ms, final ReqCb cb) {
+        final Context app = c.getApplicationContext();
+        new Thread(new Runnable() {
+            @Override public void run() {
+                String fb;
+                try {
+                    JSONObject o = new JSONObject();
+                    o.put("audio", android.util.Base64.encodeToString(data, android.util.Base64.NO_WRAP));
+                    o.put("mime", "audio/mp4");
+                    o.put("ms", ms);
+                    Api.Resp r = Api.request("PUT", "/api/voice/clip", o.toString(), Api.key(app));
+                    if (r.code < 400) fb = Api.t(app, "Voice sent to ATC", "Voz enviada ao ATC");
+                    else if (r.code == 409 && r.body.contains("no_listener")) fb = Api.t(app, "No controller can listen to voice, use text", "Nenhum controlador pode ouvir voz, use texto");
+                    else if (r.code == 409) fb = Api.t(app, "Voice is off in Settings", "A voz está desligada nas Configurações");
+                    else if (r.code == 429) fb = Api.t(app, "Wait a moment", "Aguarde um momento");
+                    else if (r.code == 404) fb = Api.t(app, "Not flying yet", "Voo ainda não iniciado");
+                    else fb = Api.t(app, "Voice failed", "Falha no envio de voz");
+                } catch (Exception e) {
+                    fb = Api.t(app, "No connection", "Sem conexão");
+                }
+                if (cb != null) cb.done(fb);
+            }
+        }, "atc-voice").start();
     }
 
     /** The position response carries new ATC messages: one heads-up notification each. */

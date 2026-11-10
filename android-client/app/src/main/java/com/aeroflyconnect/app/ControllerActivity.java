@@ -4,6 +4,8 @@ import android.app.Activity;
 import android.os.Bundle;
 import android.view.View;
 import android.view.WindowManager;
+import android.webkit.PermissionRequest;
+import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebView;
@@ -15,7 +17,7 @@ public class ControllerActivity extends Activity {
     private WebView web;
     private View err;
     private boolean failed;
-    private String url() { return BuildConfig.SERVER_URL + "/atc?key=" + Api.key(this) + "&lang=" + Api.uiLang(this); }
+    private String url() { return BuildConfig.SERVER_URL + "/atc?key=" + Api.key(this) + "&lang=" + Api.uiLang(this) + (Api.voiceOn(this) ? "" : "&voice=0"); }
 
     @Override
     protected void onCreate(Bundle b) {
@@ -24,6 +26,17 @@ public class ControllerActivity extends Activity {
         web = new WebView(this);
         web.getSettings().setJavaScriptEnabled(true);
         web.getSettings().setDomStorageEnabled(true); // IndexedDB cache for runway data
+        web.getSettings().setMediaPlaybackRequiresUserGesture(false);
+        web.setWebChromeClient(new WebChromeClient() {
+            @Override public void onPermissionRequest(final PermissionRequest r) {
+                runOnUiThread(new Runnable() {
+                    @Override public void run() {
+                        if (Mic.permitted(ControllerActivity.this)) r.grant(r.getResources());
+                        else { r.deny(); requestPermissions(new String[] { android.Manifest.permission.RECORD_AUDIO }, 5); }
+                    }
+                });
+            }
+        });
         web.setWebViewClient(new WebViewClient() {
             @Override public void onReceivedError(WebView v, WebResourceRequest r, WebResourceError e) {
                 if (r.isForMainFrame()) showError();

@@ -4,6 +4,7 @@ import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.Path;
+import android.graphics.RectF;
 import android.graphics.PixelFormat;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -73,6 +74,8 @@ final class Overlay {
     private LinearLayout panel, msgRow, reqGrid;
     private Button bWilco, bUnable, bClr, bTaxi, bTakeoff, bLand, bEmerg;
     private EditText chatIn;
+    private View micBtn;
+    private boolean micRec;
     private View sendBtn;
     private boolean typing, chatBusy;
     private int savedY;
@@ -114,6 +117,7 @@ final class Overlay {
             @Override public void run() {
                 h.removeCallbacksAndMessages(null);
                 typing = false;
+                if (micRec) { micRec = false; Mic.stop(); }
                 try { ctx.unregisterComponentCallbacks(cfgCb); } catch (Exception ignored) { }
                 if (root != null) { try { wm.removeView(root); } catch (Exception ignored) { } root = null; }
                 if (inst == Overlay.this) { inst = null; PipReply.overlayHook = null; }
@@ -314,6 +318,41 @@ final class Overlay {
                 }
             });
             chatRow.addView(chatIn, new LinearLayout.LayoutParams(0, dp(40), 1f));
+            // push-to-talk: hold to record (max 10 s), release to send; only with Voice on in Settings and the mic permission
+            micBtn = new View(ctx) {
+                private final Paint pt = new Paint(Paint.ANTI_ALIAS_FLAG);
+                private final RectF rf = new RectF();
+                @Override protected void onDraw(Canvas c) {
+                    super.onDraw(c);
+                    float w = getWidth(), hh = getHeight();
+                    pt.setColor(0xFF00414B);
+                    pt.setStyle(Paint.Style.FILL);
+                    rf.set(w * 0.39f, hh * 0.18f, w * 0.61f, hh * 0.56f);
+                    c.drawRoundRect(rf, w * 0.11f, w * 0.11f, pt);
+                    pt.setStyle(Paint.Style.STROKE);
+                    pt.setStrokeWidth(w * 0.06f);
+                    pt.setStrokeCap(Paint.Cap.ROUND);
+                    rf.set(w * 0.29f, hh * 0.30f, w * 0.71f, hh * 0.70f);
+                    c.drawArc(rf, 10, 160, false, pt);
+                    c.drawLine(w * 0.5f, hh * 0.70f, w * 0.5f, hh * 0.82f, pt);
+                    c.drawLine(w * 0.38f, hh * 0.82f, w * 0.62f, hh * 0.82f, pt);
+                }
+            };
+            micBtn.setBackground(Ui.ripple(ctx, Ui.CYAN, Ui.CYAN, 10));
+            micBtn.setContentDescription(Api.t(ctx, "Hold to talk", "Segure para falar"));
+            micBtn.setOnTouchListener(new View.OnTouchListener() {
+                @Override public boolean onTouch(View v, MotionEvent e) {
+                    int a = e.getActionMasked();
+                    if (a == MotionEvent.ACTION_DOWN) micDown();
+                    else if (a == MotionEvent.ACTION_UP || a == MotionEvent.ACTION_CANCEL) micUp();
+                    return true;
+                }
+            });
+            if (Mic.available(ctx)) {
+                LinearLayout.LayoutParams mp = new LinearLayout.LayoutParams(dp(40), dp(40));
+                mp.leftMargin = dp(4);
+                chatRow.addView(micBtn, mp);
+            }
             // send symbol: a paper plane drawn on a canvas (no text, no emoji font dependency)
             sendBtn = new View(ctx) {
                 private final Paint pt = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -549,6 +588,34 @@ final class Overlay {
         lp.flags |= WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
         lp.y = savedY;
         clamp();
+    }
+
+    private final Runnable micAuto = new Runnable() { @Override public void run() { micUp(); } };
+
+    private void micDown() {
+        if (micRec) return;
+        String err = Mic.start(ctx);
+        if (err != null) { setStatus(err, 5000); return; }
+        micRec = true;
+        micBtn.setBackground(Ui.ripple(ctx, Ui.RED, Ui.RED, 10));
+        setStatus(Api.t(ctx, "Recording... release to send", "Gravando... solte para enviar"), 0);
+        h.postDelayed(micAuto, Mic.MAX_MS);
+    }
+
+    private void micUp() {
+        if (!micRec) return;
+        micRec = false;
+        h.removeCallbacks(micAuto);
+        micBtn.setBackground(Ui.ripple(ctx, Ui.CYAN, Ui.CYAN, 10));
+        final long ms = Mic.elapsed();
+        final byte[] data = Mic.stop();
+        if (data == null || ms < 500) { setStatus(Api.t(ctx, "Too short", "Muito curto"), 3000); return; }
+        setStatus(Api.t(ctx, "Sending...", "Enviando..."), 0);
+        PilotService.voiceSend(ctx, data, Math.min(ms, Mic.MAX_MS), new PilotService.ReqCb() {
+            @Override public void done(final String feedback) {
+                h.post(new Runnable() { @Override public void run() { setStatus(feedback, 6000); } });
+            }
+        });
     }
 
     private void sendChat() {

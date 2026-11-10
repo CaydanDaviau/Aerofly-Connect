@@ -68,6 +68,25 @@ final class AtcVoice {
         });
     }
 
+    /** Plays a clip recorded by a controller (AAC / Opus bytes) through the same radio effect. */
+    void playClip(final byte[] data, final Runnable onStart) {
+        ex.execute(new Runnable() {
+            @Override public void run() {
+                started = false;
+                try {
+                    File f = new File(ctx.getCacheDir(), "atc_clip_in.bin");
+                    java.io.FileOutputStream o = new java.io.FileOutputStream(f);
+                    try { o.write(data); } finally { o.close(); }
+                    int[] rate = new int[1];
+                    short[] pcm = ClipCodec.decode(f, rate);
+                    f.delete();
+                    if (pcm != null && pcm.length > 0) play(radio(pcm, rate[0]), rate[0], onStart);
+                } catch (Throwable ignored) { }
+                fireStart(onStart);
+            }
+        });
+    }
+
     private boolean started;
     private void fireStart(Runnable r) {
         if (started) return;

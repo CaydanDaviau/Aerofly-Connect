@@ -296,6 +296,20 @@ public class MainActivity extends Activity {
         voice.addView(voiceRow());
         voice.addView(rateRow());
 
+        // ----- Voice chat (push-to-talk with the controller) -----
+        LinearLayout vc = section(root, Api.t(this, "Voice chat", "Chat de voz"));
+        vc.addView(sw(Api.t(this, "Push-to-talk voice with ATC (hear and send clips)", "Voz push-to-talk com o ATC (ouvir e enviar)"), Api.voiceOn(this),
+                new CompoundButton.OnCheckedChangeListener() {
+                    @Override public void onCheckedChanged(CompoundButton b, boolean on) {
+                        Api.setVoiceOn(MainActivity.this, on);
+                        if (on && !Mic.permitted(MainActivity.this)) requestPermissions(new String[] { android.Manifest.permission.RECORD_AUDIO }, 4);
+                    }
+                }));
+        TextView vcHint = dim(Api.t(this, "Needs the microphone permission (asked when you switch on). Takes effect at the next Start. Max 10 s per clip; with Voice off, controllers see that you cannot listen.",
+                "Precisa da permissão do microfone (pedida ao ligar). Vale a partir do próximo Iniciar. Máx. 10 s por áudio; com a voz desligada, os controladores veem que você não pode ouvir."), 13);
+        vcHint.setPadding(0, pad / 4, 0, 0);
+        vc.addView(vcHint);
+
         // ----- Floating ATC window (requests + Wilco / Unable over the sim) -----
         LinearLayout ov = section(root, Api.t(this, "ATC overlay", "Janela do ATC"));
         ov.addView(sw(Api.t(this, "Floating ATC window while flying", "Janela flutuante do ATC durante o voo"), Api.overlayOn(this),
