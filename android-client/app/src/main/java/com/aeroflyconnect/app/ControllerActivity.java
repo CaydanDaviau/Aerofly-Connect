@@ -51,6 +51,7 @@ public class ControllerActivity extends Activity {
         root.addView(web);
         root.addView(err);
         setContentView(root);
+        if (Api.voiceOn(this) && !Mic.permitted(this)) requestPermissions(new String[] { android.Manifest.permission.RECORD_AUDIO }, 5);
         web.loadUrl(url());
         RadioPlayer.start(this, "ctl");   // background radio (only plays if enabled in Settings)
     }
