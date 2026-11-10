@@ -150,7 +150,8 @@ const oppRunway = r => { const m = /^(\d\d)([LRC]?)$/.exec(r); if (!m) return r;
 const rwyKey = (apt, r) => (apt || "?") + "/" + [r, oppRunway(r)].sort()[0];
 const GRACE_MS = 20_000, VIOL_SHOW_MS = 30_000, VIOL_RENEW_MS = 20_000, MAX_VIOL = 100;
 const PUSH_MS = 3000;
-const up = v => String(v || "").trim().toUpperCase();
+const VOICE_TTL_MS = 5 * 60 * 1000, VOICE_MAX_CLIPS = 40, VOICE_MAX_B64 = 150_000, VOICE_LISTEN_MS = 60_000;
+const up =v => String(v || "").trim().toUpperCase();
 
 export default {
   async fetch(request, env) {
@@ -185,13 +186,15 @@ export class Hub {
     ctx.blockConcurrencyWhile(async () => {
       for (const [k, v] of await ctx.storage.list({ prefix: "tower:" })) this.towers.set(k.slice(6), v);
       for (const [k, v] of await ctx.storage.list({ prefix: "crash:" })) this.crashes.set(k.slice(6), v);
-    }); this.ctx = ctx; this.clients = new Map(); this.msgs = new Map(); this.rwy = new Map(); this.rwyQ = new Map(); this.violations = []; this.msgSeq = 0; this.since = Date.now(); this.counts = {}; }
+    }); this.ctx = ctx; this.clients = new Map(); this.msgs = new Map(); this.rwy = new Map(); this.rwyQ = new Map(); this.violations = []; this.clips = new Map(); this.listeners = new Map(); this.msgSeq = 0; this.since = Date.now(); this.counts = {}; }
 
   purge() {
     const now = Date.now();
     for (const [k, c] of this.clients) if (now - c.seen > TTL_MS) this.clients.delete(k);
     for (const [k, m] of this.msgs) if (now - m.at > 30 * 60 * 1000) this.msgs.delete(k);
     for (const [k, l] of this.rwy) if (now > l.until) this.rwy.delete(k);
+    for (const [k, v] of this.clips) if (now - v.at > VOICE_TTL_MS) this.clips.delete(k);
+    for (const [k, v] of this.listeners) if (now - v.at > VOICE_LISTEN_MS) this.listeners.delete(k);
     for (const [k, q] of this.rwyQ) { const f = q.filter(x => this.clients.has(x)); if (f.length) this.rwyQ.set(k, f); else this.rwyQ.delete(k); }
     for (const [k, t] of this.ta) if (now - t > 120_000) this.ta.delete(k);
     for (const [k, cr] of this.crashes) if (now - cr.at > CRASH_SHOW_MS) { this.crashes.delete(k); this.ctx.storage.delete("crash:" + k); }
@@ -396,7 +399,23 @@ export class Hub {
   trafficBody(key, lat, lon, rad, max) {
     const { out, truncated } = this.trafficList(key, lat, lon, rad, Math.max(1, Math.min(MAX_TRAFFIC, Number(max) || MAX_TRAFFIC)));
     const atc_messages = [...this.msgs.values()].map(x => ({ id: x.id, icao_address: x.icao, text: x.text, kind: x.kind, urgent: !!x.urgent, status: x.status, at: x.at }));
-    return { aircraft: out, traffic: out, truncated, active_clients: this.clients.size, atc_messages, crashes: this.crashList() };
+    const voice_clips = [...this.clips.values()].filter(v => v.dir === "up").map(v => ({ id: v.id, icao_address: v.icao, callsign: v.callsign, ms: v.ms, at: v.at }));
+    return { aircraft: out, traffic: out, truncated, active_clients: this.clients.size, atc_messages, crashes: this.crashList(), voice_clips };
+  }
+
+  voiceListening() {
+    const now = Date.now();
+    for (const v of this.listeners.values()) if (v.on && now - v.at <= VOICE_LISTEN_MS) return true;
+    return false;
+  }
+  addClip(dir, target, d) {
+    const audio = String(d.audio || "");
+    const id = "v" + Date.now().toString(36) + (++this.msgSeq).toString(36);
+    const ms = Math.max(0, Math.min(10_000, Number(d.ms) || 0));
+    const pos = target.pos || {};
+    this.clips.set(id, { id, dir, icao: pos.icao_address, callsign: normCallsign(target.plan.callsign ?? pos.callsign), audio, mime: String(d.mime || "audio/mp4").slice(0, 40), ms, at: Date.now(), delivered: false });
+    if (this.clips.size > VOICE_MAX_CLIPS) this.clips.delete(this.clips.keys().next().value);
+    return id;
   }
   async webSocketMessage(ws, raw) {
     this.startPush();
@@ -490,6 +509,39 @@ export class Hub {
       if (!["wilco", "unable"].includes(d.reply)) return json({ error: "reply must be wilco or unable" }, 400);
       msg.status = d.reply; msg.replied = Date.now();
       return json({ success: true });
+    }
+
+    // ---- Push-to-talk voice clips (in memory, 5 min, base64 audio <= ~110 KB, max 10 s).
+    if ((m === "PUT" || m === "POST") && p === "/api/voice/listen") {   // controller page: "I can hear voice" (renew every <= 30 s)
+      const d = await request.json().catch(() => ({}));
+      if (d.on === true) this.listeners.set(key, { on: true, at: Date.now() }); else this.listeners.delete(key);
+      return json({ success: true, listening: this.voiceListening() });
+    }
+    if ((m === "PUT" || m === "POST") && p === "/api/voice/clip") {   // pilot -> controllers
+      const d = await request.json().catch(() => ({}));
+      const c = this.clients.get(key);
+      if (!c || !c.pos) return json({ error: "start flying first" }, 404);
+      if (c.pos.voice === false) return json({ error: "voice_off" }, 409);
+      if (!d.audio || typeof d.audio !== "string" || d.audio.length > VOICE_MAX_B64) return json({ error: "bad audio" }, 400);
+      const now = Date.now();
+      if (c.lastClip && now - c.lastClip < 1500) return json({ error: "too many clips" }, 429);
+      if (!this.voiceListening()) return json({ error: "no_listener" }, 409);
+      c.lastClip = now;
+      return json({ success: true, id: this.addClip("up", c, d) });
+    }
+    if (m === "GET" && p === "/api/voice/clip") {   // controller fetches the audio of a clip announced in traffic.voice_clips
+      const v = this.clips.get(String(url.searchParams.get("id") || ""));
+      if (!v || v.dir !== "up") return json({ error: "clip not found" }, 404);
+      return json({ id: v.id, audio: v.audio, mime: v.mime, ms: v.ms, at: v.at, callsign: v.callsign });
+    }
+    if ((m === "PUT" || m === "POST") && p === "/api/atc/voice") {   // controller -> pilot
+      const d = await request.json().catch(() => ({}));
+      const icao = String(d.icao_address || "").toUpperCase();
+      const target = [...this.clients.values()].find(c => c.pos && c.pos.icao_address === icao);
+      if (!target) return json({ error: "aircraft not found" }, 404);
+      if (target.pos.voice === false) return json({ error: "voice_off", callsign: normCallsign(target.plan.callsign ?? target.pos.callsign) }, 409);
+      if (!d.audio || typeof d.audio !== "string" || d.audio.length > VOICE_MAX_B64) return json({ error: "bad audio" }, 400);
+      return json({ success: true, id: this.addClip("down", target, d) });
     }
 
     // Pilot -> controller free text. Stored like a request (status "request": never delivered back to the pilot).
@@ -653,6 +705,7 @@ export class Hub {
         eta_min: pick(d, "eta_min"),
         landing_fpm: pick(d, "landing_fpm"),
         terminal: pick(d, "terminal") === true,
+        voice: pick(d, "voice") !== false,
         phase: pick(d, "phase"), rwy_on: pick(d, "rwy_on"), on_rwy: pick(d, "on_rwy"), rwy_apt: pick(d, "rwy_apt"), arr_nm: pick(d, "arr_nm"), fq_dep: pick(d, "fq_dep"), fq_arr: pick(d, "fq_arr"),
         airplane_model: pick(d, "airplane_model"),
         airplane_livery: pick(d, "airplane_livery", "livery"),
@@ -681,6 +734,9 @@ export class Hub {
       for (const x of this.msgs.values()) if (x.icao === icao && x.status === "sent") { x.status = "delivered"; messages.push({ id: x.id, text: x.text, kind: x.kind, urgent: !!x.urgent, at: x.at }); }
       messages.push(...this.track(key, c, Date.now()));
       const reply = { success: true, messages, traffic_alerts: this.trafficAlerts(key, c) };
+      const voice = [];
+      for (const v of this.clips.values()) if (v.dir === "down" && v.icao === icao && !v.delivered) { v.delivered = true; voice.push({ id: v.id, audio: v.audio, mime: v.mime, ms: v.ms, at: v.at }); }
+      if (voice.length) reply.voice = voice;
       if (url.searchParams.get("traffic") === "1") {
         // our client: nearest 100 entries (whole planet) + crashes, so it needs no separate /api/traffic poll
         const t = this.trafficList(key, lat, lon, 13000, 100);

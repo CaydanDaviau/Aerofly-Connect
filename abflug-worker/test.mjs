@@ -367,3 +367,36 @@ await call("DELETE", "/api/atc/tower?name=SBBR", null, "ctl");
   const up = JSON.parse((await call("PUT", "/api/position", { latitude: -15.87, longitude: -47.92 }, "ch1")).slice(4));
   T("never delivered back to pilot", !up.messages.some(m => m.kind === "chat"));
 }
+
+// push-to-talk voice
+{
+  const J = async (m, p, b, k) => { const s = await call(m, p, b, k); return { st: +s.slice(0, 3), j: JSON.parse(s.slice(4)) }; };
+  const T = (n, v) => console.log("voice " + n + ":", v ? "PASS" : "FAIL");
+  hub = new Hub(ctx);
+  await call("PUT", "/api/flightplan", { callsign: "VOX1" }, "v1");
+  await call("PUT", "/api/position", { latitude: 1, longitude: 2, voice: true }, "v1");
+  const clip = { audio: "QUJD", mime: "audio/mp4", ms: 3000 };
+  T("no listener -> 409", (await J("PUT", "/api/voice/clip", clip, "v1")).j.error === "no_listener");
+  await J("PUT", "/api/voice/listen", { on: true }, "ctl");
+  const a = await J("PUT", "/api/voice/clip", clip, "v1");
+  T("listener -> accepted", a.st === 200 && a.j.success);
+  const tr = (await J("GET", "/api/traffic?lat=1&lon=2&radius_miles=50", null, "ctl")).j;
+  T("announced without audio", tr.voice_clips.length === 1 && tr.voice_clips[0].callsign === "VOX1" && !("audio" in tr.voice_clips[0]));
+  const g = await J("GET", "/api/voice/clip?id=" + a.j.id, null, "ctl");
+  T("audio fetched", g.j.audio === "QUJD");
+  hub.clients.get("v1").lastClip = 0;
+  await J("PUT", "/api/voice/listen", { on: false }, "ctl");
+  T("listener off -> 409", (await J("PUT", "/api/voice/clip", clip, "v1")).j.error === "no_listener");
+  const icao = hub.clients.get("v1").pos.icao_address;
+  const d = await J("PUT", "/api/atc/voice", { icao_address: icao, ...clip }, "ctl");
+  T("controller -> pilot accepted", d.st === 200);
+  const up = (await J("PUT", "/api/position", { latitude: 1, longitude: 2, voice: true }, "v1")).j;
+  T("delivered once", up.voice && up.voice.length === 1 && up.voice[0].audio === "QUJD");
+  const up2 = (await J("PUT", "/api/position", { latitude: 1, longitude: 2, voice: false }, "v1")).j;
+  T("not delivered twice", !up2.voice);
+  const off = await J("PUT", "/api/atc/voice", { icao_address: icao, ...clip }, "ctl");
+  T("pilot voice off -> 409", off.st === 409 && off.j.error === "voice_off");
+  await J("PUT", "/api/voice/listen", { on: true }, "ctl");
+  hub.clients.get("v1").lastClip = 0;
+  T("pilot with voice off cannot send", (await J("PUT", "/api/voice/clip", clip, "v1")).j.error === "voice_off");
+}
