@@ -118,7 +118,7 @@ public class PilotService extends Service {
         }
 
         inst = this;
-        Phase.reset(); emergency = false; wasAir = false;
+        Phase.reset(); emergency = false; wasAir = false; fqDep = ""; fqArr = ""; contact = "";
         if (Overlay.allowed(this)) { overlay = new Overlay(this); overlay.show(); }
 
         RadioPlayer.start(this, "pilot");   // background radio (only plays if enabled in Settings)
@@ -140,6 +140,8 @@ public class PilotService extends Service {
                 Airports.Apt d = Airports.load(PilotService.this, depIcao);
                 Phase.setAirports(d, null);
                 Phase.setAirports(d, Airports.load(PilotService.this, arrIcao));
+                fqDep = Airports.freqs(PilotService.this, depIcao);
+                fqArr = Airports.freqs(PilotService.this, arrIcao);
             }
         }, "airports").start();
         worker = new Thread(new Runnable() {
@@ -190,6 +192,8 @@ public class PilotService extends Service {
                         // Auto-ATC: where the aircraft is (ground / runway / air), which runway, distance to the arrival airport.
                         pos.put("phase", Phase.phaseName);
                         pos.put("lang", Api.voiceLang(this));
+                        if (!fqDep.isEmpty()) pos.put("fq_dep", fqDep);
+                        if (!fqArr.isEmpty()) pos.put("fq_arr", fqArr);
                         if (!Phase.rwyOn.isEmpty()) { pos.put("rwy_on", Phase.rwyOn); pos.put("rwy_apt", Phase.rwyApt); }
                         if (!Phase.onRwy.isEmpty()) pos.put("on_rwy", Phase.onRwy);
                         if (Phase.arrNm >= 0) pos.put("arr_nm", Phase.arrNm);
@@ -278,6 +282,8 @@ public class PilotService extends Service {
                 if (id.isEmpty() || text.isEmpty()) continue;
                 int nid = nextNid++;
                 boolean urgent = m.optBoolean("urgent", false);
+                String ct = m.optString("contact");
+                if (!ct.isEmpty()) { contact = ct; Overlay.poke(); }
                 // Spoken normal messages get no notification (answer with the PiP buttons).
                 // Urgent ones, or any message when Speak is off, pop up with Wilco / Unable.
                 if (urgent || !Api.speakOn(this)) {
@@ -396,6 +402,9 @@ public class PilotService extends Service {
 
     /** Mayday declared and not yet cancelled (cleared at Start and when the aircraft lands). */
     static volatile boolean emergency;
+    static volatile String fqDep = "", fqArr = "";
+    /** Controller named in the last handoff ("Departure 119.5"); shown in the overlay status line. */
+    static volatile String contact = "";
     private boolean wasAir;
 
     private static void putIf(JSONObject o, String k, String v) throws Exception {

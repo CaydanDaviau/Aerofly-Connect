@@ -39,7 +39,7 @@ public class RequestReceiver extends BroadcastReceiver {
             if (Phase.clearance) { b.addAction(action(ctx, 20, "clearance", Api.t(ctx, "Clearance", "Autorização"))); n++; }
             if (Phase.taxi) { b.addAction(action(ctx, 21, "taxi", Api.t(ctx, "Taxi", "Táxi"))); n++; }
             if (Phase.takeoff) { b.addAction(action(ctx, 22, "takeoff", Api.t(ctx, "Take off", "Decolar"))); n++; }
-            if (Phase.land) { b.addAction(action(ctx, 23, "land", Api.t(ctx, "Land", "Pousar"))); n++; }
+            if (Phase.land) { b.addAction(action(ctx, 23, "land", Api.t(ctx, "Landing", "Pouso"))); n++; }
             if (n > 0) nm.notify(MENU_NID, b.build());
         } else if (ACT_REQ.equals(it.getAction())) {
             nm.cancel(MENU_NID);

@@ -96,6 +96,7 @@ const REQ_TYPES = ["clearance", "taxi", "takeoff", "land", "mayday", "mayday_can
 const MAYDAY_MS = 30 * 60_000, MAYDAY_NEAR_MI = 30;
 const REQ_LOCK_MS = { takeoff: 90_000, land: 120_000 };
 const TOWER_COVER_MI = 8;   // a human tower this close to the aircraft (or named like its airport) takes the request
+const fqPick = (str, types) => { const m = {}; for (const kv of String(str || "").split(";")) { const [k, v] = kv.split("="); if (k && v && /^\d{3}\.\d{1,3}$/.test(v)) m[k] = v; } for (const t of types) if (m[t]) return m[t]; return ""; };
 const PHRASE = {
   en: {
     clearance: (dest, r, sq) => `Cleared ${dest ? "to " + dest + " " : ""}as filed${r ? ", departure runway " + r : ""}, squawk ${sq}`,
@@ -107,8 +108,10 @@ const PHRASE = {
     mayday: "Roger Mayday, say intentions",
     maydayNear: (cs, mi) => `Mayday traffic, ${cs} declared an emergency ${mi} miles from you, keep clear`,
     maydayEnd: "Mayday cancelled",
-    departure: "Contact departure",
-    welcome: a => `Welcome to ${a}, taxi to the gate`,
+    departure: f => `Contact departure${f ? " " + f : ""}`,
+    approach: f => `Contact approach${f ? " " + f : ""}`,
+    tower: f => `Contact tower${f ? " " + f : ""}`,
+    welcome: (a, f) => `Welcome to ${a}${f ? ", contact ground " + f : ""}, taxi to the gate`,
     goAround: r => `Go around, runway ${r} occupied`,
     vTaxi: "Stop, hold position, you are not cleared to taxi",
     vRunway: "Hold position, you are not cleared on the runway, vacate",
@@ -124,8 +127,10 @@ const PHRASE = {
     mayday: "Mayday recebido, informe intenções",
     maydayNear: (cs, mi) => `Tráfego em Mayday, ${cs} declarou emergência a ${mi} milhas, mantenha-se afastado`,
     maydayEnd: "Mayday cancelado",
-    departure: "Contate a saída",
-    welcome: a => `Bem-vindo a ${a}, táxi para o portão`,
+    departure: f => `Contate a saída${f ? " " + f : ""}`,
+    approach: f => `Contate a aproximação${f ? " " + f : ""}`,
+    tower: f => `Contate a torre${f ? " " + f : ""}`,
+    welcome: (a, f) => `Bem-vindo a ${a}${f ? ", contate o solo " + f : ""}, táxi para o portão`,
     goAround: r => `Arremeta, pista ${r} ocupada`,
     vTaxi: "Pare, aguarde na posição, você não está autorizado a taxiar",
     vRunway: "Aguarde na posição, você não está autorizado na pista, desocupe",
@@ -240,7 +245,7 @@ export class Hub {
     const ph = PHRASE[lang];
     if (st.at && (now - st.at > 15_000 || haversineMi(st.lat, st.lon, p.latitude, p.longitude) > 0.5)) st.grace = now + GRACE_MS;   // pause or jump
     st.at = now; st.lat = p.latitude; st.lon = p.longitude; st.ph = cur;
-    const say = (text, urgent) => { const m = this.addMsg(c, text, "auto", { urgent: !!urgent }); m.status = "delivered"; out.push({ id: m.id, text: m.text, kind: "auto", urgent: !!urgent, at: m.at }); };
+    const say = (text, urgent, contact) => { const m = this.addMsg(c, text, "auto", { urgent: !!urgent }); m.status = "delivered"; out.push({ id: m.id, text: m.text, kind: "auto", urgent: !!urgent, at: m.at, ...(contact ? { contact } : {}) }); };
     const apt = up(p.rwy_apt) || (cur === "air" ? arr : dep);
     if (this.humanCovers(c, apt || dep)) { c.viol = null; return out; }   // a human controller owns this airport
 
@@ -255,7 +260,7 @@ export class Hub {
     }
 
     if (cur === "air") {
-      if (prev && prev !== "air" && !st.calls.dep) { st.calls.dep = true; if (st.gr.takeoff > now || prev === "runway") say(ph.departure, false); }
+      if (prev && prev !== "air" && !st.calls.dep) { st.calls.dep = true; if (st.gr.takeoff > now || prev === "runway") { const f = fqPick(p.fq_dep, ["DEP", "APP"]); say(ph.departure(f), false, "Departure" + (f ? " " + f : "")); } }
       st.gr.taxi = 0; st.gr.takeoff = 0;
       // short final to a runway that is occupied: go around
       const lr = cleanRunway(plan.arrival_runway) || st.landRwy;
@@ -263,6 +268,16 @@ export class Hub {
         st.calls.ga = true; st.gr.land = 0; say(ph.goAround(lr), true);
       }
       if (Number(p.arr_nm) > 6) st.calls.ga = false;
+      // arrival handoffs: approach, then tower (once each per approach; reset when far away again)
+      const an = Number(p.arr_nm);
+      if (arr && Number.isFinite(an) && p.arr_nm !== null && p.arr_nm !== undefined) {
+        if (an > 45) { st.calls.app = false; st.calls.twr = false; }
+        else if (an <= 12 && !st.calls.twr) {
+          st.calls.twr = true; st.calls.app = true; const f = fqPick(p.fq_arr, ["TWR"]); say(ph.tower(f), false, "Tower" + (f ? " " + f : ""));
+        } else if (an <= 35 && an > 12 && !st.calls.app) {
+          st.calls.app = true; const f = fqPick(p.fq_arr, ["APP", "DEP"]); say(ph.approach(f), false, "Approach" + (f ? " " + f : ""));
+        }
+      }
     } else {
       if (prev === "air") {   // touchdown
         st.landedAt = now; st.calls = {};
@@ -274,7 +289,7 @@ export class Hub {
         }
         st.gr.land = 0; st.gr.taxi = now + 30 * 60_000;
         c.emerg = null;   // an emergency ends on the ground (its landing is never a violation)
-        if (cleared && !busy && apt && apt === arr) say(ph.welcome(apt), false);
+        if (cleared && !busy && apt && apt === arr) { const f = fqPick(p.fq_arr, ["GND"]); say(ph.welcome(apt, f), false, "Ground" + (f ? " " + f : "")); }
       } else if (now > st.grace) {
         if (cur === "ground" && gs >= 10 && !(st.gr.taxi > now) && !(st.gr.takeoff > now))
           this.violate(key, c, st, "taxi", apt, "", now, () => say(ph.vTaxi, true));
@@ -552,7 +567,7 @@ export class Hub {
         eta_min: pick(d, "eta_min"),
         landing_fpm: pick(d, "landing_fpm"),
         terminal: pick(d, "terminal") === true,
-        phase: pick(d, "phase"), rwy_on: pick(d, "rwy_on"), on_rwy: pick(d, "on_rwy"), rwy_apt: pick(d, "rwy_apt"), arr_nm: pick(d, "arr_nm"),
+        phase: pick(d, "phase"), rwy_on: pick(d, "rwy_on"), on_rwy: pick(d, "on_rwy"), rwy_apt: pick(d, "rwy_apt"), arr_nm: pick(d, "arr_nm"), fq_dep: pick(d, "fq_dep"), fq_arr: pick(d, "fq_arr"),
         airplane_model: pick(d, "airplane_model"),
         airplane_livery: pick(d, "airplane_livery", "livery"),
         timestamp: pick(d, "timestamp") ?? Math.floor(Date.now() / 1000),

@@ -173,4 +173,66 @@ final class Airports {
         out.add(f.toString());
         return out.toArray(new String[0]);
     }
+
+    // ---------- frequencies (airport-frequencies.csv) ----------
+    private static final String[] FQ_URLS = {
+            "https://davidmegginson.github.io/ourairports-data/airport-frequencies.csv",
+            "https://raw.githubusercontent.com/davidmegginson/ourairports-data/main/airport-frequencies.csv"};
+    private static final HashMap<String, String> fqMem = new HashMap<>();
+
+    /** Compact frequency list for an airport, e.g. "TWR=118.3;GND=121.9;APP=119.1". Empty when unknown. Blocking. */
+    static synchronized String freqs(Context c, String icao) {
+        icao = icao == null ? "" : icao.trim().toUpperCase();
+        if (icao.isEmpty()) return "";
+        String m = fqMem.get(icao);
+        if (m != null) return m;
+        try {
+            String s = Api.prefs(c).getString("fq_" + icao, null);
+            if (s != null) {
+                JSONObject o = new JSONObject(s);
+                if (System.currentTimeMillis() - o.optLong("ts") <= CACHE_MS) { fqMem.put(icao, o.optString("v")); return o.optString("v"); }
+            }
+        } catch (Exception ignored) { }
+        if (failed.contains("fq" + icao)) return "";
+        for (String u : FQ_URLS) {
+            HttpURLConnection cn = null;
+            try {
+                cn = (HttpURLConnection) new URL(u).openConnection();
+                cn.setConnectTimeout(15000);
+                cn.setReadTimeout(30000);
+                BufferedReader in = new BufferedReader(new InputStreamReader(cn.getInputStream(), "UTF-8"));
+                String head = in.readLine();
+                if (head == null) continue;
+                String[] hn = split(head);
+                int iAp = idx(hn, "airport_ident"), iTy = idx(hn, "type"), iFr = idx(hn, "frequency_mhz");
+                if (iAp < 0 || iTy < 0 || iFr < 0) continue;
+                String needle = "\"" + icao + "\"";
+                HashMap<String, String> got = new HashMap<>();
+                String ln;
+                while ((ln = in.readLine()) != null) {
+                    if (!ln.contains(needle)) continue;
+                    String[] f = split(ln);
+                    if (f.length <= iFr || !icao.equals(f[iAp])) continue;
+                    String t = f[iTy].toUpperCase();
+                    if ((t.equals("TWR") || t.equals("GND") || t.equals("APP") || t.equals("DEP")) && !got.containsKey(t)) {
+                        double v = num(f[iFr]);
+                        if (!Double.isNaN(v)) got.put(t, String.valueOf(v));
+                    }
+                }
+                in.close();
+                StringBuilder sb = new StringBuilder();
+                for (String t : new String[]{"TWR", "GND", "APP", "DEP"})
+                    if (got.containsKey(t)) sb.append(sb.length() > 0 ? ";" : "").append(t).append('=').append(got.get(t));
+                String v = sb.toString();
+                try { Api.prefs(c).edit().putString("fq_" + icao, new JSONObject().put("ts", System.currentTimeMillis()).put("v", v).toString()).apply(); } catch (Exception ignored) { }
+                fqMem.put(icao, v);
+                return v;
+            } catch (Exception ignored) {
+            } finally {
+                if (cn != null) cn.disconnect();
+            }
+        }
+        failed.add("fq" + icao);
+        return "";
+    }
 }

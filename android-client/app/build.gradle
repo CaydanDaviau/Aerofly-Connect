@@ -19,7 +19,7 @@ android {
         minSdk 26
         targetSdk 34
         versionCode = buildNumber
-        versionName = "1.0.1"
+        versionName = "1.0.2"
         buildConfigField "String", "SERVER_URL", '"https://aeroflytest.caydanphoenix14.workers.dev"'
         buildConfigField "boolean", "RELEASE_KEY", hasReleaseKey.toString()
     }

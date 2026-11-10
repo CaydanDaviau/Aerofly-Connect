@@ -218,7 +218,7 @@ final class Overlay {
             bClr = small(Api.t(ctx, "Clearance", "Autorização"), Ui.SECONDARY);
             bTaxi = small(Api.t(ctx, "Taxi", "Táxi"), Ui.SECONDARY);
             bTakeoff = small(Api.t(ctx, "Take off", "Decolar"), Ui.SECONDARY);
-            bLand = small(Api.t(ctx, "Land", "Pousar"), Ui.SECONDARY);
+            bLand = small(Api.t(ctx, "Landing", "Pouso"), Ui.SECONDARY);
             bClr.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { request("clearance"); } });
             bTaxi.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { request("taxi"); } });
             bTakeoff.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { request("takeoff"); } });
@@ -403,6 +403,7 @@ final class Overlay {
         bEmerg.setText(PilotService.emergency ? Api.t(ctx, "Cancel Mayday", "Cancelar Mayday")
                 : emergArmed ? Api.t(ctx, "Tap again: MAYDAY", "Toque de novo: MAYDAY") : Api.t(ctx, "Emergency", "Emergência"));
         String st = statusMsg;
+        if (st.isEmpty() && !PilotService.contact.isEmpty()) st = Api.t(ctx, "Controller: ", "Controlador: ") + PilotService.contact;
         statusView.setText(st);
         statusView.setVisibility(st.isEmpty() ? View.GONE : View.VISIBLE);
         if (expanded) root.post(new Runnable() { @Override public void run() { clamp(); } });
