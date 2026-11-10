@@ -136,6 +136,7 @@ public class PilotService extends Service {
         final String depIcao = Api.field(this, "dep"), arrIcao = Api.field(this, "arr");
         new Thread(new Runnable() {
             @Override public void run() {
+                Phase.setIcao(depIcao, arrIcao);
                 Airports.Apt d = Airports.load(PilotService.this, depIcao);
                 Phase.setAirports(d, null);
                 Phase.setAirports(d, Airports.load(PilotService.this, arrIcao));
@@ -183,6 +184,12 @@ public class PilotService extends Service {
                         // Shared with other players (shown when they tap this aircraft on the map).
                         if (Phase.etaMin >= 0) pos.put("eta_min", Phase.etaMin);
                         pos.put("terminal", Phase.terminal);
+                        // Auto-ATC: where the aircraft is (ground / runway / air), which runway, distance to the arrival airport.
+                        pos.put("phase", Phase.phaseName);
+                        pos.put("lang", Api.voiceLang(this));
+                        if (!Phase.rwyOn.isEmpty()) { pos.put("rwy_on", Phase.rwyOn); pos.put("rwy_apt", Phase.rwyApt); }
+                        if (!Phase.onRwy.isEmpty()) pos.put("on_rwy", Phase.onRwy);
+                        if (Phase.arrNm >= 0) pos.put("arr_nm", Phase.arrNm);
                         if (Phase.landingShown(System.currentTimeMillis())) pos.put("landing_fpm", Phase.landFpm);
                         // Callsign lives in the flight plan; the app sends it once, so do we.
                         if (!planSent) {

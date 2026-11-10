@@ -118,7 +118,7 @@ ok("takeoff pt", t2.messages[0].text === "Pista 29L, autorizado a decolar");
 ok("rate limit 429", (await rq("rq1", { type: "taxi" }))[0] === "429");
 await new Promise(r => setTimeout(r, 2100));
 let [, t3] = await rq("rq2", { type: "takeoff" });
-ok("runway busy", t3.messages[0].text === "Hold position, runway 29L occupied");
+ok("runway busy", t3.messages[0].text === "Hold position, runway 29L occupied, number 2");
 ok("auto message not redelivered", JSON.parse((await call("PUT", "/api/position", { latitude: -15.87, longitude: -47.92 }, "rq1")).slice(4)).messages.length === 0);
 // runway from request body, 9R normalised to 09R, plan has arrival_runway so plan wins
 await new Promise(r => setTimeout(r, 2100));
@@ -227,4 +227,74 @@ await call("DELETE", "/api/atc/tower?name=SBBR", null, "ctl");
   const a = JSON.parse((await call("PUT", "/api/position?traffic=1", { latitude: 10.1, longitude: 10.1, altitude_ft: 3000 }, "tp1")).slice(4));
   const b = JSON.parse((await call("PUT", "/api/position", { latitude: 10.1, longitude: 10.1, altitude_ft: 3000 }, "tp1")).slice(4));
   console.log("position reply traffic:", Array.isArray(a.aircraft) && a.aircraft.length >= 2 && a.aircraft.some(x => x.self) && Array.isArray(a.crashes) && b.aircraft === undefined ? "PASS" : "FAIL");
+}
+
+// auto-ATC stage 1: phases, queue, go-around, unauthorised actions
+{
+  const P = (k, o) => call("PUT", "/api/position", { latitude: -15.87, longitude: -47.92, altitude_ft: 3500, ground_speed: 0, ...o }, k).then(r => JSON.parse(r.slice(4)));
+  const R = async (k, type) => { hub.clients.get(k).lastReq = 0; return JSON.parse((await call("PUT", "/api/atc/request", { type }, k)).slice(4)); };
+  const free = k => { hub.clients.get(k).st.grace = 0; };
+  const T = (name, v) => console.log(name + ":", v ? "PASS" : "FAIL");
+  for (const n of ["SBBR", "SBGL"]) await call("DELETE", "/api/atc/tower?name=" + n, null, "atc");
+  for (const [k, cs] of [["s1", "AAA1"], ["s2", "BBB2"]]) {
+    await call("PUT", "/api/flightplan", { callsign: cs, departure_airport: "SBBR", arrival_airport: "SBGL", departure_runway: "29L", arrival_runway: "15" }, k);
+    await P(k, { phase: "ground" }); free(k);
+  }
+  // taxi without clearance -> stop call + NO CLNC; with clearance -> silent
+  let r = await P("s1", { phase: "ground", ground_speed: 15 });
+  T("taxi without clearance", r.messages.some(m => /not cleared to taxi/.test(m.text) && m.urgent));
+  const tr = JSON.parse((await call("GET", "/api/traffic?lat=-15.87&lon=-47.92&radius_miles=50", null, "s2")).slice(4));
+  T("NO CLNC flag in traffic", tr.aircraft.find(a => a.callsign === "AAA1").no_clnc === true && tr.aircraft.find(a => a.callsign === "BBB2").no_clnc === false);
+  r = await P("s1", { phase: "ground", ground_speed: 15 });
+  T("stop call not repeated within 20 s", r.messages.length === 0);
+  await R("s2", "taxi");
+  r = await P("s2", { phase: "ground", ground_speed: 15 });
+  T("taxi after clearance is silent", r.messages.length === 0);
+  // runway lined up without takeoff clearance -> violation + runway counts as occupied for s2
+  r = await P("s1", { phase: "runway", rwy_on: "11R/29L", on_rwy: "29L", rwy_apt: "SBBR", ground_speed: 0 });
+  T("lined up without clearance", r.messages.some(m => /not cleared on the runway/.test(m.text)));
+  let q = await R("s2", "takeoff");
+  T("violator blocks runway, s2 number 2", /occupied, number 2/.test(q.messages[0].text));
+  // s1 clears the runway -> lock goes; s2 (first in queue) is cleared
+  await P("s1", { phase: "ground", ground_speed: 5 });
+  hub.rwy.clear();
+  q = await R("s2", "takeoff");
+  T("queue head cleared when free", /cleared for takeoff/.test(q.messages[0].text));
+  // s1 asks for takeoff behind s2: number 2; s2 departs -> contact departure once, lock released
+  q = await R("s1", "takeoff");
+  T("second aircraft waits", /number 2/.test(q.messages[0].text));
+  await P("s2", { phase: "runway", rwy_on: "11R/29L", on_rwy: "29L", rwy_apt: "SBBR", ground_speed: 80 });
+  r = await P("s2", { phase: "air", altitude_ft: 4500, ground_speed: 120 });
+  T("contact departure after takeoff", r.messages.length === 1 && r.messages[0].text === "Contact departure");
+  r = await P("s2", { phase: "air", altitude_ft: 5000, ground_speed: 140 });
+  T("departure call only once", r.messages.length === 0);
+  q = await R("s1", "takeoff");
+  T("runway free after departure", /cleared for takeoff/.test(q.messages[0].text));
+  // landing: s2 cleared to land on 15 at SBGL, s1 sits on that runway -> go around; s1 later flagged-free
+  await P("s2", { phase: "air", altitude_ft: 1500, ground_speed: 140, arr_nm: 12, latitude: -22.8, longitude: -43.2 });
+  q = await R("s2", "land");
+  T("landing clearance", /cleared to land/.test(q.messages[0].text));
+  hub.clients.get("s1").pos = { ...hub.clients.get("s1").pos, latitude: -22.81, longitude: -43.25, phase: "runway", rwy_on: "15/33", on_rwy: "15", rwy_apt: "SBGL" };
+  hub.clients.get("s1").seen = Date.now();
+  r = await P("s2", { phase: "air", altitude_ft: 600, ground_speed: 130, arr_nm: 2, latitude: -22.8, longitude: -43.2 });
+  T("go around when runway occupied", r.messages.some(m => /Go around, runway 15 occupied/.test(m.text) && m.urgent));
+  // touchdown without clearance flagged, with clearance welcomed
+  free("s2");
+  r = await P("s2", { phase: "runway", rwy_on: "15/33", on_rwy: "15", rwy_apt: "SBGL", ground_speed: 100, latitude: -22.8, longitude: -43.2 });
+  T("touchdown without clearance (cleared was withdrawn)", r.messages.some(m => /Landing without clearance on runway 15/.test(m.text)));
+  await P("s1", { phase: "ground", ground_speed: 0, latitude: -22.9, longitude: -43.3 });
+  await call("PUT", "/api/flightplan", { callsign: "CCC3", arrival_airport: "SBGL", arrival_runway: "15" }, "s3");
+  await P("s3", { phase: "air", altitude_ft: 1500, ground_speed: 140, arr_nm: 10, latitude: -22.7, longitude: -43.1 }); free("s3");
+  hub.rwy.clear(); hub.rwyQ.clear();
+  await P("s2", { phase: "ground", ground_speed: 5, latitude: -22.9, longitude: -43.3 });
+  await R("s3", "land");
+  r = await P("s3", { phase: "runway", rwy_on: "15/33", on_rwy: "15", rwy_apt: "SBGL", ground_speed: 90, latitude: -22.7, longitude: -43.1 });
+  T("cleared landing welcomed, no violation", r.messages.length === 1 && r.messages[0].text === "Welcome to SBGL, taxi to the gate");
+  // human tower: auto-ATC stays silent
+  await call("PUT", "/api/atc/tower", { name: "SBBR", latitude: -15.87, longitude: -47.92 }, "atc");
+  await call("PUT", "/api/flightplan", { callsign: "DDD4", departure_airport: "SBBR" }, "s4");
+  await P("s4", { phase: "ground" }); free("s4");
+  r = await P("s4", { phase: "ground", ground_speed: 20 });
+  T("human tower: no auto violation", r.messages.length === 0 && !hub.clients.get("s4").viol);
+  T("violations stored", hub.violations.length >= 3 && hub.violations[0].callsign === "AAA1");
 }

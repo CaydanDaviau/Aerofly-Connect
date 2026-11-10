@@ -18,6 +18,13 @@ final class Phase {
     /** Last touchdown rate (ft/min, negative = descending), shown until landUntil (ms). */
     static volatile int landFpm;
     static volatile long landUntil;
+    /** Shared with the server in every upload (auto-ATC): "ground" | "runway" (on a runway surface) | "air". */
+    static volatile String phaseName = "ground";
+    /** Runway pair under the aircraft ("11R/29L"), the end it is lined up on ("29L"), and that airport's ICAO; "" when none. */
+    static volatile String rwyOn = "", onRwy = "", rwyApt = "";
+    /** Straight-line distance to the arrival airport in nm, -1 = unknown. */
+    static volatile double arrNm = -1;
+    private static String depIcao = "", arrIcao = "";
     private static double candFpm;
     private static long candAt;
 
@@ -32,6 +39,11 @@ final class Phase {
         dep = null; arr = null; init = false; airborne = false; cleared = false; slowSince = 0;
         clearance = false; taxi = false; takeoff = false; land = false; terminal = false;
         etaMin = -1; landFpm = 0; landUntil = 0; candAt = 0;
+        phaseName = "ground"; rwyOn = ""; onRwy = ""; rwyApt = ""; arrNm = -1;
+    }
+
+    static synchronized void setIcao(String d, String a) {
+        depIcao = d == null ? "" : d.trim().toUpperCase(); arrIcao = a == null ? "" : a.trim().toUpperCase();
     }
 
     static boolean landingShown(long now) { return now < landUntil; }
@@ -77,6 +89,32 @@ final class Phase {
                 landFpm = (int) Math.round(candFpm); landUntil = now + 120000; candAt = 0;
             }
         }
+
+        // Touchdown at the arrival airport: leave "airborne" at once (the slow-speed rule would take 20 s after the rollout).
+        if (airborne && arr != null && !Double.isNaN(arr.elev) && distNm(la, lo, arr.lat, arr.lon) <= 5 && altFt - arr.elev <= 40 && vs > -2500) {
+            airborne = false; groundAlt = altFt; slowSince = 0;
+        }
+        arrNm = arr != null ? Math.round(distNm(la, lo, arr.lat, arr.lon) * 10) / 10.0 : -1;
+        String pair = "", lined2 = "", apt = "";
+        if (!airborne) {
+            Airports.Apt[] aps = { dep, arr }; String[] ic = { depIcao, arrIcao };
+            scan:
+            for (int i = 0; i < 2; i++) {
+                if (aps[i] == null) continue;
+                for (Airports.Rwy r : aps[i].rwys) {
+                    if (distToSegM(la, lo, r.aLat, r.aLon, r.bLat, r.bLon) > 60) continue;
+                    pair = r.a + "/" + r.b; apt = ic[i];
+                    for (int e = 0; e < 2; e++) {
+                        double tl = e == 0 ? r.aLat : r.bLat, tn = e == 0 ? r.aLon : r.bLon;
+                        double ol = e == 0 ? r.bLat : r.aLat, on = e == 0 ? r.bLon : r.aLon;
+                        if (angDiff(bearing(tl, tn, ol, on), hdgTrue) <= 25) { lined2 = e == 0 ? r.a : r.b; break; }
+                    }
+                    break scan;
+                }
+            }
+        }
+        rwyOn = pair; onRwy = lined2; rwyApt = apt;
+        phaseName = airborne ? "air" : (pair.isEmpty() ? "ground" : "runway");
 
         terminal = (dep != null && distNm(la, lo, dep.lat, dep.lon) <= 6) || (arr != null && distNm(la, lo, arr.lat, arr.lon) <= 8);
         boolean changed = cl != clearance || t != taxi || o != takeoff || l != land;

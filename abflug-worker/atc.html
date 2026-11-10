@@ -27,6 +27,8 @@ input::placeholder{color:var(--dim)}
 .strip.sel{border-color:var(--cy);border-left-color:var(--cy)}
 .strip.twr{border-left-color:#ff7ae9}
 .strip.nocode{border-left-color:var(--amber)}
+.strip.noclnc{border-color:var(--amber);border-left-color:var(--amber)}
+.noc{background:var(--amber);color:#000;font-weight:700;border-radius:3px;padding:0 5px;margin-left:6px}
 .strip .h{display:flex;justify-content:space-between;gap:8px}
 .strip .cs{font-weight:700;font-size:14px}
 .strip .m{color:var(--dim)}
@@ -331,8 +333,8 @@ function renderStrips(force){
       '<button data-act="set">'+L('Assign','Atribuir')+'</button><button data-act="auto">Auto</button><button data-act="clear">'+L('Clear','Limpar')+'</button></div>'+
       '<div class="ctl"><input id="msgin" maxlength="300" placeholder="'+L('Message to pilot','Mensagem ao piloto')+'"><label class="urg"><input type="checkbox" id="urg"'+(urgent?' checked':'')+'> '+L('Urgent','Urgente')+'</label><button data-act="msg">'+L('Send','Enviar')+'</button></div>':'';
     var ml=msgs.filter(function(m){return m.icao_address===id}).slice(-3).map(function(m){return'<div class="mlog">&rsaquo; '+esc(m.text)+' &mdash; <b class="'+esc(m.status)+'">'+esc(m.status.toUpperCase())+'</b></div>'}).join('');
-    return'<div class="strip'+(isSel?' sel':'')+(tw?' twr':(asg?'':' nocode'))+'" data-id="'+esc(id)+'">'+
-      '<div class="h"><span class="cs">'+esc(a.callsign||id)+(tw?' &#9650;':'')+'</span><span class="m">'+Math.round(r.dist)+' nm / '+p3(r.brg)+'&deg;</span></div>'+
+    return'<div class="strip'+(isSel?' sel':'')+(tw?' twr':(asg?'':' nocode'))+(a.no_clnc?' noclnc':'')+'" data-id="'+esc(id)+'">'+
+      '<div class="h"><span class="cs">'+esc(a.callsign||id)+(tw?' &#9650;':'')+(a.no_clnc?'<span class="noc">NO CLNC</span>':'')+'</span><span class="m">'+Math.round(r.dist)+' nm / '+p3(r.brg)+'&deg;</span></div>'+
       (tw?'':'<div>'+altStr(a.altitude_ft)+' &middot; '+Math.round(Number(a.ground_speed)||0)+' kt &middot; HDG '+p3(Number(a.heading_mag!=null?a.heading_mag:a.heading_true)||0)+'&deg;'+(a.heading_mag==null?'T':'')+' &middot; '+(Number(a.vertical_speed_ft_min)>100?'&uarr;':Number(a.vertical_speed_ft_min)<-100?'&darr;':'&rarr;')+'</div>')+
       (tw?'':'<div>'+st+'</div>')+
       (!tw&&(a.airplane_model||a.departure_runway||a.arrival_runway)?'<div class="m">'+(a.airplane_model?esc(a.airplane_model):'')+((a.departure_runway||a.arrival_runway)?(a.airplane_model?' &middot; ':'')+'RWY '+esc(a.departure_runway||'--')+' &rarr; '+esc(a.arrival_runway||'--'):'')+'</div>':'')+

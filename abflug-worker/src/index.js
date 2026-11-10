@@ -101,16 +101,28 @@ const PHRASE = {
     taxi: r => r ? `Taxi to runway ${r}, hold short` : "Taxi to the runway, hold short",
     takeoff: r => r ? `Runway ${r}, cleared for takeoff` : "Cleared for takeoff",
     land: r => r ? `Runway ${r}, cleared to land` : "Cleared to land",
-    busyTakeoff: r => `Hold position, runway ${r} occupied`,
-    busyLand: r => `Runway ${r} occupied, extend and request again`,
+    busyTakeoff: (r, n) => `Hold position, runway ${r} occupied, number ${n}`,
+    busyLand: (r, n) => `Runway ${r} occupied, number ${n}, extend and request again`,
+    departure: "Contact departure",
+    welcome: a => `Welcome to ${a}, taxi to the gate`,
+    goAround: r => `Go around, runway ${r} occupied`,
+    vTaxi: "Stop, hold position, you are not cleared to taxi",
+    vRunway: "Hold position, you are not cleared on the runway, vacate",
+    vLand: r => `Landing without clearance${r ? " on runway " + r : ""}, vacate the runway`,
   },
   pt: {
     clearance: (dest, r, sq) => `Autorizado${dest ? " para " + dest : ""} conforme o plano${r ? ", pista de saída " + r : ""}, código ${sq}`,
     taxi: r => r ? `Táxi para a pista ${r}, aguarde antes da pista` : "Táxi para a pista, aguarde antes da pista",
     takeoff: r => r ? `Pista ${r}, autorizado a decolar` : "Autorizado a decolar",
     land: r => r ? `Pista ${r}, autorizado a pousar` : "Autorizado a pousar",
-    busyTakeoff: r => `Aguarde na posição, pista ${r} ocupada`,
-    busyLand: r => `Pista ${r} ocupada, prolongue e solicite novamente`,
+    busyTakeoff: (r, n) => `Aguarde na posição, pista ${r} ocupada, número ${n}`,
+    busyLand: (r, n) => `Pista ${r} ocupada, número ${n}, prolongue e solicite novamente`,
+    departure: "Contate a saída",
+    welcome: a => `Bem-vindo a ${a}, táxi para o portão`,
+    goAround: r => `Arremeta, pista ${r} ocupada`,
+    vTaxi: "Pare, aguarde na posição, você não está autorizado a taxiar",
+    vRunway: "Aguarde na posição, você não está autorizado na pista, desocupe",
+    vLand: r => `Pouso sem autorização${r ? " na pista " + r : ""}, desocupe a pista`,
   },
 };
 const REQ_LABEL = { clearance: "clearance", taxi: "taxi", takeoff: "takeoff", land: "landing" };
@@ -120,6 +132,12 @@ const cleanRunway = v => {
   const n = Number(m[1]);
   return n >= 1 && n <= 36 ? String(n).padStart(2, "0") + m[2] : "";
 };
+
+// opposite end of a runway: 29L <-> 11R
+const oppRunway = r => { const m = /^(\d\d)([LRC]?)$/.exec(r); if (!m) return r; const n = ((Number(m[1]) + 17) % 36) + 1; return String(n).padStart(2, "0") + ({ L: "R", R: "L", C: "C", "": "" })[m[2]]; };
+const rwyKey = (apt, r) => (apt || "?") + "/" + [r, oppRunway(r)].sort()[0];
+const GRACE_MS = 20_000, VIOL_SHOW_MS = 30_000, VIOL_RENEW_MS = 20_000, MAX_VIOL = 100;
+const up = v => String(v || "").trim().toUpperCase();
 
 export default {
   async fetch(request, env) {
@@ -146,13 +164,14 @@ export class Hub {
     ctx.blockConcurrencyWhile(async () => {
       for (const [k, v] of await ctx.storage.list({ prefix: "tower:" })) this.towers.set(k.slice(6), v);
       for (const [k, v] of await ctx.storage.list({ prefix: "crash:" })) this.crashes.set(k.slice(6), v);
-    }); this.ctx = ctx; this.clients = new Map(); this.msgs = new Map(); this.rwy = new Map(); this.msgSeq = 0; this.since = Date.now(); this.counts = {}; }
+    }); this.ctx = ctx; this.clients = new Map(); this.msgs = new Map(); this.rwy = new Map(); this.rwyQ = new Map(); this.violations = []; this.msgSeq = 0; this.since = Date.now(); this.counts = {}; }
 
   purge() {
     const now = Date.now();
     for (const [k, c] of this.clients) if (now - c.seen > TTL_MS) this.clients.delete(k);
     for (const [k, m] of this.msgs) if (now - m.at > 30 * 60 * 1000) this.msgs.delete(k);
     for (const [k, l] of this.rwy) if (now > l.until) this.rwy.delete(k);
+    for (const [k, q] of this.rwyQ) { const f = q.filter(x => this.clients.has(x)); if (f.length) this.rwyQ.set(k, f); else this.rwyQ.delete(k); }
     for (const [k, t] of this.ta) if (now - t > 120_000) this.ta.delete(k);
     for (const [k, cr] of this.crashes) if (now - cr.at > CRASH_SHOW_MS) { this.crashes.delete(k); this.ctx.storage.delete("crash:" + k); }
     for (const [k, t] of this.towers) if (now - t.at > TOWER_TTL_MS) { this.towers.delete(k); this.ctx.storage.delete("tower:" + k); }
@@ -188,6 +207,92 @@ export class Hub {
     return json({ error: "crashed", crashed: true, until: cr.until, remaining_s: Math.ceil((cr.until - now) / 1000), latitude: cr.latitude, longitude: cr.longitude, landing_fpm: cr.landing_fpm }, 423);
   }
 
+  humanCovers(c, apt) {
+    return [...this.towers.values()].some(t => (apt && t.name === apt) || haversineMi(t.latitude, t.longitude, c.pos.latitude, c.pos.longitude) <= TOWER_COVER_MI);
+  }
+
+  // Another recent client standing on that runway (either end ident) at that airport.
+  occupant(key, apt, rwy, now) {
+    for (const [k, o] of this.clients) {
+      const q = o.pos;
+      if (k === key || !q || now - o.seen > 15_000 || q.phase !== "runway" || up(q.rwy_apt) !== apt) continue;
+      if (String(q.rwy_on || "").split("/").map(cleanRunway).includes(rwy)) return o;
+    }
+    return null;
+  }
+
+  // Auto-ATC follow-up for one position upload: proactive calls, runway locks, go-around, unauthorised actions.
+  // Returns the messages to hand to the pilot in this reply. Needs `phase` from our client; stock Abflug is skipped.
+  track(key, c, now) {
+    const p = c.pos, cur = p.phase, out = [];
+    if (cur !== "ground" && cur !== "runway" && cur !== "air") return out;
+    const st = c.st || (c.st = { gr: {}, ph: null, at: 0, lat: 0, lon: 0, grace: now + GRACE_MS, calls: {}, viol: {}, landedAt: 0, landRwy: "" });
+    const prev = st.ph, plan = c.plan || {};
+    const dep = up(plan.departure_airport), arr = up(plan.arrival_airport);
+    const lang = c.lang === "pt" ? "pt" : "en";
+    const ph = PHRASE[lang];
+    if (st.at && (now - st.at > 15_000 || haversineMi(st.lat, st.lon, p.latitude, p.longitude) > 0.5)) st.grace = now + GRACE_MS;   // pause or jump
+    st.at = now; st.lat = p.latitude; st.lon = p.longitude; st.ph = cur;
+    const say = (text, urgent) => { const m = this.addMsg(c, text, "auto", { urgent: !!urgent }); m.status = "delivered"; out.push({ id: m.id, text: m.text, kind: "auto", urgent: !!urgent, at: m.at }); };
+    const apt = up(p.rwy_apt) || (cur === "air" ? arr : dep);
+    if (this.humanCovers(c, apt || dep)) { c.viol = null; return out; }   // a human controller owns this airport
+
+    const gs = Number(p.ground_speed) || 0;
+    const onRwys = String(p.rwy_on || "").split("/").map(cleanRunway).filter(Boolean);
+
+    // runway locks held by this aircraft: kept while it is on the runway, dropped when it leaves or departs
+    for (const [k, l] of this.rwy) {
+      if (l.key !== key) continue;
+      if (cur === "runway") l.until = Math.max(l.until, now + 30_000);
+      else if ((cur === "air" && l.type === "takeoff") || (cur === "ground" && prev === "runway")) this.rwy.delete(k);
+    }
+
+    if (cur === "air") {
+      if (prev && prev !== "air" && !st.calls.dep) { st.calls.dep = true; if (st.gr.takeoff > now || prev === "runway") say(ph.departure, false); }
+      st.gr.taxi = 0; st.gr.takeoff = 0;
+      // short final to a runway that is occupied: go around
+      const lr = cleanRunway(plan.arrival_runway) || st.landRwy;
+      if (st.gr.land > now && !st.calls.ga && lr && arr && Number(p.arr_nm) <= 3 && this.occupant(key, arr, lr, now)) {
+        st.calls.ga = true; st.gr.land = 0; say(ph.goAround(lr), true);
+      }
+      if (Number(p.arr_nm) > 6) st.calls.ga = false;
+    } else {
+      if (prev === "air") {   // touchdown
+        st.landedAt = now; st.calls = {};
+        const lr = onRwys[0] || cleanRunway(plan.arrival_runway) || st.landRwy;
+        const cleared = st.gr.land > now;
+        const busy = lr && apt && this.occupant(key, apt, lr, now);
+        if (!st.grace || now > st.grace) {
+          if (!cleared || busy) this.violate(key, c, st, "landing", apt, lr, now, () => say(ph.vLand(lr), true));
+        }
+        st.gr.land = 0; st.gr.taxi = now + 30 * 60_000;
+        if (cleared && !busy && apt && apt === arr) say(ph.welcome(apt), false);
+      } else if (now > st.grace) {
+        if (cur === "ground" && gs >= 10 && !(st.gr.taxi > now) && !(st.gr.takeoff > now))
+          this.violate(key, c, st, "taxi", apt, "", now, () => say(ph.vTaxi, true));
+        if (cur === "runway" && !(st.gr.takeoff > now) && now - st.landedAt > 120_000 && (p.on_rwy || gs >= 15))
+          this.violate(key, c, st, "runway", apt, onRwys[0] || "", now, () => say(ph.vRunway, true));
+      }
+    }
+    if (c.viol && now - c.viol.at > VIOL_SHOW_MS) c.viol = null;
+    return out;
+  }
+
+  violate(key, c, st, type, apt, rwy, now, notify) {
+    const v = st.viol[type];
+    if (!v || now - v.said > VIOL_RENEW_MS) { st.viol[type] = { said: now }; notify(); }
+    if (!v || now - v.logged > 60_000) {
+      st.viol[type] = { said: st.viol[type].said, logged: now };
+      this.violations.push({ at: now, callsign: normCallsign(c.plan.callsign ?? c.pos.callsign), icao: c.pos.icao_address, type, airport: apt, runway: rwy });
+      if (this.violations.length > MAX_VIOL) this.violations.shift();
+    }
+    c.viol = { type, at: now };
+    if (rwy && (type === "runway" || type === "landing")) {   // the runway counts as occupied for everybody else
+      const k = rwyKey(apt, rwy), l = this.rwy.get(k);
+      if (!l || l.key === key) this.rwy.set(k, { key, type: "viol", until: now + 30_000 });
+    }
+  }
+
   trafficList(key, lat, lon, rad, max) {
     let out = [];
     for (const [ck, c] of this.clients) {
@@ -196,7 +301,7 @@ export class Hub {
       const d = haversineMi(lat, lon, pos.latitude, pos.longitude);
       if (d <= rad) {
         const callsign = normCallsign(c.plan.callsign ?? pos.callsign);
-        out.push({ ...pos, ...c.plan, callsign, ...towerFields(callsign), assigned_squawk: c.assigned ? c.assigned.squawk : null, ...(ck === key ? { self: true } : {}), distance_miles: Math.round(d * 10) / 10 });
+        out.push({ ...pos, ...c.plan, callsign, ...towerFields(callsign), assigned_squawk: c.assigned ? c.assigned.squawk : null, no_clnc: !!(c.viol && Date.now() - c.viol.at < VIOL_SHOW_MS), ...(ck === key ? { self: true } : {}), distance_miles: Math.round(d * 10) / 10 });
       }
     }
     for (const t of this.towers.values()) {
@@ -304,15 +409,16 @@ export class Hub {
       const apt = String(plan[type === "land" ? "arrival_airport" : "departure_airport"] || "").trim().toUpperCase();
       const dest = String(plan.arrival_airport || "").trim().toUpperCase();
       // A human controller wins: a tower named like the airport, or one close to the aircraft.
-      const human = [...this.towers.values()].some(t =>
-        (apt && t.name === apt) || haversineMi(t.latitude, t.longitude, c.pos.latitude, c.pos.longitude) <= TOWER_COVER_MI);
-      if (human) {
+      if (d.lang === "pt" || d.lang === "en") c.lang = d.lang;
+      if (this.humanCovers(c, apt)) {
         const msg = this.addMsg(c, "Requests " + REQ_LABEL[type] + (rwy ? ", runway " + rwy : ""), "request", {});
         msg.status = "request";
         return json({ success: true, mode: "controller", id: msg.id });
       }
-      let text, lockKey = rwy ? (apt || "?") + "/" + rwy : null;
+      let text;
+      const lockKey = rwy ? rwyKey(apt, rwy) : null;
       const holder = lockKey && this.rwy.get(lockKey);
+      const st = c.st || (c.st = { gr: {}, ph: null, at: 0, lat: 0, lon: 0, grace: now + GRACE_MS, calls: {}, viol: {}, landedAt: 0, landRwy: "" });
       if (type === "clearance") {
         // The clearance carries the squawk: keep the one already assigned, else pick a free one.
         let sq = c.assigned ? c.assigned.squawk : this.pickSquawk();
@@ -322,11 +428,26 @@ export class Hub {
           await this.ctx.storage.put("sq:" + c.pos.icao_address, c.assigned);
         }
         text = ph.clearance(dest, rwy, sq);
-      } else if (type !== "taxi" && holder && holder.key !== key && this.clients.has(holder.key)) {
-        text = (type === "land" ? ph.busyLand : ph.busyTakeoff)(rwy);
-      } else {
+      } else if (type === "taxi") {
+        text = ph.taxi(rwy); st.gr.taxi = now + 30 * 60_000;
+      } else if (!lockKey) {
         text = ph[type](rwy);
-        if (type !== "taxi" && lockKey) this.rwy.set(lockKey, { key, until: now + REQ_LOCK_MS[type] });
+        if (type === "takeoff") st.gr.takeoff = now + 10 * 60_000; else { st.gr.land = now + 15 * 60_000; st.landRwy = ""; }
+      } else {
+        // sequencing: the holder goes first, then the queue in order of request
+        const q = (this.rwyQ.get(lockKey) || []).filter(k => this.clients.has(k));
+        const busy = holder && holder.key !== key && this.clients.has(holder.key);
+        if (busy || (q.length && q[0] !== key)) {
+          if (!q.includes(key)) q.push(key);
+          this.rwyQ.set(lockKey, q);
+          const n = q.indexOf(key) + 1 + (busy ? 1 : 0);
+          text = (type === "land" ? ph.busyLand : ph.busyTakeoff)(rwy, n);
+        } else {
+          this.rwyQ.set(lockKey, q.filter(k => k !== key));
+          text = ph[type](rwy);
+          this.rwy.set(lockKey, { key, type, until: now + REQ_LOCK_MS[type] });
+          if (type === "takeoff") st.gr.takeoff = now + 10 * 60_000; else { st.gr.land = now + 15 * 60_000; st.landRwy = rwy; }
+        }
       }
       const msg = this.addMsg(c, text, "auto", {});
       msg.status = "delivered";   // returned right here, not with the next position upload
@@ -391,6 +512,7 @@ export class Hub {
         eta_min: pick(d, "eta_min"),
         landing_fpm: pick(d, "landing_fpm"),
         terminal: pick(d, "terminal") === true,
+        phase: pick(d, "phase"), rwy_on: pick(d, "rwy_on"), on_rwy: pick(d, "on_rwy"), rwy_apt: pick(d, "rwy_apt"), arr_nm: pick(d, "arr_nm"),
         airplane_model: pick(d, "airplane_model"),
         airplane_livery: pick(d, "airplane_livery", "livery"),
         timestamp: pick(d, "timestamp") ?? Math.floor(Date.now() / 1000),
@@ -402,6 +524,7 @@ export class Hub {
               assigned: rec && Date.now() - rec.at < ASSIGN_TTL_MS ? rec : null };
       }
       c.pos = pos; c.seen = Date.now();
+      const lg = pick(d, "lang"); if (lg === "pt" || lg === "en") c.lang = lg;
       const lf = Number(pos.landing_fpm);
       if (pos.landing_fpm !== undefined && Number.isFinite(lf) && lf <= HARD_LANDING_FPM) {
         // hard landing = crash: the plane vanishes from traffic, an X is marked, the pilot waits CRASH_TIMEOUT_MS
@@ -415,6 +538,7 @@ export class Hub {
       this.clients.set(key, c);
       const messages = [];
       for (const x of this.msgs.values()) if (x.icao === icao && x.status === "sent") { x.status = "delivered"; messages.push({ id: x.id, text: x.text, kind: x.kind, urgent: !!x.urgent, at: x.at }); }
+      messages.push(...this.track(key, c, Date.now()));
       const reply = { success: true, messages, traffic_alerts: this.trafficAlerts(key, c) };
       if (url.searchParams.get("traffic") === "1") {
         // our client: nearest 100 entries (whole planet) + crashes, so it needs no separate /api/traffic poll
