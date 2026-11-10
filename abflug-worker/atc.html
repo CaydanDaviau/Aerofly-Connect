@@ -55,6 +55,9 @@ input::placeholder{color:var(--dim)}
 #radar{z-index:1}
 #attr{position:absolute;right:4px;bottom:2px;z-index:2;font-size:8px;color:#8c8c8c;opacity:.45;pointer-events:none}
 .maplibregl-canvas{outline:none}
+.ptt{touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;background:#1b5e3a;color:#fff;border:1px solid #3dff7a;border-radius:6px;padding:8px 12px;font-weight:700}
+.ptt.rec{background:#c0392b;border-color:#ff8a80}.ptt.off{opacity:.4}
+#voiceBtn.on{border-color:#3dff7a;color:#3dff7a}
 </style>
 </head>
 <body>
@@ -65,6 +68,7 @@ input::placeholder{color:var(--dim)}
     <button id="ctrSel" title="Center scope on the selected aircraft">Center sel</button>
     <input id="ll" size="16" placeholder="lat, lon or ICAO" title="Center on coordinates or an airport code">
     <button id="llGo">Go</button>
+    <button id="voiceBtn" title="Voice on/off">Voice: on</button>
     <span id="rwStatus" class="m"></span>
     <span id="status">offline</span>
   </div>
@@ -325,7 +329,7 @@ function showLogin(msg){$('keyErr').textContent=msg||'';$('keyIn').value='';$('l
 
 /* ---------- strips ---------- */
 function renderStrips(force){
-  var f=document.activeElement;if(!force&&f&&(f.id==='sqin'||f.id==='msgin'||f.id==='urg'))return;
+  var f=document.activeElement;if(!force&&(pttBusy||f&&(f.id==='sqin'||f.id==='msgin'||f.id==='urg')))return;
   var list=ac.map(function(a){return{a:a,r:rel(a)}}).sort(function(x,y){return x.r.dist-y.r.dist});
   if(!list.length){$('list').innerHTML='<div class="empty">'+L('No traffic.','Sem tráfego.')+'</div>';return}
   $('list').innerHTML=list.map(function(o){var a=o.a,r=o.r,id=a.icao_address,tw=isTwr(a),isSel=id===sel;
@@ -334,8 +338,10 @@ function renderStrips(force){
     var cruise=a.cruise_altitude||a.cruise_altitude_ft||a.cruise_alt||'';
     var ctl=isSel&&!tw?'<div class="ctl"><input id="sqin" inputmode="numeric" maxlength="4" placeholder="'+(asg||'0000')+'" value="'+esc(asg||'')+'">'+
       '<button data-act="set">'+L('Assign','Atribuir')+'</button><button data-act="auto">Auto</button><button data-act="clear">'+L('Clear','Limpar')+'</button></div>'+
+      '<div class="ctl"><button class="ptt'+(voiceOn&&a.voice!==false?'':' off')+'" id="ptt" data-icao="'+esc(id)+'" data-cs="'+esc(a.callsign||id)+'" data-voice="'+(a.voice===false?'0':'1')+'">'+(a.voice===false?L('Pilot voice off','Voz do piloto desligada'):L('Hold to talk','Segure para falar'))+'</button></div>'+
       '<div class="ctl"><input id="msgin" maxlength="300" placeholder="'+L('Message to pilot','Mensagem ao piloto')+'"><label class="urg"><input type="checkbox" id="urg"'+(urgent?' checked':'')+'> '+L('Urgent','Urgente')+'</label><button data-act="msg">'+L('Send','Enviar')+'</button></div>':'';
-    var ml=msgs.filter(function(m){return m.icao_address===id}).slice(-3).map(function(m){return m.kind==='chat'?'<div class="mlog chat"><b>'+L('PILOT','PILOTO')+':</b> '+esc(m.text)+'</div>':'<div class="mlog">&rsaquo; '+esc(m.text)+' &mdash; <b class="'+esc(m.status)+'">'+esc(m.status.toUpperCase())+'</b></div>'}).join('');
+    var vc=vclips.filter(function(v){return v.icao_address===id}).slice(-1).map(function(v){return'<div class="mlog chat"><b>'+L('PILOT voice','PILOTO voz')+'</b> '+Math.round((v.ms||0)/1000)+' s <button data-act="vplay" data-clip="'+esc(v.id)+'">&#9654;</button></div>'}).join('');
+    var ml=vc+msgs.filter(function(m){return m.icao_address===id}).slice(-3).map(function(m){return m.kind==='chat'?'<div class="mlog chat"><b>'+L('PILOT','PILOTO')+':</b> '+esc(m.text)+'</div>':'<div class="mlog">&rsaquo; '+esc(m.text)+' &mdash; <b class="'+esc(m.status)+'">'+esc(m.status.toUpperCase())+'</b></div>'}).join('');
     return'<div class="strip'+(isSel?' sel':'')+(tw?' twr':(asg?'':' nocode'))+(a.no_clnc?' noclnc':'')+(a.emergency?' emerg':'')+'" data-id="'+esc(id)+'">'+
       '<div class="h"><span class="cs">'+esc(a.callsign||id)+(tw?' &#9650;':'')+(a.emergency?'<span class="mayday">MAYDAY</span>':'')+(a.no_clnc?'<span class="noc">NO CLNC</span>':'')+'</span><span class="m">'+Math.round(r.dist)+' nm / '+p3(r.brg)+'&deg;</span></div>'+
       (tw?'':'<div>'+altStr(a.altitude_ft)+' &middot; '+Math.round(Number(a.ground_speed)||0)+' kt &middot; HDG '+p3(Number(a.heading_mag!=null?a.heading_mag:a.heading_true)||0)+'&deg;'+(a.heading_mag==null?'T':'')+' &middot; '+(Number(a.vertical_speed_ft_min)>100?'&uarr;':Number(a.vertical_speed_ft_min)<-100?'&darr;':'&rarr;')+'</div>')+
@@ -347,8 +353,8 @@ $('strips').addEventListener('click',function(e){
   var btn=e.target.closest('button'),strip=e.target.closest('.strip');if(!strip)return;var id=strip.getAttribute('data-id');
   if(btn){var act=btn.getAttribute('data-act'),v=($('sqin')||{}).value||'';
     if(act==='set'){if(!/^[0-7]{4}$/.test(v)){toast(L('4 digits, each 0-7','4 dígitos, cada um 0-7'));return}assign(id,v)}
-    else if(act==='msg')sendMsg(id);else if(act==='auto')assign(id,'');else if(act==='clear')clearSq(id);return}
-  if(e.target.id==='sqin'||e.target.id==='msgin'||e.target.id==='urg')return;
+    else if(act==='vplay')playClip(btn.getAttribute('data-clip'));else if(act==='msg')sendMsg(id);else if(act==='auto')assign(id,'');else if(act==='clear')clearSq(id);return}
+  if(e.target.id==='sqin'||e.target.id==='msgin'||e.target.id==='urg'||e.target.id==='ptt')return;
   sel=id;draw();renderStrips(true)});
 function api(path,opt){opt=opt||{};opt.headers=Object.assign({'X-API-Key':key},opt.headers||{});return fetch(path,opt)}
 function assign(id,sq){var body={icao_address:id};if(sq)body.squawk=sq;
@@ -394,7 +400,7 @@ function poll(force){
     return r.json()}).then(function(j){if(!j)return;applyTraffic(j)
   }).catch(function(){setStatus(L('offline','sem conexão'),false)})}
 function applyTraffic(j){
-    msgs=j.atc_messages||[];crashes=j.crashes||[];
+    msgs=j.atc_messages||[];crashes=j.crashes||[];onClips(j.voice_clips||[]);
     ac=(j.aircraft||[]).filter(function(a){return isFinite(a.latitude)&&isFinite(a.longitude)&&a.icao_address});
     ac.forEach(function(a){var t=trails[a.icao_address]=trails[a.icao_address]||[],l=t[t.length-1];
       if(!l||Math.abs(l.latitude-a.latitude)+Math.abs(l.longitude-a.longitude)>0.0005){var now=Date.now();t.push({latitude:a.latitude,longitude:a.longitude,t:now});while(t.length&&now-t[0].t>TRACE_MS)t.shift()}});
@@ -403,6 +409,68 @@ function applyTraffic(j){
         center.lon=ac.reduce(function(s,a){return s+a.longitude},0)/ac.length;centroidDone=true}}
     computeConfl();
     var nT=ac.filter(isTwr).length,nA=ac.length-nT;setStatus(nA+L(' aircraft',' aeronaves')+' · '+nT+L(nT===1?' tower':' towers',nT===1?' torre':' torres'),true);draw();renderStrips();renderTowerBox()}
+/* ---------- voice (push-to-talk, both directions) ---------- */
+var voiceOn=true,vclips=[],heard=null,pttBusy=false,actx=null,rec=null;
+try{voiceOn=localStorage.getItem('afc_voice')!=='0'}catch(e){}
+function ac_(){if(!actx){try{actx=new (window.AudioContext||window.webkitAudioContext)()}catch(e){}}if(actx&&actx.state==='suspended')actx.resume();return actx}
+document.addEventListener('pointerdown',function(){ac_()},{once:true});
+function wsCall(path,body){var o={id:'v'+Date.now(),method:'PUT',path:path,body:body};
+  if(ws&&ws.readyState===1){ws.send(JSON.stringify(o));return}
+  api(path,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).catch(function(){})}
+function listen(){wsCall('/api/voice/listen',{on:voiceOn})}
+function setVoiceBtn(){var b=$('voiceBtn');b.textContent=L('Voice: ','Voz: ')+(voiceOn?L('on','ligada'):L('off','desligada'));b.className=voiceOn?'on':''}
+$('voiceBtn').onclick=function(){voiceOn=!voiceOn;try{localStorage.setItem('afc_voice',voiceOn?'1':'0')}catch(e){}setVoiceBtn();ac_();listen();renderStrips(true)};
+setVoiceBtn();setInterval(listen,25000);setTimeout(listen,1500);
+function onClips(list){vclips=list;
+  if(heard===null){heard={};list.forEach(function(v){heard[v.id]=1});return}
+  list.forEach(function(v){if(!heard[v.id]){heard[v.id]=1;if(voiceOn)playClip(v.id)}})}
+function b64buf(b){var s=atob(b),n=s.length,u=new Uint8Array(n);for(var i=0;i<n;i++)u[i]=s.charCodeAt(i);return u.buffer}
+function playClip(id){
+  api('/api/voice/clip?id='+encodeURIComponent(id)).then(function(r){return r.ok?r.json():null}).then(function(j){
+    if(!j){toast(L('Clip expired','Áudio expirado'));return}
+    var c=ac_();if(!c){toast(L('Audio not available','Áudio indisponível'));return}
+    c.decodeAudioData(b64buf(j.audio),function(buf){
+      var src=c.createBufferSource();src.buffer=buf;
+      var hp=c.createBiquadFilter();hp.type='highpass';hp.frequency.value=420;
+      var lp=c.createBiquadFilter();lp.type='lowpass';lp.frequency.value=2800;
+      var g=c.createGain();g.gain.value=1.6;src.connect(hp);hp.connect(lp);lp.connect(g);g.connect(c.destination);
+      var t=c.currentTime+.05;src.start(t);
+      var n=Math.floor(c.sampleRate*.07),nb=c.createBuffer(1,n,c.sampleRate),d=nb.getChannelData(0);
+      for(var i=0;i<n;i++)d[i]=(Math.random()*2-1)*.25*(1-i/n);
+      var ns=c.createBufferSource();ns.buffer=nb;var ng=c.createGain();ng.gain.value=.5;ns.connect(ng);ng.connect(c.destination);ns.start(t+buf.duration);
+    },function(){toast(L('Cannot play clip','Não foi possível tocar'))})
+  }).catch(function(){toast(L('Network error','Erro de rede'))})}
+function pttStart(btn){
+  if(!voiceOn){toast(L('Turn Voice on first','Ligue a voz primeiro'));return}
+  if(btn.getAttribute('data-voice')==='0'){toast(btn.getAttribute('data-cs')+L(" can't listen to voice, send text instead",' não pode ouvir voz, envie texto'));return}
+  if(!navigator.mediaDevices||!window.MediaRecorder){toast(L('Recording not supported here','Gravação não suportada aqui'));return}
+  pttBusy=true;btn.classList.add('rec');btn.textContent=L('Recording... release to send','Gravando... solte para enviar');
+  var cancelled=false,t0=Date.now();rec={cancel:function(){cancelled=true}};
+  navigator.mediaDevices.getUserMedia({audio:true}).then(function(st){
+    if(!pttBusy||cancelled){st.getTracks().forEach(function(t){t.stop()});return}
+    var mime=['audio/webm;codecs=opus','audio/mp4','audio/webm'].filter(function(m){return MediaRecorder.isTypeSupported(m)})[0]||'';
+    var mr=new MediaRecorder(st,mime?{mimeType:mime,audioBitsPerSecond:24000}:{audioBitsPerSecond:24000}),parts=[];t0=Date.now();
+    mr.ondataavailable=function(e){if(e.data&&e.data.size)parts.push(e.data)};
+    mr.onstop=function(){st.getTracks().forEach(function(t){t.stop()});
+      var ms=Date.now()-t0;if(ms<400){toast(L('Too short','Muito curto'));return}
+      var blob=new Blob(parts,{type:mr.mimeType||mime||'audio/webm'}),fr=new FileReader();
+      fr.onload=function(){var b=String(fr.result).split(',')[1]||'';
+        api('/api/atc/voice',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({icao_address:btn.getAttribute('data-icao'),audio:b,mime:(mr.mimeType||mime||'audio/webm').split(';')[0],ms:Math.min(ms,10000)})})
+         .then(function(r){return r.json().then(function(j){
+           if(r.ok)toast(L('Sent','Enviado'));
+           else if(j.error==='voice_off')toast((j.callsign||btn.getAttribute('data-cs'))+L(" can't listen to voice, send text instead",' não pode ouvir voz, envie texto'));
+           else toast(L('Error: ','Erro: ')+(j.error||r.status))})})
+         .catch(function(){toast(L('Network error','Erro de rede'))})};
+      fr.readAsDataURL(blob)};
+    rec={mr:mr,cancel:function(){cancelled=true}};mr.start();
+    setTimeout(function(){pttStop()},10000);
+  }).catch(function(){pttBusy=false;toast(L('Microphone blocked','Microfone bloqueado'));renderStrips(true)})}
+function pttStop(){if(!pttBusy)return;pttBusy=false;
+  if(rec&&rec.mr&&rec.mr.state==='recording')rec.mr.stop();else if(rec&&rec.cancel)rec.cancel();
+  rec=null;renderStrips(true)}
+$('strips').addEventListener('pointerdown',function(e){var b=e.target.closest('#ptt');if(b){e.preventDefault();try{b.setPointerCapture(e.pointerId)}catch(x){}pttStart(b)}});
+['pointerup','pointercancel'].forEach(function(n){$('strips').addEventListener(n,function(e){if(e.target.closest('#ptt'))pttStop()})});
+$('strips').addEventListener('contextmenu',function(e){if(e.target.closest('#ptt'))e.preventDefault()});
 /* ---------- WebSocket (push); polling stays as fallback ---------- */
 var ws=null,wsAt=0,wsTry=0,wsTimer=0,wsPing=0;
 function wsLive(){return ws&&ws.readyState===1&&Date.now()-wsAt<12000}
@@ -410,7 +478,7 @@ function wsOpen(){
   if(!key||!window.WebSocket||ws)return;
   try{ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws?key='+encodeURIComponent(key))}catch(e){ws=null;return}
   var me=ws;
-  me.onopen=function(){wsTry=0;wsAt=Date.now();me.send(JSON.stringify({sub:{lat:0,lon:0,radius_miles:13000}}));
+  me.onopen=function(){wsTry=0;wsAt=Date.now();setTimeout(listen,300);me.send(JSON.stringify({sub:{lat:0,lon:0,radius_miles:13000}}));
     clearInterval(wsPing);wsPing=setInterval(function(){if(me.readyState===1)me.send('ping')},25000)};
   me.onmessage=function(e){if(e.data==='pong')return;var j;try{j=JSON.parse(e.data)}catch(x){return}
     if(j&&j.push==='traffic'){wsAt=Date.now();applyTraffic(j)}};
