@@ -319,7 +319,7 @@ $('llGo').onclick=function(){var raw=$('ll').value.trim().toUpperCase();
     else toast(rwState==='ready'?'Unknown airport '+raw:'Airport data not loaded yet');return}
   var m=$('ll').value.match(/(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)/);
   if(!m){toast(L('Use: lat, lon','Use: lat, lon'));return}center.lat=+m[1];center.lon=+m[2];manual=true;draw();renderStrips(true)};
-$('keySave').onclick=function(){var k=$('keyIn').value.trim();if(!k)return;key=k;try{localStorage.setItem('abflug_key',k)}catch(e){}
+$('keySave').onclick=function(){var k=$('keyIn').value.trim();if(!k)return;key=k;try{localStorage.setItem('abflug_key',k)}catch(e){}if(ws){try{ws.close()}catch(e){}}wsOpen();
   $('login').style.display='none';poll()};
 function showLogin(msg){$('keyErr').textContent=msg||'';$('keyIn').value='';$('login').style.display='flex'}
 
@@ -388,9 +388,12 @@ function setStatus(t,ok){var s=$('status');s.textContent=t;s.className=ok?'ok':'
 function poll(force){
   if(!key){showLogin('');return}
   if(document.hidden&&!force)return;
+  if(!force&&wsLive())return;
   api('/api/traffic?lat=0&lon=0&radius_miles=13000').then(function(r){
     if(r.status===401){key='';try{localStorage.removeItem('abflug_key')}catch(e){}showLogin('Invalid key');return null}
-    return r.json()}).then(function(j){if(!j)return;
+    return r.json()}).then(function(j){if(!j)return;applyTraffic(j)
+  }).catch(function(){setStatus(L('offline','sem conexão'),false)})}
+function applyTraffic(j){
     msgs=j.atc_messages||[];crashes=j.crashes||[];
     ac=(j.aircraft||[]).filter(function(a){return isFinite(a.latitude)&&isFinite(a.longitude)&&a.icao_address});
     ac.forEach(function(a){var t=trails[a.icao_address]=trails[a.icao_address]||[],l=t[t.length-1];
@@ -399,10 +402,24 @@ function poll(force){
       else if(!centroidDone&&ac.length){center.lat=ac.reduce(function(s,a){return s+a.latitude},0)/ac.length;
         center.lon=ac.reduce(function(s,a){return s+a.longitude},0)/ac.length;centroidDone=true}}
     computeConfl();
-    var nT=ac.filter(isTwr).length,nA=ac.length-nT;setStatus(nA+L(' aircraft',' aeronaves')+' · '+nT+L(nT===1?' tower':' towers',nT===1?' torre':' torres'),true);draw();renderStrips();renderTowerBox()
-  }).catch(function(){setStatus(L('offline','sem conexão'),false)})}
-document.addEventListener('visibilitychange',function(){if(!document.hidden)poll(true)});
-initBg();resize();applyRange();draw();loadRunways();refreshMyTowers();setInterval(refreshMyTowers,30*60000);poll(true);setInterval(poll,5000);
+    var nT=ac.filter(isTwr).length,nA=ac.length-nT;setStatus(nA+L(' aircraft',' aeronaves')+' · '+nT+L(nT===1?' tower':' towers',nT===1?' torre':' torres'),true);draw();renderStrips();renderTowerBox()}
+/* ---------- WebSocket (push); polling stays as fallback ---------- */
+var ws=null,wsAt=0,wsTry=0,wsTimer=0,wsPing=0;
+function wsLive(){return ws&&ws.readyState===1&&Date.now()-wsAt<12000}
+function wsOpen(){
+  if(!key||!window.WebSocket||ws)return;
+  try{ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws?key='+encodeURIComponent(key))}catch(e){ws=null;return}
+  var me=ws;
+  me.onopen=function(){wsTry=0;wsAt=Date.now();me.send(JSON.stringify({sub:{lat:0,lon:0,radius_miles:13000}}));
+    clearInterval(wsPing);wsPing=setInterval(function(){if(me.readyState===1)me.send('ping')},25000)};
+  me.onmessage=function(e){if(e.data==='pong')return;var j;try{j=JSON.parse(e.data)}catch(x){return}
+    if(j&&j.push==='traffic'){wsAt=Date.now();applyTraffic(j)}};
+  me.onclose=function(){if(ws===me)ws=null;clearInterval(wsPing);
+    clearTimeout(wsTimer);wsTimer=setTimeout(wsOpen,Math.min(30000,2000*Math.pow(2,Math.min(wsTry++,4))))};
+  me.onerror=function(){try{me.close()}catch(x){}};
+}
+document.addEventListener('visibilitychange',function(){if(!document.hidden){if(!ws)wsOpen();poll(true)}});
+initBg();resize();applyRange();draw();loadRunways();refreshMyTowers();setInterval(refreshMyTowers,30*60000);poll(true);setInterval(poll,5000);wsOpen();
 })();
 </script>
 </body>

@@ -149,6 +149,7 @@ const cleanRunway = v => {
 const oppRunway = r => { const m = /^(\d\d)([LRC]?)$/.exec(r); if (!m) return r; const n = ((Number(m[1]) + 17) % 36) + 1; return String(n).padStart(2, "0") + ({ L: "R", R: "L", C: "C", "": "" })[m[2]]; };
 const rwyKey = (apt, r) => (apt || "?") + "/" + [r, oppRunway(r)].sort()[0];
 const GRACE_MS = 20_000, VIOL_SHOW_MS = 30_000, VIOL_RENEW_MS = 20_000, MAX_VIOL = 100;
+const PUSH_MS = 3000;
 const up = v => String(v || "").trim().toUpperCase();
 
 export default {
@@ -158,6 +159,14 @@ export default {
       return new Response(ATC_HTML, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
     if (url.pathname === "/map" || url.pathname === "/map/")
       return new Response(MAP_HTML, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+    if (url.pathname === "/ws") {
+      if (request.headers.get("Upgrade") !== "websocket") return json({ error: "websocket expected" }, 426);
+      const wk = (url.searchParams.get("key") || "").trim();
+      const allowed = (env.ABFLUG_KEYS || "").split(",").map(s => s.trim()).filter(Boolean);
+      if (!wk || (allowed.length && !allowed.includes(wk))) return json({ error: "invalid api key" }, 401);
+      const h = new Headers(request.headers); h.set("X-API-Key", wk);
+      return env.HUB.get(env.HUB.idFromName("global")).fetch(request, { headers: h });
+    }
     if (!url.pathname.startsWith("/api/")) return json({ name: "abflug-community", ok: true });
     const key = (request.headers.get("X-API-Key") || (url.pathname === "/api/debug" ? url.searchParams.get("key") : "") || "").trim();
     if (url.pathname !== "/api/health" && url.pathname !== "/api/stats") {
@@ -355,10 +364,73 @@ export class Hub {
     return out.sort((x, y) => x.tau_s - y.tau_s).slice(0, 2);
   }
 
+  // ---- WebSocket (Hibernation API). Message in: {id, method, path, body} -> same handlers as HTTP, reply {id, status, body}.
+  // {sub:{lat,lon,radius_miles}} subscribes the socket to pushed traffic ({push:"traffic", ...} = body of GET /api/traffic).
+  acceptSocket(request) {
+    const key = (request.headers.get("X-API-Key") || "").trim();
+    const pair = new WebSocketPair();
+    this.ctx.acceptWebSocket(pair[1]);
+    pair[1].serializeAttachment({ key, sub: null });
+    this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
+    this.startPush();
+    return new Response(null, { status: 101, webSocket: pair[0] });
+  }
+  startPush() {
+    if (this.pushTimer) return;
+    this.pushTimer = setInterval(() => this.pushAll().catch(() => {}), PUSH_MS);
+  }
+  async pushAll() {
+    const socks = this.ctx.getWebSockets();
+    if (!socks.length) { clearInterval(this.pushTimer); this.pushTimer = null; return; }
+    this.purge();
+    const cache = new Map();
+    for (const ws of socks) {
+      const a = ws.deserializeAttachment() || {};
+      if (!a.sub) continue;
+      const sk = a.key + "|" + a.sub.lat + "|" + a.sub.lon + "|" + a.sub.rad;
+      let body = cache.get(sk);
+      if (!body) { body = JSON.stringify({ push: "traffic", ...this.trafficBody(a.key, a.sub.lat, a.sub.lon, a.sub.rad) }); cache.set(sk, body); }
+      try { ws.send(body); } catch (e) {}
+    }
+  }
+  trafficBody(key, lat, lon, rad) {
+    const { out, truncated } = this.trafficList(key, lat, lon, rad, MAX_TRAFFIC);
+    const atc_messages = [...this.msgs.values()].map(x => ({ id: x.id, icao_address: x.icao, text: x.text, kind: x.kind, urgent: !!x.urgent, status: x.status, at: x.at }));
+    return { aircraft: out, traffic: out, truncated, active_clients: this.clients.size, atc_messages, crashes: this.crashList() };
+  }
+  async webSocketMessage(ws, raw) {
+    this.startPush();
+    const a = ws.deserializeAttachment() || {};
+    let d; try { d = JSON.parse(typeof raw === "string" ? raw : new TextDecoder().decode(raw)); } catch (e) { return; }
+    if (!d || typeof d !== "object") return;
+    if (d.sub !== undefined) {
+      const s = d.sub, lat = Number(s && s.lat) || 0, lon = Number(s && s.lon) || 0, rad = Number(s && s.radius_miles) || 250;
+      a.sub = s ? { lat, lon, rad } : null; ws.serializeAttachment(a);
+      if (a.sub) { try { ws.send(JSON.stringify({ push: "traffic", ...this.trafficBody(a.key, lat, lon, rad) })); } catch (e) {} }
+      return;
+    }
+    const method = String(d.method || "GET").toUpperCase(), path = String(d.path || "");
+    if (!path.startsWith("/api/") || path.startsWith("/api/debug") || !["GET", "PUT", "POST", "DELETE"].includes(method)) {
+      try { ws.send(JSON.stringify({ id: d.id, status: 400, body: { error: "bad request" } })); } catch (e) {}
+      return;
+    }
+    const init = { method, headers: { "X-API-Key": a.key, "Content-Type": "application/json" } };
+    if (method !== "GET" && method !== "DELETE" && d.body !== undefined) init.body = JSON.stringify(d.body);
+    let status = 500, body = { error: "server error" };
+    try {
+      const r = await this.fetch(new Request("https://hub" + path, init));
+      status = r.status; const t = await r.text(); try { body = JSON.parse(t); } catch (e) { body = t; }
+    } catch (e) {}
+    try { ws.send(JSON.stringify({ id: d.id, status, body })); } catch (e) {}
+  }
+  webSocketClose(ws) { try { ws.close(); } catch (e) {} }
+  webSocketError() {}
+
   async fetch(request) {
     const url = new URL(request.url);
     const key = (request.headers.get("X-API-Key") || "").trim();
     const m = request.method, p = url.pathname;
+    if (p === "/ws" && request.headers.get("Upgrade") === "websocket") return this.acceptSocket(request);
     this.purge();
 
     if (m === "GET" && p === "/api/debug") {
@@ -536,10 +608,7 @@ export class Hub {
       const lat = parseFloat(q.get("lat") ?? q.get("latitude") ?? "0") || 0;
       const lon = parseFloat(q.get("lon") ?? q.get("lng") ?? q.get("longitude") ?? "0") || 0;
       const rad = parseFloat(q.get("radius_miles") ?? q.get("radius") ?? "250") || 250;
-      const { out, truncated } = this.trafficList(key, lat, lon, rad, MAX_TRAFFIC);
-      const atc_messages = [...this.msgs.values()].map(x => ({ id: x.id, icao_address: x.icao, text: x.text, kind: x.kind, urgent: !!x.urgent, status: x.status, at: x.at }));
-      const crashes = this.crashList();
-      return json({ aircraft: out, traffic: out, truncated, active_clients: this.clients.size, atc_messages, crashes });
+      return json(this.trafficBody(key, lat, lon, rad));
     }
 
     if ((m === "POST" || m === "PUT") && p === "/api/position") {
