@@ -36,7 +36,7 @@ Latest APK: <https://github.com/CaydanDaviau/Aerofly-Connect/releases/tag/androi
 
 ## Servers and data the app contacts
 
-- The Aerofly Connect server (a Cloudflare Worker, source in `abflug-worker/`): positions, flight plans, messages, voice clips. Everything is held in memory and expires (clips 5 minutes, messages 30 minutes, positions 60 seconds).
+- The Aerofly Connect server (a Cloudflare Worker, source in `afconnect-worker/`): positions, flight plans, messages, voice clips. Everything is held in memory and expires (clips 5 minutes, messages 30 minutes, positions 60 seconds).
 - [OpenFreeMap](https://openfreemap.org) and OpenStreetMap data for the maps (© OpenStreetMap contributors).
 - [OurAirports](https://ourairports.com/data/) data (runways, frequencies), downloaded once and cached on the phone.
 - The map libraries are loaded from a public CDN (MapLibre GL JS).
@@ -46,7 +46,7 @@ Your callsign, aircraft, position and flight plan are visible to other users. Th
 ## Repository layout
 
 - `android-client/`: the Android app (Java, no AndroidX, minSdk 26)
-- `abflug-worker/`: the server (Cloudflare Worker + Durable Object), the `/atc` radar page and the `/map` page. After editing `atc.html` or `map.html`, run `python3 build.py`; tests: `node test.mjs` and `node test-ws.mjs`
+- `afconnect-worker/`: the server (Cloudflare Worker + Durable Object), the `/atc` radar page and the `/map` page. After editing `atc.html` or `map.html`, run `python3 build.py`; tests: `node test.mjs` and `node test-ws.mjs`
 - `.github/workflows/android.yml`: builds and signs the APK
 
 The server also accepts the original Abflug app (API reverse-engineered), but new features target Aerofly Connect only.
