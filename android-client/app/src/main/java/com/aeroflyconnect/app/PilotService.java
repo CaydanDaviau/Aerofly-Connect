@@ -157,6 +157,8 @@ public class PilotService extends Service {
 
     private void loop(String key, String callsign) {
         SimLink sim = new SimLink();
+        PcLink pc = Api.pcMode(this) ? new PcLink() : null;
+        if (pc != null) pc.start();
         final String simHost = Api.simHost(this);
         boolean planSent = false;
         try {
@@ -164,18 +166,24 @@ public class PilotService extends Service {
                 long t0 = System.currentTimeMillis();
 
                 String raw = null;
-                try {
-                    if (!sim.isOpen()) sim.connect(simHost);
-                    raw = sim.readLine();
-                    lastRaw = raw;
-                    simState = "connected";
-                } catch (Exception e) {
-                    sim.close();
-                    simState = "no sim (" + e.getClass().getSimpleName() + ")";
+                JSONObject pos = null;
+                if (pc != null) {
+                    pos = pc.position();
+                    if (pos != null) { raw = pos.toString(); lastRaw = raw; simState = "connected (PC, UDP " + PcLink.PORT + ")"; }
+                    else simState = pc.error() != null ? "UDP port " + PcLink.PORT + " unavailable (" + pc.error() + ")" : "waiting for the PC sim on UDP " + PcLink.PORT;
+                } else {
+                    try {
+                        if (!sim.isOpen()) sim.connect(simHost);
+                        raw = sim.readLine();
+                        lastRaw = raw;
+                        simState = "connected";
+                    } catch (Exception e) {
+                        sim.close();
+                        simState = "no sim (" + e.getClass().getSimpleName() + ")";
+                    }
+                    pos = raw == null ? null : SimLink.toPosition(raw);
+                    if (raw != null && pos == null) simState = "connected, no valid position yet";
                 }
-
-                JSONObject pos = raw == null ? null : SimLink.toPosition(raw);
-                if (raw != null && pos == null) simState = "connected, no valid position yet";
 
                 if (pos != null) {
                     lastLat = pos.optDouble("latitude"); lastLon = pos.optDouble("longitude");
@@ -244,6 +252,7 @@ public class PilotService extends Service {
             }
         } finally {
             sim.close();
+            if (pc != null) pc.stop();
             RadioPlayer.stop("pilot");
             if (voice != null) { voice.shutdown(); voice = null; }
             try { Api.send("DELETE", "/api/position", null, key); } catch (Exception ignored) { }

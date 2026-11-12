@@ -47,6 +47,9 @@ final class Api {
     /** Pilot form fields: dep, arr, model, livery, cruise, route. */
     /** Host of the sim link (field "simip"; empty = this phone). */
     static String simHost(Context c) { return simRemote(c) ? SimHost.normalize(field(c, "simip")) : SimHost.LOCAL; }
+    /** Aerofly FS on a PC: position arrives by UDP on port 49002 instead of the mobile sim's TCP link. */
+    static boolean pcMode(Context c) { return prefs(c).getBoolean("pc_mode", false); }
+    static void setPcMode(Context c, boolean on) { prefs(c).edit().putBoolean("pc_mode", on).apply(); }
     static boolean simRemote(Context c) { return prefs(c).getBoolean("sim_remote", false); }
     static void setSimRemote(Context c, boolean on) { prefs(c).edit().putBoolean("sim_remote", on).apply(); }
 

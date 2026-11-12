@@ -284,7 +284,19 @@ public class MainActivity extends Activity {
         simBox.setVisibility(Api.simRemote(this) ? View.VISIBLE : View.GONE);
         simc.addView(simBox);
 
-        LinearLayout lang = section(root, Api.t(this, "Language", "Idioma"));
+        // ----- Aerofly FS on a PC (UDP 49002) -----
+        LinearLayout pcc = section(root, Api.t(this, "Aerofly FS on a PC", "Aerofly FS no PC"));
+        pcc.addView(sw(Api.t(this, "Sim runs on a PC (UDP port 49002)", "O sim roda em um PC (porta UDP 49002)"), Api.pcMode(this),
+                new CompoundButton.OnCheckedChangeListener() {
+                    @Override public void onCheckedChanged(CompoundButton b, boolean on) { Api.setPcMode(MainActivity.this, on); }
+                }));
+        String myIp = PcLink.localIp();
+        TextView pcHint = dim(Api.t(this, "In Aerofly FS on the PC, turn on flight data output to this phone's IP address" + (myIp.isEmpty() ? " (connect to the same Wi-Fi or hotspot first)" : ": " + myIp) + ", port 49002. Phone and PC must be on the same network. Takes effect at the next Start; overrides the other-device option above.",
+                "No Aerofly FS do PC, ative o envio de dados de voo para o IP deste celular" + (myIp.isEmpty() ? " (conecte antes à mesma rede Wi-Fi ou ponto de acesso)" : ": " + myIp) + ", porta 49002. Celular e PC precisam estar na mesma rede. Vale a partir do próximo Iniciar; substitui a opção de outro aparelho acima."), 13);
+        pcHint.setPadding(0, pad / 4, 0, 0);
+        pcc.addView(pcHint);
+
+        LinearLayout lang = section(root, Api.t(this, "Language", "Idioma"));, "Idioma"));
         lang.addView(langRow(Api.t(this, "App language", "Idioma do app"), Api.uiLang(this), true));
         lang.addView(langRow(Api.t(this, "Voice language", "Idioma da voz"), Api.voiceLang(this), false));
 
@@ -739,7 +751,7 @@ public class MainActivity extends Activity {
                     && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
                 requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1);
             }
-            String bad = Api.simRemote(this) ? SimHost.problem(Api.field(this, "simip")) : null;
+            String bad = Api.simRemote(this) && !Api.pcMode(this) ? SimHost.problem(Api.field(this, "simip")) : null;
             if (bad != null) {
                 Toast.makeText(this, "mobile".equals(bad)
                         ? Api.t(this, "That is a mobile-network address. Use the Wi-Fi IP of the device running the sim.", "Esse é um endereço da rede móvel. Use o IP do Wi-Fi do aparelho que roda o sim.")
