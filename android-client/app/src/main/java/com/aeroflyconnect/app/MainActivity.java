@@ -296,7 +296,7 @@ public class MainActivity extends Activity {
         pcHint.setPadding(0, pad / 4, 0, 0);
         pcc.addView(pcHint);
 
-        LinearLayout lang = section(root, Api.t(this, "Language", "Idioma"));, "Idioma"));
+        LinearLayout lang = section(root, Api.t(this, "Language", "Idioma"));
         lang.addView(langRow(Api.t(this, "App language", "Idioma do app"), Api.uiLang(this), true));
         lang.addView(langRow(Api.t(this, "Voice language", "Idioma da voz"), Api.voiceLang(this), false));
 
