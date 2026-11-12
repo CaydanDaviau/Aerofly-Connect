@@ -157,8 +157,8 @@ public class PilotService extends Service {
 
     private void loop(String key, String callsign) {
         SimLink sim = new SimLink();
-        PcLink pc = Api.pcMode(this) ? new PcLink() : null;
-        if (pc != null) pc.start();
+        PcLink pcl = Api.pcMode(this) ? new PcLink() : null;
+        if (pcl != null) pcl.start();
         final String simHost = Api.simHost(this);
         boolean planSent = false;
         try {
@@ -167,10 +167,10 @@ public class PilotService extends Service {
 
                 String raw = null;
                 JSONObject pos = null;
-                if (pc != null) {
-                    pos = pc.position();
+                if (pcl != null) {
+                    pos = pcl.position();
                     if (pos != null) { raw = pos.toString(); lastRaw = raw; simState = "connected (PC, UDP " + PcLink.PORT + ")"; }
-                    else simState = pc.error() != null ? "UDP port " + PcLink.PORT + " unavailable (" + pc.error() + ")" : "waiting for the PC sim on UDP " + PcLink.PORT;
+                    else simState = pcl.error() != null ? "UDP port " + PcLink.PORT + " unavailable (" + pcl.error() + ")" : "waiting for the PC sim on UDP " + PcLink.PORT;
                 } else {
                     try {
                         if (!sim.isOpen()) sim.connect(simHost);
@@ -252,7 +252,7 @@ public class PilotService extends Service {
             }
         } finally {
             sim.close();
-            if (pc != null) pc.stop();
+            if (pcl != null) pcl.stop();
             RadioPlayer.stop("pilot");
             if (voice != null) { voice.shutdown(); voice = null; }
             try { Api.send("DELETE", "/api/position", null, key); } catch (Exception ignored) { }
