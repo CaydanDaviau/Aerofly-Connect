@@ -1,0 +1,37 @@
+name: Build PC exe
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'pc-client/**'
+      - '.github/workflows/pc.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pc-build
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python pc-client/test_pc.py
+        env:
+          PYTHONPATH: pc-client
+      - run: pip install pyinstaller
+      - run: pyinstaller --onefile --windowed --name AFConnectPC pc-client/afconnect.py
+      - name: Publish release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view pc-latest >/dev/null 2>&1 || gh release create pc-latest --title "Aerofly Connect PC" --notes "Rolling build of the Windows app" --target "$GITHUB_SHA"
+          gh release upload pc-latest dist/AFConnectPC.exe --clobber
