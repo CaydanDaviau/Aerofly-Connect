@@ -75,6 +75,12 @@ final class Overlay {
     private Button bWilco, bUnable, bClr, bTaxi, bTakeoff, bLand, bEmerg;
     private EditText chatIn;
     private View micBtn;
+    private Button bAtis, bAtisSwap;
+    private LinearLayout atisBox;
+    private ScrollView atisScroll;
+    private TextView atisText;
+    private boolean atisOpen, atisBusy, atisArr, atisPicked;
+    private String atisShownLetter = "", atisShownIcao = "";
     private boolean micRec;
     private View sendBtn;
     private boolean typing, chatBusy;
@@ -117,6 +123,7 @@ final class Overlay {
             @Override public void run() {
                 h.removeCallbacksAndMessages(null);
                 typing = false;
+                atisOpen = false;
                 if (micRec) { micRec = false; Mic.stop(); }
                 try { ctx.unregisterComponentCallbacks(cfgCb); } catch (Exception ignored) { }
                 if (root != null) { try { wm.removeView(root); } catch (Exception ignored) { } root = null; }
@@ -263,6 +270,45 @@ final class Overlay {
             rp.topMargin = dp(6);
             panel.addView(reqGrid, rp);
 
+            // ATIS view: replaces the request grid while open (keeps the panel the same height)
+            atisBox = new LinearLayout(ctx);
+            atisBox.setOrientation(LinearLayout.VERTICAL);
+            LinearLayout atHead = new LinearLayout(ctx);
+            atHead.setOrientation(LinearLayout.HORIZONTAL);
+            atHead.setGravity(Gravity.CENTER_VERTICAL);
+            TextView atTitle = new TextView(ctx);
+            atTitle.setText("ATIS");
+            atTitle.setTextSize(12);
+            atTitle.setTypeface(Typeface.DEFAULT_BOLD);
+            atTitle.setTextColor(Ui.CYAN);
+            atHead.addView(atTitle, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+            bAtisSwap = small("", Ui.SECONDARY);
+            bAtisSwap.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View v) { atisArr = !atisArr; atisPicked = true; loadAtis(); }
+            });
+            atHead.addView(bAtisSwap, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(36)));
+            atisBox.addView(atHead);
+            atisText = new TextView(ctx);
+            atisText.setTextSize(13);
+            atisText.setTextColor(Ui.TXT);
+            atisText.setPadding(0, dp(4), 0, dp(2));
+            atisScroll = new ScrollView(ctx) {
+                @Override protected void onMeasure(int w, int hs) {
+                    DisplayMetrics dm = new DisplayMetrics();
+                    wm.getDefaultDisplay().getRealMetrics(dm);
+                    int cap = Math.max(dp(60), Math.min(dp(150), dm.heightPixels - dp(330)));
+                    super.onMeasure(w, MeasureSpec.makeMeasureSpec(cap, MeasureSpec.AT_MOST));
+                }
+            };
+            atisScroll.setVerticalScrollBarEnabled(true);
+            atisScroll.addView(atisText);
+            atisBox.addView(atisScroll);
+            atisBox.setVisibility(View.GONE);
+            LinearLayout.LayoutParams abp = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            abp.topMargin = dp(6);
+            panel.addView(atisBox, abp);
+
             // Emergency (Mayday): two taps, the second within 4 s; once declared the same button cancels it.
             bEmerg = small(Api.t(ctx, "Emergency", "Emergência"), Ui.DANGER);
             bEmerg.setOnClickListener(new View.OnClickListener() {
@@ -278,10 +324,20 @@ final class Overlay {
                     }
                 }
             });
+            bAtis = small("ATIS", Ui.SECONDARY);
+            bAtis.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { toggleAtis(); } });
+            LinearLayout emRow = new LinearLayout(ctx);
+            emRow.setOrientation(LinearLayout.HORIZONTAL);
+            LinearLayout.LayoutParams emw = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 2f);
+            emw.rightMargin = dp(2);
+            LinearLayout.LayoutParams atw = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+            atw.leftMargin = dp(2);
+            emRow.addView(bEmerg, emw);
+            emRow.addView(bAtis, atw);
             LinearLayout.LayoutParams ep = new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
             ep.topMargin = dp(6);
-            panel.addView(bEmerg, ep);
+            panel.addView(emRow, ep);
 
             statusView = new TextView(ctx);
             statusView.setTextSize(12);
@@ -518,6 +574,9 @@ final class Overlay {
         }
         alertView.setText(alertText);
         alertView.setVisibility(alertText.isEmpty() ? View.GONE : View.VISIBLE);
+        reqGrid.setVisibility(atisOpen ? View.GONE : View.VISIBLE);
+        atisBox.setVisibility(atisOpen ? View.VISIBLE : View.GONE);
+        bAtis.setText(atisOpen ? Api.t(ctx, "Back", "Voltar") : (atisShownLetter.isEmpty() ? "ATIS" : "ATIS " + atisShownLetter));
         dim(bClr, Phase.clearance); dim(bTaxi, Phase.taxi); dim(bTakeoff, Phase.takeoff); dim(bLand, Phase.land);
         bWilco.setEnabled(!replyBusy); bUnable.setEnabled(!replyBusy);
         bEmerg.setEnabled(!reqBusy);
@@ -552,6 +611,63 @@ final class Overlay {
                 });
             }
         }).start();
+    }
+
+    // ---------- ATIS ----------
+    private String atisIcao() {
+        return (atisArr ? Api.field(ctx, "arr") : Api.field(ctx, "dep")).trim().toUpperCase();
+    }
+
+    private void toggleAtis() {
+        atisOpen = !atisOpen;
+        if (atisOpen) {
+            if (!atisPicked) {   // default: arrival airport once airborne, otherwise departure
+                String dep = Api.field(ctx, "dep").trim(), arr = Api.field(ctx, "arr").trim();
+                atisArr = (!arr.isEmpty() && "air".equals(Phase.phaseName)) || dep.isEmpty();
+            }
+            loadAtis();
+            h.removeCallbacks(atisTick); h.postDelayed(atisTick, 60000);
+        } else {
+            h.removeCallbacks(atisTick);
+        }
+        refresh();
+    }
+
+    private final Runnable atisTick = new Runnable() {
+        @Override public void run() {
+            if (!atisOpen || root == null) return;
+            loadAtis();
+            h.postDelayed(this, 60000);
+        }
+    };
+
+    private void loadAtis() {
+        if (atisBusy) return;
+        final String icao = atisIcao();
+        String other = (atisArr ? Api.field(ctx, "dep") : Api.field(ctx, "arr")).trim().toUpperCase();
+        bAtisSwap.setText((atisArr ? "ARR " : "DEP ") + (icao.isEmpty() ? "-" : icao) + "  >");
+        bAtisSwap.setVisibility(other.isEmpty() ? View.GONE : View.VISIBLE);
+        atisBusy = true;
+        if (!icao.equals(atisShownIcao)) atisText.setText(Api.t(ctx, "Loading...", "Carregando..."));
+        new Thread(new Runnable() {
+            @Override public void run() {
+                final Atis.Result r = Atis.fetch(ctx, icao);
+                h.post(new Runnable() {
+                    @Override public void run() {
+                        atisBusy = false;
+                        if (root == null) return;
+                        String t = r.text;
+                        if (!r.letter.isEmpty() && icao.equals(atisShownIcao) && !atisShownLetter.isEmpty() && !r.letter.equals(atisShownLetter))
+                            t = Api.t(ctx, "NEW INFORMATION ", "NOVA INFORMAÇÃO ") + r.letter + "\n" + t;
+                        atisShownIcao = icao;
+                        atisShownLetter = r.letter;
+                        atisText.setText(t);
+                        refresh();
+                        if (atisOpen && !icao.equals(atisIcao())) loadAtis();   // swapped while this one was loading
+                    }
+                });
+            }
+        }, "atis").start();
     }
 
     // ---------- typing ----------
