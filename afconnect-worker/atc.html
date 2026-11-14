@@ -49,6 +49,11 @@ input::placeholder{color:var(--dim)}
 .empty{color:var(--dim);padding:10px}
 #rwStatus{font-size:11px}
 #scope{background:#2b2b2b}
+#twList .atis{margin-top:6px;border-top:1px solid var(--faint);padding-top:6px;font-size:12px}
+#twList .atis input{width:100%;box-sizing:border-box;margin-top:4px}
+#twList .atis .ctl{display:flex;gap:6px;margin-top:6px}
+#twList .atis .hd{color:var(--cy);font-weight:700}
+#twList .atis .raw{opacity:.6;word-break:break-all;margin-top:2px}
 #twList .row{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:6px}
 #rwStatus button{padding:1px 6px;font-size:11px}
 #bgmap{position:absolute;inset:0;z-index:0}
@@ -388,10 +393,60 @@ $('twOpen').onclick=function(){var name=$('twIcao').value.trim().toUpperCase();
     if(ap)toast(L('Tower '+j.callsign+' open','Torre '+j.callsign+' aberta'));$('twIcao').value='';poll(true)})}).catch(function(){toast(L('Network error','Erro de rede'))})};
 function closeTower(name){api('/api/atc/tower?name='+encodeURIComponent(name),{method:'DELETE'}).then(function(){
   myTowers=myTowers.filter(function(x){return x.name!==name});saveTowers();toast(L('Tower closed','Torre fechada'));poll(true)})}
-$('twList').addEventListener('click',function(e){var b=e.target.closest('button');if(b)closeTower(b.getAttribute('data-name'))});
-function renderTowerBox(){var t=ac.filter(function(a){return a.virtual_tower});
-  $('twList').innerHTML=t.length?t.map(function(a){var n=esc(String(a.callsign).replace(/^ATC_/,''));
-    return'<div class="row"><span>'+esc(a.callsign)+' <span class="m">virtual</span></span><button data-name="'+n+'">Close</button></div>'}).join(''):'<div class="m" style="margin-top:6px">'+L('No virtual towers open.','Nenhuma torre virtual aberta.')+'</div>'}
+/* ---------- ATIS (inside each tower row) ---------- */
+var atisUI={};
+function brg(a,b,c,d){var r=Math.PI/180,y=Math.sin((d-b)*r)*Math.cos(c*r),x=Math.cos(a*r)*Math.sin(c*r)-Math.sin(a*r)*Math.cos(c*r)*Math.cos((d-b)*r);return(Math.atan2(y,x)/r+360)%360}
+function bestRwy(n,w){if(!w||!w.wind||w.wind.dir===null||w.wind.spd<3)return'';
+  var best=null,rws=(typeof RW!=='undefined'&&RW)||[];
+  rws.forEach(function(r){if(r[0]!==n)return;var hd=brg(r[2],r[3],r[5],r[6]);
+    [[r[1],hd],[r[4],(hd+180)%360]].forEach(function(e){if(!e[0])return;var d=(w.wind.dir-e[1])*Math.PI/180,hw=w.wind.spd*Math.cos(d),xw=Math.abs(w.wind.spd*Math.sin(d));
+      if(!best||hw>best.hw)best={id:e[0],hw:Math.round(hw),xw:Math.round(xw)}})});
+  return best?L('Best into wind: ','Melhor contra o vento: ')+best.id+' (HW '+best.hw+', XW '+best.xw+')':''}
+function wxLines(w){if(!w)return L('Weather not available','Tempo indisponível');var o=[];
+  if(w.wind)o.push(L('Wind ','Vento ')+(w.wind.dir===null?'VRB':String(w.wind.dir).padStart(3,'0')+'°')+' '+w.wind.spd+' kt'+(w.wind.gst?' G'+w.wind.gst:''));
+  if(w.vis_m!==null)o.push('Vis '+(w.vis_m>=9999?'10 km+':w.vis_m>=1000?(w.vis_m/1000).toFixed(1).replace('.0','')+' km':w.vis_m+' m'));
+  if(w.cavok)o.push('CAVOK');else if(w.clouds.length)o.push(w.clouds.map(function(c){return c.cover+' '+c.base_ft}).join(' '));
+  if(w.temp!==null)o.push('Temp '+w.temp+(w.dew!==null?'/'+w.dew:'')+'°C');
+  if(w.qnh)o.push('QNH '+w.qnh);
+  return o.join(' · ')}
+function atisPanelFor(n){var u=atisUI[n];if(u)return u;
+  var el=document.createElement('div');el.className='atis';
+  el.innerHTML='<div class="hd" data-r="head">ATIS</div><div class="m" data-r="wx"></div><div class="m raw" data-r="raw"></div><div class="m" data-r="sug"></div>'
+    +'<input data-r="rwy" maxlength="40" autocapitalize="characters" placeholder="'+L('Active runways, e.g. 29L 29R','Pistas ativas, ex.: 29L 29R')+'">'
+    +'<input data-r="frq" maxlength="120" placeholder="TWR 118.3 GND 121.9">'
+    +'<input data-r="rem" maxlength="200" placeholder="'+L('Remarks','Observações')+'">'
+    +'<div class="ctl"><button data-act="save">'+L('Save','Salvar')+'</button><button data-act="bump">'+L('New letter','Nova letra')+'</button></div>';
+  u=atisUI[n]={open:false,el:el,data:null,dirty:false};
+  el.addEventListener('input',function(){u.dirty=true});
+  return u}
+function atisFill(n){var u=atisUI[n],j=u&&u.data;if(!j)return;
+  function q(r){return u.el.querySelector('[data-r="'+r+'"]')}
+  q('head').textContent='ATIS '+j.letter+' · '+new Date(j.updated).toISOString().slice(11,16)+'Z';
+  q('wx').textContent=wxLines(j.weather);q('raw').textContent=j.weather?j.weather.raw:'';q('sug').textContent=bestRwy(n,j.weather);
+  if(!u.dirty){q('rwy').value=j.runways;q('frq').value=j.frequencies;q('rem').value=j.remarks}
+  var b=document.querySelector('#twList [data-atis="'+n+'"]');if(b)b.textContent='ATIS '+j.letter}
+function atisLoad(n){api('/api/atis?name='+encodeURIComponent(n)).then(function(r){return r.json()}).then(function(j){
+  if(j&&j.letter&&atisUI[n]){atisUI[n].data=j;atisFill(n)}}).catch(function(){})}
+function atisAct(n,act){var u=atisUI[n];if(!u)return;var body={name:n};
+  if(act==='bump')body.bump=true;else{body.runways=u.el.querySelector('[data-r="rwy"]').value;body.frequencies=u.el.querySelector('[data-r="frq"]').value;body.remarks=u.el.querySelector('[data-r="rem"]').value}
+  api('/api/atc/atis',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.json().then(function(j){
+    if(!r.ok){toast(L('Error: ','Erro: ')+(j.error||r.status));return}
+    u.dirty=false;u.data=j;atisFill(n);toast('ATIS '+j.letter)})}).catch(function(){toast(L('Network error','Erro de rede'))})}
+setInterval(function(){for(var n in atisUI)if(atisUI[n].open)atisLoad(n)},60000);
+$('twList').addEventListener('click',function(e){var b=e.target.closest('button');if(!b)return;
+  var n=b.getAttribute('data-name');if(n){closeTower(n);return}
+  n=b.getAttribute('data-atis');if(n){var u=atisPanelFor(n);u.open=!u.open;$('twList')._sig=null;renderTowerBox();if(u.open)atisLoad(n);return}
+  var act=b.getAttribute('data-act'),row=b.closest('[data-tower]');if(act&&row)atisAct(row.getAttribute('data-tower'),act)});
+function renderTowerBox(){var box=$('twList'),names=ac.filter(function(a){return a.virtual_tower}).map(function(a){return String(a.callsign).replace(/^ATC_/,'')});
+  for(var k in atisUI)if(names.indexOf(k)<0)delete atisUI[k];
+  var sig=names.map(function(n){return n+(atisUI[n]&&atisUI[n].open?'+':'')}).join(',')+'#';
+  if(box._sig===sig)return;box._sig=sig;   /* unchanged: leave the DOM alone so typed text is kept */
+  box.innerHTML='';
+  if(!names.length){box.innerHTML='<div class="m" style="margin-top:6px">'+L('No virtual towers open.','Nenhuma torre virtual aberta.')+'</div>';return}
+  names.forEach(function(n){var row=document.createElement('div'),u=atisUI[n];row.setAttribute('data-tower',n);
+    row.innerHTML='<div class="row"><span>ATC_'+esc(n)+' <span class="m">virtual</span></span><span><button data-atis="'+esc(n)+'">ATIS'+(u&&u.data?' '+esc(u.data.letter):'')+'</button> <button data-name="'+esc(n)+'">'+L('Close','Fechar')+'</button></span></div>';
+    if(u&&u.open){row.appendChild(u.el);atisFill(n)}
+    box.appendChild(row)})}
 $('grpBtn').addEventListener('click',function(){var v=prompt(L('Group code (from Discord). Empty = none.','Código do grupo (do Discord). Vazio = nenhum.'),group);if(v===null)return;
   group=v.trim();try{if(group)localStorage.setItem('afc_group',group);else localStorage.removeItem('afc_group')}catch(e){}checkGroup();refreshMyTowers()});
 var grpMsg='';

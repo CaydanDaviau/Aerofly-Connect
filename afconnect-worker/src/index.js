@@ -1,3 +1,4 @@
+import { parseMetar, wxSig, nextLetter } from "./atis.js";
 // Community backend for the Abflug Android client (v1.5.0) on Cloudflare Workers.
 // All state lives in one Durable Object (in memory, TTL-based).
 import ATC_HTML from "./atc.js";
@@ -190,7 +191,7 @@ export default {
 
 export class Hub {
   constructor(ctx) {
-    this.towers = new Map(); this.crashes = new Map(); this.ta = new Map();
+    this.towers = new Map(); this.wx = new Map(); this.crashes = new Map(); this.ta = new Map();
     ctx.blockConcurrencyWhile(async () => {
       for (const [k, v] of await ctx.storage.list({ prefix: "tower:" })) this.towers.set(k.slice(6), v);
       for (const [k, v] of await ctx.storage.list({ prefix: "crash:" })) this.crashes.set(k.slice(6), v);
@@ -409,6 +410,31 @@ export class Hub {
     const atc_messages = [...this.msgs.values()].map(x => ({ id: x.id, icao_address: x.icao, text: x.text, kind: x.kind, urgent: !!x.urgent, status: x.status, at: x.at }));
     const voice_clips = [...this.clips.values()].filter(v => v.dir === "up").map(v => ({ id: v.id, icao_address: v.icao, callsign: v.callsign, ms: v.ms, at: v.at }));
     return { aircraft: out, traffic: out, truncated, active_clients: this.clients.size, atc_messages, crashes: this.crashList(), voice_clips };
+  }
+
+  // ---- ATIS (per open tower): letter, runways, frequencies, remarks + METAR from aviationweather.gov (cached 5 min)
+  async weather(name) {
+    if (!/^[A-Z]{4}$/.test(name)) return null;
+    const now = Date.now(), c = this.wx.get(name);
+    if (c && now - c.at < 300_000) return c.w;
+    let w = c ? c.w : null, ok = false;
+    try {
+      const r = await fetch("https://aviationweather.gov/api/data/metar?ids=" + name + "&format=raw", { signal: AbortSignal.timeout(4000) });
+      if (r.ok) { w = parseMetar(await r.text()) || null; ok = true; }
+    } catch (e) {}
+    this.wx.set(name, { at: ok ? now : now - 240_000, w });   // failed fetch: keep the old data, retry in 1 min
+    return w;
+  }
+  async atisFor(name) {
+    const t = this.towers.get(name);
+    if (!t) return null;
+    const a = t.atis || (t.atis = { letter: "A", runways: "", frequencies: "", remarks: "", at: Date.now(), sig: "" });
+    const w = await this.weather(name);
+    if (w) {
+      const sg = wxSig(w);
+      if (sg !== a.sig) { if (a.sig) { a.letter = nextLetter(a.letter); a.at = Date.now(); } a.sig = sg; await this.ctx.storage.put("tower:" + name, t); }
+    }
+    return { name, letter: a.letter, runways: a.runways, frequencies: a.frequencies, remarks: a.remarks, updated: a.at, weather: w, wx_ok: !!w };
   }
 
   voiceListening() {
@@ -665,7 +691,7 @@ export class Hub {
       if (!/^[A-Z0-9]{2,8}$/.test(name) || !(Math.abs(lat) <= 90) || !(Math.abs(lon) <= 180))
         return json({ error: "need name (2-8 letters/digits), latitude and longitude" }, 400);
       if (!this.towers.has(name) && this.towers.size >= MAX_TOWERS) return json({ error: "too many towers" }, 409);
-      const t = { name, latitude: lat, longitude: lon, altitude_ft: Number(d.altitude_ft) || 0, at: Date.now(), member: request.headers.get("X-Member") === "1" };
+      const t = { name, latitude: lat, longitude: lon, altitude_ft: Number(d.altitude_ft) || 0, at: Date.now(), member: request.headers.get("X-Member") === "1", atis: (this.towers.get(name) || {}).atis };
       this.towers.set(name, t);
       await this.ctx.storage.put("tower:" + name, t);
       return json({ success: true, callsign: "ATC_" + name });
@@ -675,6 +701,25 @@ export class Hub {
       this.towers.delete(name);
       await this.ctx.storage.delete("tower:" + name);
       return json({ success: true });
+    }
+
+    if (m === "GET" && p === "/api/atis") {
+      const r = await this.atisFor(String(url.searchParams.get("name") || "").trim().toUpperCase());
+      return r ? json(r) : json({ error: "no tower open at that airport" }, 404);
+    }
+    if ((m === "PUT" || m === "POST") && p === "/api/atc/atis") {
+      const d = await request.json().catch(() => ({}));
+      const name = String(d.name || "").trim().toUpperCase(), t = this.towers.get(name);
+      if (!t) return json({ error: "no tower open at that airport" }, 404);
+      const a = t.atis || (t.atis = { letter: "A", runways: "", frequencies: "", remarks: "", at: Date.now(), sig: "" });
+      const cl = (v, n) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
+      let change = d.bump === true;
+      if (d.runways !== undefined) { const v = cl(d.runways, 40).toUpperCase(); if (v !== a.runways) { a.runways = v; change = true; } }
+      if (d.frequencies !== undefined) { const v = cl(d.frequencies, 120); if (v !== a.frequencies) { a.frequencies = v; change = true; } }
+      if (d.remarks !== undefined) { const v = cl(d.remarks, 200); if (v !== a.remarks) { a.remarks = v; change = true; } }
+      if (change) { a.letter = nextLetter(a.letter); a.at = Date.now(); }
+      await this.ctx.storage.put("tower:" + name, t);
+      return json(await this.atisFor(name));
     }
 
     if (m === "GET" && p === "/api/health")

@@ -429,3 +429,43 @@ await call("DELETE", "/api/atc/tower?name=SBBR", null, "ctl");
   const nocfg = await worker.fetch(new Request("https://x/api/position", { method: "PUT", body: JSON.stringify({ latitude: 6, longitude: 6 }), headers: { "X-API-Key": "q", "X-Group": "" } }), env);
   T("no GROUP_CODE var = nobody member", nocfg.status === 200 && !hub.clients.get("q").member);
 }
+
+// ATIS
+{
+  const { parseMetar, wxSig } = await import("./src/atis.js");
+  const T = (n, v) => console.log("atis " + n + ":", v ? "PASS" : "FAIL");
+  const m1 = parseMetar("METAR SBBR 141200Z 09008KT 9999 FEW030 SCT100 25/14 Q1016 NOSIG=");
+  T("parse wind/qnh/temp/clouds", m1.wind.dir === 90 && m1.wind.spd === 8 && m1.qnh === 1016 && m1.temp === 25 && m1.dew === 14 && m1.clouds.length === 2 && m1.vis_m === 9999);
+  const m2 = parseMetar("KJFK 141251Z 28016G25KT 10SM FEW250 M02/M10 A3012");
+  T("parse US (gust, SM, A, negative temp)", m2.wind.gst === 25 && m2.vis_m === 16090 && m2.qnh === 1020 && m2.temp === -2 && m2.dew === -10);
+  T("CAVOK + VRB + MPS", (() => { const x = parseMetar("UUEE 141230Z VRB02MPS CAVOK 05/01 Q1008"); return x.cavok && x.wind.dir === null && x.wind.spd === 4 && x.vis_m === 9999; })());
+  T("sig steady for small change", wxSig(m1) === wxSig(parseMetar("SBBR 141300Z 10010KT 9999 FEW030 25/14 Q1016")));
+  T("sig changes with QNH", wxSig(m1) !== wxSig(parseMetar("SBBR 141300Z 09008KT 9999 FEW030 25/14 Q1013")));
+  let metar = "SBBR 141200Z 09008KT 9999 FEW030 25/14 Q1016";
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(metar);
+  const A = async (method, path, body, key = "atc") => { const r = await worker.fetch(new Request("https://x" + path, { method, body: body && JSON.stringify(body), headers: { "X-API-Key": key } }), env); const t = await r.text(); let j; try { j = JSON.parse(t); } catch (e) { j = t; } return { st: r.status, j }; };
+  T("no tower -> 404", (await A("GET", "/api/atis?name=SBZZ")).st === 404);
+  await A("PUT", "/api/atc/tower", { name: "SBBR", latitude: -15.8, longitude: -47.9 });
+  const g = (await A("GET", "/api/atis?name=SBBR")).j;
+  T("letter A + decoded weather", g.letter === "A" && g.weather.qnh === 1016 && g.weather.wind.spd === 8 && g.wx_ok);
+  T("runways -> bump B", (await A("PUT", "/api/atc/atis", { name: "SBBR", runways: "11r 11l" })).j.letter === "B");
+  const same = (await A("PUT", "/api/atc/atis", { name: "SBBR", runways: "11R 11L" })).j;
+  T("same text no bump, uppercase", same.letter === "B" && same.runways === "11R 11L");
+  T("manual bump C", (await A("PUT", "/api/atc/atis", { name: "SBBR", bump: true })).j.letter === "C");
+  T("freq + remarks saved, bump D", (await A("PUT", "/api/atc/atis", { name: "SBBR", frequencies: "TWR 118.3", remarks: "bird activity" })).j.letter === "D");
+  metar = "SBBR 141300Z 09008KT 9999 FEW030 25/14 Q1010";
+  hub.wx.clear();
+  T("weather change auto-bump E", (await A("GET", "/api/atis?name=SBBR")).j.letter === "E");
+  T("cached weather no bump", (await A("GET", "/api/atis?name=SBBR")).j.letter === "E");
+  await A("PUT", "/api/atc/tower", { name: "SBBR", latitude: -15.8, longitude: -47.9 });
+  const keep = (await A("GET", "/api/atis?name=SBBR")).j;
+  T("tower re-register keeps ATIS", keep.letter === "E" && keep.frequencies === "TWR 118.3");
+  hub = new Hub(ctx); await hub.fetch(new Request("https://hub/api/health"));
+  T("survives restart", (await A("GET", "/api/atis?name=SBBR")).j.remarks === "bird activity");
+  globalThis.fetch = async () => { throw new Error("down"); };
+  hub.wx.clear();
+  const off = (await A("GET", "/api/atis?name=SBBR")).j;
+  T("weather down -> still answers", off.letter === "E" && off.wx_ok === false && off.weather === null);
+  globalThis.fetch = realFetch;
+}
