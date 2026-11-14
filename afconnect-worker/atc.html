@@ -393,7 +393,12 @@ function renderTowerBox(){var t=ac.filter(function(a){return a.virtual_tower});
   $('twList').innerHTML=t.length?t.map(function(a){var n=esc(String(a.callsign).replace(/^ATC_/,''));
     return'<div class="row"><span>'+esc(a.callsign)+' <span class="m">virtual</span></span><button data-name="'+n+'">Close</button></div>'}).join(''):'<div class="m" style="margin-top:6px">'+L('No virtual towers open.','Nenhuma torre virtual aberta.')+'</div>'}
 $('grpBtn').addEventListener('click',function(){var v=prompt(L('Group code (from Discord). Empty = none.','Código do grupo (do Discord). Vazio = nenhum.'),group);if(v===null)return;
-  group=v.trim();try{if(group)localStorage.setItem('afc_group',group);else localStorage.removeItem('afc_group')}catch(e){}refreshMyTowers()});
+  group=v.trim();try{if(group)localStorage.setItem('afc_group',group);else localStorage.removeItem('afc_group')}catch(e){}checkGroup();refreshMyTowers()});
+var grpMsg='';
+function checkGroup(){if(!group){grpMsg='';return}
+  fetch('/api/health',{headers:{'X-Group':group}}).then(function(r){return r.json()}).then(function(j){
+    grpMsg=j.member?L(' · group: member',' · grupo: membro'):L(' · group code WRONG',' · código do grupo ERRADO')}).catch(function(){})}
+checkGroup();
 function refreshMyTowers(){if(key)myTowers.forEach(function(t){putTower(t).catch(function(){})})}
 
 /* ---------- polling ---------- */
@@ -415,7 +420,7 @@ function applyTraffic(j){
       else if(!centroidDone&&ac.length){center.lat=ac.reduce(function(s,a){return s+a.latitude},0)/ac.length;
         center.lon=ac.reduce(function(s,a){return s+a.longitude},0)/ac.length;centroidDone=true}}
     computeConfl();
-    var nT=ac.filter(isTwr).length,nA=ac.length-nT;setStatus(nA+L(' aircraft',' aeronaves')+' · '+nT+L(nT===1?' tower':' towers',nT===1?' torre':' torres')+(ac.some(function(x){return x.member})?L(' · violet/gold = group',' · violeta/dourado = grupo'):''),true);draw();renderStrips();renderTowerBox()}
+    var nT=ac.filter(isTwr).length,nA=ac.length-nT;setStatus(nA+L(' aircraft',' aeronaves')+' · '+nT+L(nT===1?' tower':' towers',nT===1?' torre':' torres')+(ac.some(function(x){return x.member})?L(' · violet/gold = group',' · violeta/dourado = grupo'):'')+grpMsg,true);draw();renderStrips();renderTowerBox()}
 /* ---------- voice (push-to-talk, both directions) ---------- */
 var voiceOn=true,vclips=[],heard=null,pttBusy=false,actx=null,rec=null;
 try{voiceOn=localStorage.getItem('afc_voice')!=='0'}catch(e){}

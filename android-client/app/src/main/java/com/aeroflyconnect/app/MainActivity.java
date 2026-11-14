@@ -264,6 +264,7 @@ public class MainActivity extends Activity {
         LinearLayout grp = section(root, Api.t(this, "Group code", "Código do grupo"));
         Api.key(this);   // loads Api.group
         final EditText grpIn = addField(grp, Api.t(this, "Code from the Discord server (optional)", "Código do servidor Discord (opcional)"), Api.group, false, false);
+        grpIn.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD);   // no autocorrect/auto-capital
         grpIn.addTextChangedListener(new android.text.TextWatcher() {
             @Override public void beforeTextChanged(CharSequence c, int a, int b, int d) { }
             @Override public void onTextChanged(CharSequence c, int a, int b, int d) { }
