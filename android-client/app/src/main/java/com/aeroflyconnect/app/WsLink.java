@@ -73,7 +73,7 @@ final class WsLink {
         connecting = true;
         try {
             String base = BuildConfig.SERVER_URL;
-            Request r = new Request.Builder().url(base + "/ws?key=" + java.net.URLEncoder.encode(key, "UTF-8")).build();
+            Request r = new Request.Builder().url(base + "/ws?key=" + java.net.URLEncoder.encode(key, "UTF-8") + (Api.group.isEmpty() ? "" : "&group=" + java.net.URLEncoder.encode(Api.group, "UTF-8"))).build();
             sock = CLIENT.newWebSocket(r, new WebSocketListener() {
                 @Override public void onOpen(WebSocket w, Response resp) {
                     sock = w;   // set here too: the callback can run before newWebSocket() has returned

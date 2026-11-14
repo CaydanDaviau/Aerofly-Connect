@@ -260,6 +260,20 @@ public class MainActivity extends Activity {
         LinearLayout root = column();
         root.addView(text(Api.t(this, "Settings", "Configurações"), 24, true));
 
+        // ----- Group code -----
+        LinearLayout grp = section(root, Api.t(this, "Group code", "Código do grupo"));
+        Api.key(this);   // loads Api.group
+        final EditText grpIn = addField(grp, Api.t(this, "Code from the Discord server (optional)", "Código do servidor Discord (opcional)"), Api.group, false, false);
+        grpIn.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence c, int a, int b, int d) { }
+            @Override public void onTextChanged(CharSequence c, int a, int b, int d) { }
+            @Override public void afterTextChanged(android.text.Editable e) { Api.setGroup(MainActivity.this, e.toString()); }
+        });
+        TextView grpHint = dim(Api.t(this, "Members show in a different colour on the radar and map. Takes effect at the next Start.",
+                "Membros aparecem em outra cor no radar e no mapa. Vale a partir do próximo Iniciar."), 13);
+        grpHint.setPadding(0, pad / 4, 0, 0);
+        grp.addView(grpHint);
+
         // ----- Sim on another device (first card) -----
         LinearLayout simc = section(root, Api.t(this, "Sim on a different device", "Sim em outro aparelho"));
         final LinearLayout simBox = new LinearLayout(this);

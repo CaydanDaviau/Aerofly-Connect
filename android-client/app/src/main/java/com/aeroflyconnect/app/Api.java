@@ -22,8 +22,12 @@ final class Api {
     }
 
     /** Key is created once on first run. No account needed. */
+    static volatile String group = "";   // Discord group code, sent as X-Group (server turns it into a member flag)
+    static void setGroup(Context c, String v) { group = v == null ? "" : v.trim(); prefs(c).edit().putString("group", group).apply(); }
+
     static String key(Context c) {
         SharedPreferences p = prefs(c);
+        group = p.getString("group", "");
         String k = p.getString("key", null);
         if (k == null) {
             byte[] b = new byte[8];
@@ -140,6 +144,7 @@ final class Api {
             c.setConnectTimeout(6000);
             c.setReadTimeout(6000);
             c.setRequestProperty("X-API-Key", key);
+            if (!group.isEmpty()) c.setRequestProperty("X-Group", group);
             if (json != null) {
                 c.setDoOutput(true);
                 c.setRequestProperty("Content-Type", "application/json");
