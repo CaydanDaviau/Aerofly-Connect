@@ -61,7 +61,7 @@ function towerAircraft(t, distance) {
     ground_speed: 0, velocity_knots: 0, vertical_speed_ft_min: 0, vertical_speed: 0,
     squawk: "0000", squawk_code: "0000", ...towerFields(callsign),
     timestamp: Math.floor(Date.now() / 1000), assigned_squawk: null, virtual_tower: true, member: !!t.member,
-    position: t.pos || "TWR", airport: t.apt || t.name, claimed: !!t.holder,
+    position: t.pos || "TWR", airport: t.apt || t.name, claimed: !!t.holder, freq: t.freq || "",
     distance_miles: Math.round(distance * 10) / 10,
   };
 }
@@ -110,6 +110,10 @@ const REQ_TYPES = ["clearance", "taxi", "takeoff", "land", "mayday", "mayday_can
 const MAYDAY_MS = 30 * 60_000, MAYDAY_NEAR_MI = 30;
 const REQ_LOCK_MS = { takeoff: 90_000, land: 120_000 };
 const TOWER_COVER_MI = 8;   // a human tower this close to the aircraft (or named like its airport) takes the request
+// radio frequency "118.300" (118.000-136.975), "" when empty/invalid
+const normFreq = v => { const m = /^(\d{3})\.(\d{1,3})$/.exec(String(v ?? "").trim()); if (!m) return ""; const f = m[1] + "." + m[2].padEnd(3, "0"); const n = Number(f); return n >= 118 && n <= 136.975 ? f : ""; };
+// heard when either side is untuned ("all") or both are on the same frequency
+const tunedTo = (a, b) => !a || !b || a === b;
 const fqPick = (str, types) => { const m = {}; for (const kv of String(str || "").split(";")) { const [k, v] = kv.split("="); if (k && v && /^\d{3}\.\d{1,3}$/.test(v)) m[k] = v; } for (const t of types) if (m[t]) return m[t]; return ""; };
 const PHRASE = {
   en: {
@@ -282,6 +286,12 @@ export class Hub {
 
   // Auto-ATC follow-up for one position upload: proactive calls, runway locks, go-around, unauthorised actions.
   // Returns the messages to hand to the pilot in this reply. Needs `phase` from our client; stock Abflug is skipped.
+  // frequency for an auto handoff: a staffed human position of that airport first, else OurAirports data from the app
+  pf(str, apt, roles) {
+    for (const r of roles) for (const t of this.towers.values()) if (t.freq && (t.apt || t.name) === apt && (t.pos || "TWR") === r) return t.freq;
+    return fqPick(str, roles);
+  }
+
   track(key, c, now) {
     const p = c.pos, cur = p.phase, out = [];
     if (cur !== "ground" && cur !== "runway" && cur !== "air") return out;
@@ -307,7 +317,7 @@ export class Hub {
     }
 
     if (cur === "air") {
-      if (prev && prev !== "air" && !st.calls.dep) { st.calls.dep = true; if (st.gr.takeoff > now || prev === "runway") { const f = fqPick(p.fq_dep, ["DEP", "APP"]); say(ph.departure(f), false, "Departure" + (f ? " " + f : "")); } }
+      if (prev && prev !== "air" && !st.calls.dep) { st.calls.dep = true; if (st.gr.takeoff > now || prev === "runway") { const f = this.pf(p.fq_dep, dep, ["DEP", "APP"]); say(ph.departure(f), false, "Departure" + (f ? " " + f : "")); } }
       st.gr.taxi = 0; st.gr.takeoff = 0;
       // short final to a runway that is occupied: go around
       const lr = cleanRunway(plan.arrival_runway) || st.landRwy;
@@ -320,9 +330,9 @@ export class Hub {
       if (arr && Number.isFinite(an) && p.arr_nm !== null && p.arr_nm !== undefined) {
         if (an > 45) { st.calls.app = false; st.calls.twr = false; }
         else if (an <= 12 && !st.calls.twr) {
-          st.calls.twr = true; st.calls.app = true; const f = fqPick(p.fq_arr, ["TWR"]); say(ph.tower(f), false, "Tower" + (f ? " " + f : ""));
+          st.calls.twr = true; st.calls.app = true; const f = this.pf(p.fq_arr, arr, ["TWR"]); say(ph.tower(f), false, "Tower" + (f ? " " + f : ""));
         } else if (an <= 35 && an > 12 && !st.calls.app) {
-          st.calls.app = true; const f = fqPick(p.fq_arr, ["APP", "DEP"]); say(ph.approach(f), false, "Approach" + (f ? " " + f : ""));
+          st.calls.app = true; const f = this.pf(p.fq_arr, arr, ["APP", "DEP"]); say(ph.approach(f), false, "Approach" + (f ? " " + f : ""));
         }
       }
     } else {
@@ -336,7 +346,7 @@ export class Hub {
         }
         st.gr.land = 0; st.gr.taxi = now + 30 * 60_000;
         c.emerg = null;   // an emergency ends on the ground (its landing is never a violation)
-        if (cleared && !busy && apt && apt === arr) { const f = fqPick(p.fq_arr, ["GND"]); say(ph.welcome(apt, f), false, "Ground" + (f ? " " + f : "")); }
+        if (cleared && !busy && apt && apt === arr) { const f = this.pf(p.fq_arr, arr, ["GND"]); say(ph.welcome(apt, f), false, "Ground" + (f ? " " + f : "")); }
       } else if (now > st.grace) {
         if (cur === "ground" && gs >= 10 && !(st.gr.taxi > now) && !(st.gr.takeoff > now))
           this.violate(key, c, st, "taxi", apt, "", now, () => say(ph.vTaxi, true));
@@ -372,7 +382,7 @@ export class Hub {
       const d = haversineMi(lat, lon, pos.latitude, pos.longitude);
       if (d <= rad) {
         const callsign = normCallsign(c.plan.callsign ?? pos.callsign);
-        out.push({ ...pos, ...c.plan, callsign, ...towerFields(callsign), member: !!c.member, assigned_squawk: c.assigned ? c.assigned.squawk : null, emergency: !!(c.emerg && Date.now() < c.emerg.until), no_clnc: !!(c.viol && Date.now() - c.viol.at < VIOL_SHOW_MS), ...(ck === key ? { self: true } : {}), distance_miles: Math.round(d * 10) / 10 });
+        out.push({ ...pos, ...c.plan, callsign, ...towerFields(callsign), member: !!c.member, freq: c.pos.freq || "", assigned_squawk: c.assigned ? c.assigned.squawk : null, emergency: !!(c.emerg && Date.now() < c.emerg.until), no_clnc: !!(c.viol && Date.now() - c.viol.at < VIOL_SHOW_MS), ...(ck === key ? { self: true } : {}), distance_miles: Math.round(d * 10) / 10 });
       }
     }
     for (const t of this.towers.values()) {
@@ -433,8 +443,8 @@ export class Hub {
   }
   trafficBody(key, lat, lon, rad, max) {
     const { out, truncated } = this.trafficList(key, lat, lon, rad, Math.max(1, Math.min(MAX_TRAFFIC, Number(max) || MAX_TRAFFIC)));
-    const atc_messages = [...this.msgs.values()].map(x => ({ id: x.id, icao_address: x.icao, text: x.text, kind: x.kind, urgent: !!x.urgent, status: x.status, at: x.at }));
-    const voice_clips = [...this.clips.values()].filter(v => v.dir === "up").map(v => ({ id: v.id, icao_address: v.icao, callsign: v.callsign, ms: v.ms, at: v.at }));
+    const atc_messages = [...this.msgs.values()].map(x => ({ id: x.id, icao_address: x.icao, text: x.text, kind: x.kind, urgent: !!x.urgent, status: x.status, at: x.at, freq: x.freq || "" }));
+    const voice_clips = [...this.clips.values()].filter(v => v.dir === "up").map(v => ({ id: v.id, icao_address: v.icao, callsign: v.callsign, ms: v.ms, at: v.at, freq: v.freq || "" }));
     return { aircraft: out, traffic: out, truncated, active_clients: this.clients.size, atc_messages, crashes: this.crashList(), voice_clips };
   }
 
@@ -474,7 +484,7 @@ export class Hub {
     const id = "v" + Date.now().toString(36) + (++this.msgSeq).toString(36);
     const ms = Math.max(0, Math.min(10_000, Number(d.ms) || 0));
     const pos = target.pos || {};
-    this.clips.set(id, { id, dir, icao: pos.icao_address, callsign: normCallsign(target.plan.callsign ?? pos.callsign), audio, mime: String(d.mime || "audio/mp4").slice(0, 40), ms, at: Date.now(), delivered: false });
+    this.clips.set(id, { id, dir, icao: pos.icao_address, callsign: normCallsign(target.plan.callsign ?? pos.callsign), audio, mime: String(d.mime || "audio/mp4").slice(0, 40), ms, freq: dir === "up" ? (pos.freq || "") : "", at: Date.now(), delivered: false });
     if (this.clips.size > VOICE_MAX_CLIPS) this.clips.delete(this.clips.keys().next().value);
     return id;
   }
@@ -560,6 +570,7 @@ export class Hub {
       const target = [...this.clients.values()].find(c => c.pos && c.pos.icao_address === icao);
       if (!target) return json({ error: "aircraft not found" }, 404);
       if (!text) return json({ error: "empty message" }, 400);
+      if (!tunedTo(target.pos.freq, normFreq(d.freq))) return json({ error: "not_tuned", freq: target.pos.freq, callsign: normCallsign(target.plan.callsign ?? target.pos.callsign) }, 409);
       return json({ success: true, id: this.addMsg(target, text, "msg", { urgent: d.urgent === true }).id });
     }
     if ((m === "PUT" || m === "POST") && p === "/api/messages/reply") {
@@ -602,6 +613,7 @@ export class Hub {
       if (!target) return json({ error: "aircraft not found" }, 404);
       if (target.pos.voice === false) return json({ error: "voice_off", callsign: normCallsign(target.plan.callsign ?? target.pos.callsign) }, 409);
       if (!d.audio || typeof d.audio !== "string" || d.audio.length > VOICE_MAX_B64) return json({ error: "bad audio" }, 400);
+      if (!tunedTo(target.pos.freq, normFreq(d.freq))) return json({ error: "not_tuned", freq: target.pos.freq, callsign: normCallsign(target.plan.callsign ?? target.pos.callsign) }, 409);
       return json({ success: true, id: this.addClip("down", target, d) });
     }
 
@@ -615,7 +627,7 @@ export class Hub {
       const now = Date.now();
       if (c.lastChat && now - c.lastChat < 2000) return json({ error: "too many messages" }, 429);
       c.lastChat = now;
-      const msg = this.addMsg(c, text, "chat", {});
+      const msg = this.addMsg(c, text, "chat", { freq: c.pos.freq || "" });
       msg.status = "request";
       return json({ success: true, id: msg.id, mode: this.towers.size > 0 ? "controller" : "none" });
     }
@@ -719,13 +731,15 @@ export class Hub {
         return json({ error: "need name (2-8 letters/digits, optional _DEL/_GND/_TWR/_APP/_DEP), latitude and longitude" }, 400);
       const name = pn.name, old = this.towers.get(name), now = Date.now();
       const holder = String(d.holder || "").slice(0, 40);
+      const freq = normFreq(d.freq);
+      if (String(d.freq ?? "").trim() && !freq) return json({ error: "bad_freq" }, 400);
       if (!old && this.towers.size >= MAX_TOWERS) return json({ error: "too many towers" }, 409);
       if (old?.member && request.headers.get("X-Member") !== "1") return json({ error: "member_tower" }, 403);
       // one controller per position: a live claim by someone else blocks (heartbeats keep it alive)
       if (old && old.holder && holder && old.holder !== holder && now - old.at <= POS_TTL_MS) return json({ error: "position_taken", position: pn.pos, airport: pn.apt }, 409);
       if (old && old.holder && !holder && now - old.at <= POS_TTL_MS) return json({ error: "position_taken", position: pn.pos, airport: pn.apt }, 409);
       const atis = old && old.atis;
-      const t = { name, apt: pn.apt, pos: pn.pos, holder: holder || undefined, latitude: lat, longitude: lon, altitude_ft: Number(d.altitude_ft) || 0, at: now, member: request.headers.get("X-Member") === "1", atis };
+      const t = { name, apt: pn.apt, pos: pn.pos, freq, holder: holder || undefined, latitude: lat, longitude: lon, altitude_ft: Number(d.altitude_ft) || 0, at: now, member: request.headers.get("X-Member") === "1", atis };
       this.towers.set(name, t);
       await this.ctx.storage.put("tower:" + name, t);
       return json({ success: true, callsign: "ATC_" + name, position: pn.pos, airport: pn.apt });
@@ -797,7 +811,7 @@ export class Hub {
         landing_fpm: pick(d, "landing_fpm"),
         terminal: pick(d, "terminal") === true,
         voice: pick(d, "voice") !== false,
-        phase: pick(d, "phase"), rwy_on: pick(d, "rwy_on"), on_rwy: pick(d, "on_rwy"), rwy_apt: pick(d, "rwy_apt"), arr_nm: pick(d, "arr_nm"), fq_dep: pick(d, "fq_dep"), fq_arr: pick(d, "fq_arr"),
+        phase: pick(d, "phase"), rwy_on: pick(d, "rwy_on"), on_rwy: pick(d, "on_rwy"), rwy_apt: pick(d, "rwy_apt"), arr_nm: pick(d, "arr_nm"), fq_dep: pick(d, "fq_dep"), fq_arr: pick(d, "fq_arr"), freq: normFreq(pick(d, "freq")),
         airplane_model: pick(d, "airplane_model"),
         airplane_livery: pick(d, "airplane_livery", "livery"),
         timestamp: pick(d, "timestamp") ?? Math.floor(Date.now() / 1000),
@@ -825,6 +839,9 @@ export class Hub {
       for (const x of this.msgs.values()) if (x.icao === icao && x.status === "sent") { x.status = "delivered"; messages.push({ id: x.id, text: x.text, kind: x.kind, urgent: !!x.urgent, at: x.at }); }
       messages.push(...this.track(key, c, Date.now()));
       const reply = { success: true, messages, traffic_alerts: this.trafficAlerts(key, c) };
+      const sApt = up(c.pos.phase === "air" ? c.plan.arrival_airport : c.plan.departure_airport);
+      const stations = sApt ? [...this.towers.values()].filter(t => t.freq && (t.apt || t.name) === sApt).map(t => ({ pos: t.pos || "TWR", freq: t.freq, airport: sApt })) : [];
+      if (stations.length) reply.stations = stations;
       const voice = [];
       for (const v of this.clips.values()) if (v.dir === "down" && v.icao === icao && !v.delivered) { v.delivered = true; voice.push({ id: v.id, audio: v.audio, mime: v.mime, ms: v.ms, at: v.at }); }
       if (voice.length) reply.voice = voice;

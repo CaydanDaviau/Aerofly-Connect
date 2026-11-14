@@ -84,8 +84,10 @@ input::placeholder{color:var(--dim)}
       <div id="twrbox" class="strip twr">
         <div class="h"><span class="cs">Towers</span></div>
         <div class="ctl"><input id="twIcao" maxlength="8" placeholder="SBBR" autocapitalize="characters" style="width:96px;letter-spacing:.1em">
+          <input id="twFreq" maxlength="7" placeholder="121.900" inputmode="decimal" title="Frequency (optional)" style="width:74px">
           <select id="twPos" title="Position"><option>TWR</option><option>GND</option><option>DEL</option><option>APP</option><option>DEP</option></select>
           <button id="twOpen">Open position</button></div>
+        <div id="talkRow" class="m" style="display:none;margin-top:4px">Talk on <select id="talkOn"></select></div>
         <div id="twList"></div>
       </div>
       <div id="list"></div>
@@ -350,10 +352,10 @@ function renderStrips(force){
       '<button data-act="set">'+L('Assign','Atribuir')+'</button><button data-act="auto">Auto</button><button data-act="clear">'+L('Clear','Limpar')+'</button></div>'+
       '<div class="ctl"><button class="ptt'+(voiceOn&&a.voice!==false?'':' off')+'" id="ptt" data-icao="'+esc(id)+'" data-cs="'+esc(a.callsign||id)+'" data-voice="'+(a.voice===false?'0':'1')+'">'+(a.voice===false?L('Pilot voice off','Voz do piloto desligada'):L('Hold to talk','Segure para falar'))+'</button></div>'+
       '<div class="ctl"><input id="msgin" maxlength="300" placeholder="'+L('Message to pilot','Mensagem ao piloto')+'"><label class="urg"><input type="checkbox" id="urg"'+(urgent?' checked':'')+'> '+L('Urgent','Urgente')+'</label><button data-act="msg">'+L('Send','Enviar')+'</button></div>':'';
-    var vc=vclips.filter(function(v){return v.icao_address===id}).slice(-1).map(function(v){return'<div class="mlog chat"><b>'+L('PILOT voice','PILOTO voz')+'</b> '+Math.round((v.ms||0)/1000)+' s <button data-act="vplay" data-clip="'+esc(v.id)+'">&#9654;</button></div>'}).join('');
-    var ml=vc+msgs.filter(function(m){return m.icao_address===id}).slice(-3).map(function(m){return m.kind==='chat'?'<div class="mlog chat"><b>'+L('PILOT','PILOTO')+':</b> '+esc(m.text)+'</div>':'<div class="mlog">&rsaquo; '+esc(m.text)+' &mdash; <b class="'+esc(m.status)+'">'+esc(m.status.toUpperCase())+'</b></div>'}).join('');
+    var vc=vclips.filter(function(v){return v.icao_address===id&&isHeard(v.freq)}).slice(-1).map(function(v){return'<div class="mlog chat"><b>'+L('PILOT voice','PILOTO voz')+'</b> '+Math.round((v.ms||0)/1000)+' s <button data-act="vplay" data-clip="'+esc(v.id)+'">&#9654;</button></div>'}).join('');
+    var ml=vc+msgs.filter(function(m){return m.icao_address===id&&(m.kind!=='chat'||isHeard(m.freq))}).slice(-3).map(function(m){return m.kind==='chat'?'<div class="mlog chat"><b>'+L('PILOT','PILOTO')+':</b> '+esc(m.text)+'</div>':'<div class="mlog">&rsaquo; '+esc(m.text)+' &mdash; <b class="'+esc(m.status)+'">'+esc(m.status.toUpperCase())+'</b></div>'}).join('');
     return'<div class="strip'+(isSel?' sel':'')+(tw?' twr':(asg?'':' nocode'))+(a.no_clnc?' noclnc':'')+(a.emergency?' emerg':'')+'" data-id="'+esc(id)+'">'+
-      '<div class="h"><span class="cs">'+esc(a.callsign||id)+(tw?' &#9650;':'')+(a.emergency?'<span class="mayday">MAYDAY</span>':'')+(a.no_clnc?'<span class="noc">NO CLNC</span>':'')+'</span><span class="m">'+Math.round(r.dist)+' nm / '+p3(r.brg)+'&deg;</span></div>'+
+      '<div class="h"><span class="cs">'+esc(a.callsign||id)+(tw?' &#9650;':'')+(a.emergency?'<span class="mayday">MAYDAY</span>':'')+(a.no_clnc?'<span class="noc">NO CLNC</span>':'')+'</span><span class="m">'+Math.round(r.dist)+' nm / '+p3(r.brg)+'&deg;'+(a.freq?' &middot; '+esc(a.freq):'')+'</span></div>'+
       (tw?'':'<div>'+altStr(a.altitude_ft)+' &middot; '+Math.round(Number(a.ground_speed)||0)+' kt &middot; HDG '+p3(Number(a.heading_mag!=null?a.heading_mag:a.heading_true)||0)+'&deg;'+(a.heading_mag==null?'T':'')+' &middot; '+(Number(a.vertical_speed_ft_min)>100?'&uarr;':Number(a.vertical_speed_ft_min)<-100?'&darr;':'&rarr;')+'</div>')+
       (tw?'':'<div>'+st+'</div>')+
       (!tw&&(a.airplane_model||a.departure_runway||a.arrival_runway)?'<div class="m">'+(a.airplane_model?esc(a.airplane_model):'')+((a.departure_runway||a.arrival_runway)?(a.airplane_model?' &middot; ':'')+'RWY '+esc(a.departure_runway||'--')+' &rarr; '+esc(a.arrival_runway||'--'):'')+'</div>':'')+
@@ -374,8 +376,8 @@ function assign(id,sq){var body={icao_address:id};if(sq)body.squawk=sq;
    .then(function(o){toast(o.ok?L('Assigned ','Atribuído ')+o.j.squawk:L('Error: ','Erro: ')+(o.j.error||o.s));poll(true)})
    .catch(function(){toast(L('Network error','Erro de rede'))})}
 function sendMsg(id){var el=$('msgin'),t=(el.value||'').trim();if(!t){toast(L('Type a message','Digite uma mensagem'));return}
-  api('/api/atc/message',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({icao_address:id,text:t,urgent:urgent})})
-   .then(function(r){return r.json().then(function(j){if(!r.ok){toast(L('Error: ','Erro: ')+(j.error||r.status));return}el.value='';toast(L('Sent','Enviado'));poll(true)})})
+  api('/api/atc/message',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({icao_address:id,text:t,urgent:urgent,freq:talkFreq()})})
+   .then(function(r){return r.json().then(function(j){if(!r.ok){toast(j.error==='not_tuned'?NOTTUNED(j):L('Error: ','Erro: ')+(j.error||r.status));return}el.value='';toast(L('Sent','Enviado'));poll(true)})})
    .catch(function(){toast(L('Network error','Erro de rede'))})}
 $('strips').addEventListener('change',function(e){if(e.target.id==='urg')urgent=e.target.checked});
 $('strips').addEventListener('keydown',function(e){if(e.key==='Enter'&&e.target.id==='msgin'){var s=e.target.closest('.strip');if(s)sendMsg(s.getAttribute('data-id'))}});
@@ -386,19 +388,30 @@ var myTowers=[];try{myTowers=JSON.parse(localStorage.getItem('abflug_towers')||'
 function saveTowers(){try{localStorage.setItem('abflug_towers',JSON.stringify(myTowers))}catch(e){}}
 var holder=localStorage.getItem('afc_holder');if(!holder){holder='h'+Math.random().toString(36).slice(2,12);try{localStorage.setItem('afc_holder',holder)}catch(e){}}
 function putTower(t){var b={};for(var k in t)b[k]=t[k];b.holder=holder;return api('/api/atc/tower',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)})}
+function nf(v){v=String(v||'').trim();if(/^\d{4,6}$/.test(v))v=v.slice(0,3)+'.'+v.slice(3);var m=/^(\d{3})\.(\d{1,3})$/.exec(v);if(!m)return'';var f=m[1]+'.'+(m[2]+'00').slice(0,3),n=+f;return n>=118&&n<=136.975?f:''}
+/* a pilot's chat/clip is heard when it is on one of my positions' frequencies, or either side is untuned; no positions = I hear all */
+function isHeard(f){if(!f||!myTowers.length)return true;return myTowers.some(function(t){return !t.freq||t.freq===f})}
+var talkName='';
+function talkFreq(){var t=myTowers.filter(function(x){return x.name===talkName})[0]||myTowers.filter(function(x){return x.freq})[0];return t&&t.freq?t.freq:''}
+function updateTalk(){var row=$('talkRow'),sel=$('talkOn');if(myTowers.length<2){row.style.display='none';talkName='';return}
+  if(!myTowers.some(function(x){return x.name===talkName}))talkName=myTowers[0].name;
+  sel.innerHTML=myTowers.map(function(x){return'<option value="'+esc(x.name)+'"'+(x.name===talkName?' selected':'')+'>'+esc(x.name)+(x.freq?' '+esc(x.freq):'')+'</option>'}).join('');row.style.display=''}
+$('talkOn').onchange=function(){talkName=this.value};
+var NOTTUNED=function(j){return(j.callsign||'')+L(' is tuned to ',' está sintonizado em ')+j.freq+(talkFreq()?L(' (you are on ',' (você está em ')+talkFreq()+')':'')};
 var TAKEN=function(j){return L('Position '+(j.airport||'')+' '+(j.position||'')+' is already staffed by another controller','Posição '+(j.airport||'')+' '+(j.position||'')+' já está ocupada por outro controlador')};
 $('twOpen').onclick=function(){var icao=$('twIcao').value.trim().toUpperCase(),pos=$('twPos').value;
   if(!/^[A-Z0-9]{2,8}$/.test(icao)){toast(L('Enter an airport code, e.g. SBBR','Digite um código de aeroporto, ex.: SBBR'));return}
-  var name=pos==='TWR'?icao:icao+'_'+pos;
-  var ap=APT[icao],t={name:name,latitude:+(ap?ap.lat:center.lat).toFixed(5),longitude:+(ap?ap.lon:center.lon).toFixed(5)};
+  var name=pos==='TWR'?icao:icao+'_'+pos,fq=$('twFreq').value.trim()?nf($('twFreq').value):'';
+  if($('twFreq').value.trim()&&!fq){toast(L('Frequency must be 118.000-136.975','Frequência deve ser 118.000-136.975'));return}
+  var ap=APT[icao],t={name:name,freq:fq,latitude:+(ap?ap.lat:center.lat).toFixed(5),longitude:+(ap?ap.lon:center.lon).toFixed(5)};
   if(!ap)toast(rwState==='ready'?'Unknown airport - tower placed at scope center':'Airport data not loaded - tower placed at scope center');
   putTower(t).then(function(r){return r.json().then(function(j){if(!r.ok){toast(j.error==='member_tower'?MEMBER_MSG():j.error==='position_taken'?TAKEN(j):L('Error: ','Erro: ')+(j.error||r.status));return}
-    myTowers=myTowers.filter(function(x){return x.name!==name});myTowers.push(t);saveTowers();
+    myTowers=myTowers.filter(function(x){return x.name!==name});myTowers.push(t);saveTowers();updateTalk();
     if(ap)toast(L('Tower '+j.callsign+' open','Torre '+j.callsign+' aberta'));$('twIcao').value='';poll(true)})}).catch(function(){toast(L('Network error','Erro de rede'))})};
 var MEMBER_MSG=function(){return L('Member tower: enter the group code first (Group button)','Torre de membro: digite antes o código do grupo (botão Group)')};
 function closeTower(name){api('/api/atc/tower?name='+encodeURIComponent(name)+'&holder='+encodeURIComponent(holder),{method:'DELETE'}).then(function(r){if(r.status===403){toast(MEMBER_MSG());return}
   if(r.status===409){toast(L('Staffed by another controller - only they can close it','Ocupada por outro controlador - só ele pode fechar'));return}
-  myTowers=myTowers.filter(function(x){return x.name!==name});saveTowers();toast(L('Tower closed','Torre fechada'));poll(true)})}
+  myTowers=myTowers.filter(function(x){return x.name!==name});saveTowers();updateTalk();toast(L('Tower closed','Torre fechada'));poll(true)})}
 /* ---------- ATIS (inside each tower row) ---------- */
 var atisUI={};
 function brg(a,b,c,d){var r=Math.PI/180,y=Math.sin((d-b)*r)*Math.cos(c*r),x=Math.cos(a*r)*Math.sin(c*r)-Math.sin(a*r)*Math.cos(c*r)*Math.cos((d-b)*r);return(Math.atan2(y,x)/r+360)%360}
@@ -445,13 +458,13 @@ $('twList').addEventListener('click',function(e){var b=e.target.closest('button'
   var act=b.getAttribute('data-act'),row=b.closest('[data-tower]');if(act&&row)atisAct(row.getAttribute('data-tower'),act)});
 function renderTowerBox(){var box=$('twList'),names=ac.filter(function(a){return a.virtual_tower}).map(function(a){return String(a.callsign).replace(/^ATC_/,'')});
   for(var k in atisUI)if(names.indexOf(k)<0)delete atisUI[k];
-  var sig=names.map(function(n){return n+(atisUI[n]&&atisUI[n].open?'+':'')+(myTowers.some(function(x){return x.name===n})?'m':'')+(ac.some(function(x){return x.virtual_tower&&x.callsign==='ATC_'+n&&x.claimed})?'c':'')}).join(',')+'#';
+  var sig=names.map(function(n){return n+(atisUI[n]&&atisUI[n].open?'+':'')+(myTowers.some(function(x){return x.name===n})?'m':'')+(ac.some(function(x){return x.virtual_tower&&x.callsign==='ATC_'+n&&x.claimed})?'c':'')+((ac.filter(function(x){return x.virtual_tower&&x.callsign==='ATC_'+n})[0]||{}).freq||'')}).join(',')+'#';
   if(box._sig===sig)return;box._sig=sig;   /* unchanged: leave the DOM alone so typed text is kept */
   box.innerHTML='';
   if(!names.length){box.innerHTML='<div class="m" style="margin-top:6px">'+L('No virtual towers open.','Nenhuma torre virtual aberta.')+'</div>';return}
   names.forEach(function(n){var row=document.createElement('div'),u=atisUI[n];row.setAttribute('data-tower',n);
     var tw0=ac.filter(function(a){return a.virtual_tower&&String(a.callsign)==='ATC_'+n})[0]||{},mine=myTowers.some(function(x){return x.name===n});
-    row.innerHTML='<div class="row"><span>ATC_'+esc(n)+' <span class="m">'+esc(tw0.position||'TWR')+' · '+(mine?L('you','você'):tw0.claimed?L('another controller','outro controlador'):'virtual')+'</span></span><span><button data-atis="'+esc(n)+'">ATIS'+(u&&u.data?' '+esc(u.data.letter):'')+'</button> <button data-name="'+esc(n)+'">'+L('Close','Fechar')+'</button></span></div>';
+    row.innerHTML='<div class="row"><span>ATC_'+esc(n)+' <span class="m">'+esc(tw0.position||'TWR')+(tw0.freq?' '+esc(tw0.freq):'')+' · '+(mine?L('you','você'):tw0.claimed?L('another controller','outro controlador'):'virtual')+'</span></span><span><button data-atis="'+esc(n)+'">ATIS'+(u&&u.data?' '+esc(u.data.letter):'')+'</button> <button data-name="'+esc(n)+'">'+L('Close','Fechar')+'</button></span></div>';
     if(u&&u.open){row.appendChild(u.el);atisFill(n)}
     box.appendChild(row)})}
 $('grpBtn').addEventListener('click',function(){var v=prompt(L('Group code (from Discord). Empty = none.','Código do grupo (do Discord). Vazio = nenhum.'),group);if(v===null)return;
@@ -461,7 +474,7 @@ function checkGroup(){if(!group){grpMsg='';return}
   fetch('/api/health',{headers:{'X-Group':group}}).then(function(r){return r.json()}).then(function(j){
     grpMsg=j.member?L(' · group: member',' · grupo: membro'):L(' · group code WRONG',' · código do grupo ERRADO')}).catch(function(){})}
 checkGroup();
-function refreshMyTowers(){if(key)myTowers.slice().forEach(function(t){putTower(t).then(function(r){if(r.status===409){r.json().then(function(j){myTowers=myTowers.filter(function(x){return x.name!==t.name});saveTowers();toast(TAKEN(j))})}}).catch(function(){})})}
+function refreshMyTowers(){if(key)myTowers.slice().forEach(function(t){putTower(t).then(function(r){if(r.status===409){r.json().then(function(j){myTowers=myTowers.filter(function(x){return x.name!==t.name});saveTowers();updateTalk();toast(TAKEN(j))})}}).catch(function(){})})}
 
 /* ---------- polling ---------- */
 function setStatus(t,ok){var s=$('status');s.textContent=t;s.className=ok?'ok':''}
@@ -498,7 +511,7 @@ $('voiceBtn').onclick=function(){voiceOn=!voiceOn;try{localStorage.setItem('afc_
 setVoiceBtn();setInterval(listen,25000);setTimeout(listen,1500);
 function onClips(list){vclips=list;
   if(heard===null){heard={};list.forEach(function(v){heard[v.id]=1});return}
-  list.forEach(function(v){if(!heard[v.id]){heard[v.id]=1;if(voiceOn)playClip(v.id)}})}
+  list.forEach(function(v){if(!heard[v.id]){heard[v.id]=1;if(voiceOn&&isHeard(v.freq))playClip(v.id)}})}
 function b64buf(b){var s=atob(b),n=s.length,u=new Uint8Array(n);for(var i=0;i<n;i++)u[i]=s.charCodeAt(i);return u.buffer}
 function playClip(id){
   api('/api/voice/clip?id='+encodeURIComponent(id)).then(function(r){return r.ok?r.json():null}).then(function(j){
@@ -530,9 +543,10 @@ function pttStart(btn){
       var ms=Date.now()-t0;if(ms<400){toast(L('Too short','Muito curto'));return}
       var blob=new Blob(parts,{type:mr.mimeType||mime||'audio/webm'}),fr=new FileReader();
       fr.onload=function(){var b=String(fr.result).split(',')[1]||'';
-        api('/api/atc/voice',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({icao_address:btn.getAttribute('data-icao'),audio:b,mime:(mr.mimeType||mime||'audio/webm').split(';')[0],ms:Math.min(ms,10000)})})
+        api('/api/atc/voice',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({icao_address:btn.getAttribute('data-icao'),audio:b,mime:(mr.mimeType||mime||'audio/webm').split(';')[0],ms:Math.min(ms,10000),freq:talkFreq()})})
          .then(function(r){return r.json().then(function(j){
            if(r.ok)toast(L('Sent','Enviado'));
+           else if(j.error==='not_tuned')toast(NOTTUNED(j));
            else if(j.error==='voice_off')toast((j.callsign||btn.getAttribute('data-cs'))+L(" can't listen to voice, send text instead",' não pode ouvir voz, envie texto'));
            else toast(L('Error: ','Erro: ')+(j.error||r.status))})})
          .catch(function(){toast(L('Network error','Erro de rede'))})};
@@ -562,7 +576,7 @@ function wsOpen(){
   me.onerror=function(){try{me.close()}catch(x){}};
 }
 document.addEventListener('visibilitychange',function(){if(!document.hidden){if(!ws)wsOpen();poll(true)}});
-initBg();resize();applyRange();draw();loadRunways();refreshMyTowers();setInterval(refreshMyTowers,45000);poll(true);setInterval(poll,5000);wsOpen();
+initBg();resize();applyRange();draw();loadRunways();updateTalk();refreshMyTowers();setInterval(refreshMyTowers,45000);poll(true);setInterval(poll,5000);wsOpen();
 })();
 </script>
 </body>

@@ -528,3 +528,51 @@ await call("DELETE", "/api/atc/tower?name=SBBR", null, "ctl");
   T("TWR staffed: takeoff to controller", (await R("takeoff")).mode === "controller");
   hub.towers.clear();
 }
+
+// frequencies: tuning, routing of text/clips, stations, human handoff frequency
+{
+  const T = (n, v) => console.log("freq " + n + ":", v ? "PASS" : "FAIL");
+  hub.towers.clear();
+  const P = (k, o) => call("PUT", "/api/position", { latitude: -15.871, longitude: -47.919, altitude_ft: 3500, ground_speed: 0, ...o }, k).then(r => JSON.parse(r.slice(4)));
+  await call("PUT", "/api/flightplan", { callsign: "FQ1", departure_airport: "SBBR", arrival_airport: "SBSP" }, "fq1");
+  await call("PUT", "/api/flightplan", { callsign: "FQ2", departure_airport: "SBBR" }, "fq2");
+  await P("fq1", { freq: "121.9" }); await P("fq2", {});
+  const tr = async () => JSON.parse((await call("GET", "/api/traffic?lat=-15.87&lon=-47.92&radius_miles=50", null, "x")).slice(4));
+  let a = (await tr()).aircraft;
+  const id1 = a.find(x => x.callsign === "FQ1").icao_address, id2 = a.find(x => x.callsign === "FQ2").icao_address;
+  T("freq normalised and listed", a.find(x => x.callsign === "FQ1").freq === "121.900" && a.find(x => x.callsign === "FQ2").freq === "");
+  await P("fq2", { freq: "99.9" });
+  T("invalid freq ignored", (await tr()).aircraft.find(x => x.callsign === "FQ2").freq === "");
+  const msg = (id, freq) => call("PUT", "/api/atc/message", { icao_address: id, text: "hello", freq }, "atc").then(r => r.slice(0, 3));
+  T("text same freq delivered", await msg(id1, "121.900") === "200");
+  T("text other freq refused", await msg(id1, "118.300") === "409");
+  T("text no talk freq delivered", await msg(id1, undefined) === "200");
+  T("untuned pilot hears any freq", await msg(id2, "118.300") === "200");
+  const clip = (id, freq) => call("PUT", "/api/atc/voice", { icao_address: id, audio: "AAAA", mime: "audio/webm", ms: 1000, freq }, "atc").then(r => r.slice(0, 3));
+  T("clip refused off freq", await clip(id1, "118.300") === "409" && await clip(id1, "121.900") === "200");
+  // pilot -> controller: stamped with the pilot's freq
+  await call("PUT", "/api/voice/listen", { on: true }, "atc");
+  hub.clients.get("fq1").lastChat = 0; hub.clients.get("fq1").lastClip = 0;
+  await call("PUT", "/api/atc/chat", { text: "ready" }, "fq1");
+  await call("PUT", "/api/voice/clip", { audio: "AAAA", mime: "audio/mp4", ms: 1000 }, "fq1");
+  const t2 = await tr();
+  T("chat + clip carry freq", t2.atc_messages.some(m => m.kind === "chat" && m.freq === "121.900") && t2.voice_clips.some(v => v.freq === "121.900"));
+  // tower frequency
+  const tp = (name, freq, holder) => call("PUT", "/api/atc/tower", { name, latitude: -15.87, longitude: -47.92, freq, holder }, "c" + holder);
+  T("bad tower freq rejected", (await tp("SBBR_GND", "12", "h1")).startsWith("400"));
+  T("tower freq stored", (await tp("SBBR_GND", "121.9", "h1")).startsWith("200") && hub.towers.get("SBBR_GND").freq === "121.900");
+  T("tower freq listed", (await tr()).aircraft.some(x => x.callsign === "ATC_SBBR_GND" && x.freq === "121.900"));
+  // stations in the position reply (dep airport on the ground)
+  const r = await P("fq2", { phase: "ground" });
+  T("stations in reply", Array.isArray(r.stations) && r.stations[0].pos === "GND" && r.stations[0].freq === "121.900");
+  // auto handoff uses the human frequency of the departure airport (arrival has no tower, so auto-ATC speaks)
+  hub.towers.clear();
+  await tp("SBBR_DEP", "119.5", "h2");
+  const k = "fq3"; await call("PUT", "/api/flightplan", { callsign: "FQ3", departure_airport: "SBBR", arrival_airport: "SBSP" }, k);
+  await P(k, { phase: "ground", latitude: -15.5, longitude: -47.5 });
+  await P(k, { phase: "runway", latitude: -15.5, longitude: -47.5, ground_speed: 100 });
+  hub.clients.get(k).st.gr.takeoff = Date.now() + 60000;
+  const d = await P(k, { phase: "air", latitude: -15.5, longitude: -47.5, ground_speed: 150, altitude_ft: 1500, fq_dep: "DEP=118.1" });
+  T("handoff prefers human DEP frequency", d.messages.some(m => /119\.500/.test(m.text)));
+  hub.towers.clear();
+}
