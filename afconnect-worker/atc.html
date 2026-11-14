@@ -84,7 +84,8 @@ input::placeholder{color:var(--dim)}
       <div id="twrbox" class="strip twr">
         <div class="h"><span class="cs">Towers</span></div>
         <div class="ctl"><input id="twIcao" maxlength="8" placeholder="SBBR" autocapitalize="characters" style="width:96px;letter-spacing:.1em">
-          <button id="twOpen">Open tower</button></div>
+          <select id="twPos" title="Position"><option>TWR</option><option>GND</option><option>DEL</option><option>APP</option><option>DEP</option></select>
+          <button id="twOpen">Open position</button></div>
         <div id="twList"></div>
       </div>
       <div id="list"></div>
@@ -383,16 +384,20 @@ function clearSq(id){api('/api/atc/squawk?icao_address='+encodeURIComponent(id),
 /* ---------- virtual towers ---------- */
 var myTowers=[];try{myTowers=JSON.parse(localStorage.getItem('abflug_towers')||'[]')}catch(e){}
 function saveTowers(){try{localStorage.setItem('abflug_towers',JSON.stringify(myTowers))}catch(e){}}
-function putTower(t){return api('/api/atc/tower',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(t)})}
-$('twOpen').onclick=function(){var name=$('twIcao').value.trim().toUpperCase();
-  if(!/^[A-Z0-9]{2,8}$/.test(name)){toast(L('Enter an airport code, e.g. SBBR','Digite um código de aeroporto, ex.: SBBR'));return}
-  var ap=APT[name],t={name:name,latitude:+(ap?ap.lat:center.lat).toFixed(5),longitude:+(ap?ap.lon:center.lon).toFixed(5)};
+var holder=localStorage.getItem('afc_holder');if(!holder){holder='h'+Math.random().toString(36).slice(2,12);try{localStorage.setItem('afc_holder',holder)}catch(e){}}
+function putTower(t){var b={};for(var k in t)b[k]=t[k];b.holder=holder;return api('/api/atc/tower',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)})}
+var TAKEN=function(j){return L('Position '+(j.airport||'')+' '+(j.position||'')+' is already staffed by another controller','Posição '+(j.airport||'')+' '+(j.position||'')+' já está ocupada por outro controlador')};
+$('twOpen').onclick=function(){var icao=$('twIcao').value.trim().toUpperCase(),pos=$('twPos').value;
+  if(!/^[A-Z0-9]{2,8}$/.test(icao)){toast(L('Enter an airport code, e.g. SBBR','Digite um código de aeroporto, ex.: SBBR'));return}
+  var name=pos==='TWR'?icao:icao+'_'+pos;
+  var ap=APT[icao],t={name:name,latitude:+(ap?ap.lat:center.lat).toFixed(5),longitude:+(ap?ap.lon:center.lon).toFixed(5)};
   if(!ap)toast(rwState==='ready'?'Unknown airport - tower placed at scope center':'Airport data not loaded - tower placed at scope center');
-  putTower(t).then(function(r){return r.json().then(function(j){if(!r.ok){toast(j.error==='member_tower'?MEMBER_MSG():L('Error: ','Erro: ')+(j.error||r.status));return}
+  putTower(t).then(function(r){return r.json().then(function(j){if(!r.ok){toast(j.error==='member_tower'?MEMBER_MSG():j.error==='position_taken'?TAKEN(j):L('Error: ','Erro: ')+(j.error||r.status));return}
     myTowers=myTowers.filter(function(x){return x.name!==name});myTowers.push(t);saveTowers();
     if(ap)toast(L('Tower '+j.callsign+' open','Torre '+j.callsign+' aberta'));$('twIcao').value='';poll(true)})}).catch(function(){toast(L('Network error','Erro de rede'))})};
 var MEMBER_MSG=function(){return L('Member tower: enter the group code first (Group button)','Torre de membro: digite antes o código do grupo (botão Group)')};
-function closeTower(name){api('/api/atc/tower?name='+encodeURIComponent(name),{method:'DELETE'}).then(function(r){if(r.status===403){toast(MEMBER_MSG());return}
+function closeTower(name){api('/api/atc/tower?name='+encodeURIComponent(name)+'&holder='+encodeURIComponent(holder),{method:'DELETE'}).then(function(r){if(r.status===403){toast(MEMBER_MSG());return}
+  if(r.status===409){toast(L('Staffed by another controller - only they can close it','Ocupada por outro controlador - só ele pode fechar'));return}
   myTowers=myTowers.filter(function(x){return x.name!==name});saveTowers();toast(L('Tower closed','Torre fechada'));poll(true)})}
 /* ---------- ATIS (inside each tower row) ---------- */
 var atisUI={};
@@ -440,12 +445,13 @@ $('twList').addEventListener('click',function(e){var b=e.target.closest('button'
   var act=b.getAttribute('data-act'),row=b.closest('[data-tower]');if(act&&row)atisAct(row.getAttribute('data-tower'),act)});
 function renderTowerBox(){var box=$('twList'),names=ac.filter(function(a){return a.virtual_tower}).map(function(a){return String(a.callsign).replace(/^ATC_/,'')});
   for(var k in atisUI)if(names.indexOf(k)<0)delete atisUI[k];
-  var sig=names.map(function(n){return n+(atisUI[n]&&atisUI[n].open?'+':'')}).join(',')+'#';
+  var sig=names.map(function(n){return n+(atisUI[n]&&atisUI[n].open?'+':'')+(myTowers.some(function(x){return x.name===n})?'m':'')+(ac.some(function(x){return x.virtual_tower&&x.callsign==='ATC_'+n&&x.claimed})?'c':'')}).join(',')+'#';
   if(box._sig===sig)return;box._sig=sig;   /* unchanged: leave the DOM alone so typed text is kept */
   box.innerHTML='';
   if(!names.length){box.innerHTML='<div class="m" style="margin-top:6px">'+L('No virtual towers open.','Nenhuma torre virtual aberta.')+'</div>';return}
   names.forEach(function(n){var row=document.createElement('div'),u=atisUI[n];row.setAttribute('data-tower',n);
-    row.innerHTML='<div class="row"><span>ATC_'+esc(n)+' <span class="m">virtual</span></span><span><button data-atis="'+esc(n)+'">ATIS'+(u&&u.data?' '+esc(u.data.letter):'')+'</button> <button data-name="'+esc(n)+'">'+L('Close','Fechar')+'</button></span></div>';
+    var tw0=ac.filter(function(a){return a.virtual_tower&&String(a.callsign)==='ATC_'+n})[0]||{},mine=myTowers.some(function(x){return x.name===n});
+    row.innerHTML='<div class="row"><span>ATC_'+esc(n)+' <span class="m">'+esc(tw0.position||'TWR')+' · '+(mine?L('you','você'):tw0.claimed?L('another controller','outro controlador'):'virtual')+'</span></span><span><button data-atis="'+esc(n)+'">ATIS'+(u&&u.data?' '+esc(u.data.letter):'')+'</button> <button data-name="'+esc(n)+'">'+L('Close','Fechar')+'</button></span></div>';
     if(u&&u.open){row.appendChild(u.el);atisFill(n)}
     box.appendChild(row)})}
 $('grpBtn').addEventListener('click',function(){var v=prompt(L('Group code (from Discord). Empty = none.','Código do grupo (do Discord). Vazio = nenhum.'),group);if(v===null)return;
@@ -455,7 +461,7 @@ function checkGroup(){if(!group){grpMsg='';return}
   fetch('/api/health',{headers:{'X-Group':group}}).then(function(r){return r.json()}).then(function(j){
     grpMsg=j.member?L(' · group: member',' · grupo: membro'):L(' · group code WRONG',' · código do grupo ERRADO')}).catch(function(){})}
 checkGroup();
-function refreshMyTowers(){if(key)myTowers.forEach(function(t){putTower(t).catch(function(){})})}
+function refreshMyTowers(){if(key)myTowers.slice().forEach(function(t){putTower(t).then(function(r){if(r.status===409){r.json().then(function(j){myTowers=myTowers.filter(function(x){return x.name!==t.name});saveTowers();toast(TAKEN(j))})}}).catch(function(){})})}
 
 /* ---------- polling ---------- */
 function setStatus(t,ok){var s=$('status');s.textContent=t;s.className=ok?'ok':''}
@@ -556,7 +562,7 @@ function wsOpen(){
   me.onerror=function(){try{me.close()}catch(x){}};
 }
 document.addEventListener('visibilitychange',function(){if(!document.hidden){if(!ws)wsOpen();poll(true)}});
-initBg();resize();applyRange();draw();loadRunways();refreshMyTowers();setInterval(refreshMyTowers,30*60000);poll(true);setInterval(poll,5000);wsOpen();
+initBg();resize();applyRange();draw();loadRunways();refreshMyTowers();setInterval(refreshMyTowers,45000);poll(true);setInterval(poll,5000);wsOpen();
 })();
 </script>
 </body>

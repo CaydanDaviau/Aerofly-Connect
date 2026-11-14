@@ -7,6 +7,18 @@ const TTL_MS = 60_000;
 const ASSIGN_TTL_MS = 12 * 3600_000;
 const TOWER_TTL_MS = 24 * 3600_000;   // a virtual tower expires this long after it was last opened/refreshed
 const MAX_TOWERS = 50;
+// Positions of one airport: key = ICAO (TWR, kept for old towers) or ICAO_DEL / _GND / _APP / _DEP.
+// A claimed position (the page sends a `holder` id + heartbeat) is freed POS_TTL_MS after the last heartbeat.
+const POS_TTL_MS = 120_000;
+const POS_NAMES = ["DEL", "GND", "TWR", "APP", "DEP"];
+// Which positions can answer each request when staffed (next one up covers the one below it).
+const COVER = { clearance: ["DEL", "GND", "TWR"], taxi: ["GND", "TWR"], takeoff: ["TWR"], land: ["TWR"] };
+const parseTowerName = s => {
+  const m = /^([A-Z0-9]{2,8}?)(?:_(DEL|GND|TWR|APP|DEP))?$/.exec(String(s || "").trim().toUpperCase());
+  if (!m) return null;
+  const pos = m[2] || "TWR";
+  return { apt: m[1], pos, name: pos === "TWR" ? m[1] : m[1] + "_" + pos };
+};
 const MAX_TRAFFIC = 500;
 const CRASH_TIMEOUT_MS = 5 * 60_000;   // a pilot who crashes is locked out this long
 const CRASH_SHOW_MS = 10 * 60_000;     // the X stays on the maps this long
@@ -25,7 +37,7 @@ const normCallsign = cs => {
 // How the Android app decides to draw a tower (TrafficClassification.detectControlTower):
 // callsign contains "ATC_" AND (airplane_model is a 3-4 char airport code OR airplane_livery is a function name).
 const towerFields = cs => {
-  const m = /^ATC_([A-Z0-9]+)$/.exec(cs || "");
+  const m = /^ATC_([A-Z0-9]+)(?:_(?:DEL|GND|TWR|APP|DEP))?$/.exec(cs || "");
   if (!m) return null;
   return { airplane_model: /^[A-Z0-9]{3,4}$/.test(m[1]) ? m[1] : "", airplane_livery: "TOWER", livery: "TOWER" };
 };
@@ -49,6 +61,7 @@ function towerAircraft(t, distance) {
     ground_speed: 0, velocity_knots: 0, vertical_speed_ft_min: 0, vertical_speed: 0,
     squawk: "0000", squawk_code: "0000", ...towerFields(callsign),
     timestamp: Math.floor(Date.now() / 1000), assigned_squawk: null, virtual_tower: true, member: !!t.member,
+    position: t.pos || "TWR", airport: t.apt || t.name, claimed: !!t.holder,
     distance_miles: Math.round(distance * 10) / 10,
   };
 }
@@ -207,7 +220,7 @@ export class Hub {
     for (const [k, q] of this.rwyQ) { const f = q.filter(x => this.clients.has(x)); if (f.length) this.rwyQ.set(k, f); else this.rwyQ.delete(k); }
     for (const [k, t] of this.ta) if (now - t > 120_000) this.ta.delete(k);
     for (const [k, cr] of this.crashes) if (now - cr.at > CRASH_SHOW_MS) { this.crashes.delete(k); this.ctx.storage.delete("crash:" + k); }
-    for (const [k, t] of this.towers) if (now - t.at > TOWER_TTL_MS) { this.towers.delete(k); this.ctx.storage.delete("tower:" + k); }
+    for (const [k, t] of this.towers) if (now - t.at > (t.holder ? POS_TTL_MS : TOWER_TTL_MS)) { this.towers.delete(k); this.ctx.storage.delete("tower:" + k); }
   }
 
   addMsg(target, text, kind, extra) {
@@ -240,8 +253,21 @@ export class Hub {
     return json({ error: "crashed", crashed: true, until: cr.until, remaining_s: Math.ceil((cr.until - now) / 1000), latitude: cr.latitude, longitude: cr.longitude, landing_fpm: cr.landing_fpm }, 423);
   }
 
-  humanCovers(c, apt) {
-    return [...this.towers.values()].some(t => (apt && t.name === apt) || haversineMi(t.latitude, t.longitude, c.pos.latitude, c.pos.longitude) <= TOWER_COVER_MI);
+  // type given: only a staffed position that can answer it counts (COVER chain); no type: any position of the airport.
+  humanCovers(c, apt, type) {
+    const ok = t => !type || !COVER[type] || COVER[type].includes(t.pos || "TWR");
+    return [...this.towers.values()].some(t => ok(t) && ((apt && (t.apt || t.name) === apt) || haversineMi(t.latitude, t.longitude, c.pos.latitude, c.pos.longitude) <= TOWER_COVER_MI));
+  }
+  // ATIS and weather belong to the airport: resolve an airport code (or any position name) to the tower record that holds them.
+  towerKey(name) {
+    const pn = parseTowerName(name), apt = pn ? pn.apt : name;
+    let best = null, bestScore = -1;
+    for (const [k, t] of this.towers) {
+      if ((t.apt || t.name) !== apt) continue;
+      const score = (t.atis ? 2 : 0) + ((t.pos || "TWR") === "TWR" ? 1 : 0);
+      if (score > bestScore) { best = k; bestScore = score; }
+    }
+    return best;
   }
 
   // Another recent client standing on that runway (either end ident) at that airport.
@@ -426,15 +452,16 @@ export class Hub {
     return w;
   }
   async atisFor(name) {
-    const t = this.towers.get(name);
+    const key = this.towerKey(name), t = key && this.towers.get(key);
     if (!t) return null;
+    const apt = t.apt || t.name;
     const a = t.atis || (t.atis = { letter: "A", runways: "", frequencies: "", remarks: "", at: Date.now(), sig: "" });
-    const w = await this.weather(name);
+    const w = await this.weather(apt);
     if (w) {
       const sg = wxSig(w);
-      if (sg !== a.sig) { if (a.sig) { a.letter = nextLetter(a.letter); a.at = Date.now(); } a.sig = sg; await this.ctx.storage.put("tower:" + name, t); }
+      if (sg !== a.sig) { if (a.sig) { a.letter = nextLetter(a.letter); a.at = Date.now(); } a.sig = sg; await this.ctx.storage.put("tower:" + key, t); }
     }
-    return { name, letter: a.letter, runways: a.runways, frequencies: a.frequencies, remarks: a.remarks, updated: a.at, weather: w, wx_ok: !!w };
+    return { name: apt, letter: a.letter, runways: a.runways, frequencies: a.frequencies, remarks: a.remarks, updated: a.at, weather: w, wx_ok: !!w };
   }
 
   voiceListening() {
@@ -640,7 +667,7 @@ export class Hub {
         return json({ success: true, mode: "auto", messages: [{ id: m1.id, text: m1.text, kind: "auto", urgent: true, at: m1.at }] });
       }
       // A human controller wins: a tower named like the airport, or one close to the aircraft.
-      if (this.humanCovers(c, apt)) {
+      if (this.humanCovers(c, apt, type)) {
         const msg = this.addMsg(c, "Requests " + REQ_LABEL[type] + (rwy ? ", runway " + rwy : ""), "request", {});
         msg.status = "request";
         return json({ success: true, mode: "controller", id: msg.id });
@@ -686,20 +713,28 @@ export class Hub {
 
     if ((m === "PUT" || m === "POST") && p === "/api/atc/tower") {
       const d = await request.json().catch(() => ({}));
-      const name = String(d.name || "").trim().toUpperCase();
+      const pn = parseTowerName(d.name);
       const lat = Number(d.latitude), lon = Number(d.longitude);
-      if (!/^[A-Z0-9]{2,8}$/.test(name) || !(Math.abs(lat) <= 90) || !(Math.abs(lon) <= 180))
-        return json({ error: "need name (2-8 letters/digits), latitude and longitude" }, 400);
-      if (!this.towers.has(name) && this.towers.size >= MAX_TOWERS) return json({ error: "too many towers" }, 409);
-      if (this.towers.get(name)?.member && request.headers.get("X-Member") !== "1") return json({ error: "member_tower" }, 403);
-      const t = { name, latitude: lat, longitude: lon, altitude_ft: Number(d.altitude_ft) || 0, at: Date.now(), member: request.headers.get("X-Member") === "1", atis: (this.towers.get(name) || {}).atis };
+      if (!pn || !(Math.abs(lat) <= 90) || !(Math.abs(lon) <= 180))
+        return json({ error: "need name (2-8 letters/digits, optional _DEL/_GND/_TWR/_APP/_DEP), latitude and longitude" }, 400);
+      const name = pn.name, old = this.towers.get(name), now = Date.now();
+      const holder = String(d.holder || "").slice(0, 40);
+      if (!old && this.towers.size >= MAX_TOWERS) return json({ error: "too many towers" }, 409);
+      if (old?.member && request.headers.get("X-Member") !== "1") return json({ error: "member_tower" }, 403);
+      // one controller per position: a live claim by someone else blocks (heartbeats keep it alive)
+      if (old && old.holder && holder && old.holder !== holder && now - old.at <= POS_TTL_MS) return json({ error: "position_taken", position: pn.pos, airport: pn.apt }, 409);
+      if (old && old.holder && !holder && now - old.at <= POS_TTL_MS) return json({ error: "position_taken", position: pn.pos, airport: pn.apt }, 409);
+      const atis = old && old.atis;
+      const t = { name, apt: pn.apt, pos: pn.pos, holder: holder || undefined, latitude: lat, longitude: lon, altitude_ft: Number(d.altitude_ft) || 0, at: now, member: request.headers.get("X-Member") === "1", atis };
       this.towers.set(name, t);
       await this.ctx.storage.put("tower:" + name, t);
-      return json({ success: true, callsign: "ATC_" + name });
+      return json({ success: true, callsign: "ATC_" + name, position: pn.pos, airport: pn.apt });
     }
     if (m === "DELETE" && p === "/api/atc/tower") {
-      const name = String(url.searchParams.get("name") || "").trim().toUpperCase();
+      const pn = parseTowerName(url.searchParams.get("name")), name = pn ? pn.name : String(url.searchParams.get("name") || "").trim().toUpperCase();
       if (this.towers.get(name)?.member && request.headers.get("X-Member") !== "1") return json({ error: "member_tower" }, 403);
+      const cur = this.towers.get(name), hq = String(url.searchParams.get("holder") || "");
+      if (cur && cur.holder && cur.holder !== hq && Date.now() - cur.at <= POS_TTL_MS) return json({ error: "position_taken", position: cur.pos, airport: cur.apt }, 409);
       this.towers.delete(name);
       await this.ctx.storage.delete("tower:" + name);
       return json({ success: true });
@@ -711,7 +746,7 @@ export class Hub {
     }
     if ((m === "PUT" || m === "POST") && p === "/api/atc/atis") {
       const d = await request.json().catch(() => ({}));
-      const name = String(d.name || "").trim().toUpperCase(), t = this.towers.get(name);
+      const name = this.towerKey(String(d.name || "").trim().toUpperCase()), t = name && this.towers.get(name);
       if (!t) return json({ error: "no tower open at that airport" }, 404);
       if (t.member && request.headers.get("X-Member") !== "1") return json({ error: "member_tower" }, 403);
       const a = t.atis || (t.atis = { letter: "A", runways: "", frequencies: "", remarks: "", at: Date.now(), sig: "" });
@@ -722,7 +757,7 @@ export class Hub {
       if (d.remarks !== undefined) { const v = cl(d.remarks, 200); if (v !== a.remarks) { a.remarks = v; change = true; } }
       if (change) { a.letter = nextLetter(a.letter); a.at = Date.now(); }
       await this.ctx.storage.put("tower:" + name, t);
-      return json(await this.atisFor(name));
+      return json(await this.atisFor(t.apt || name));
     }
 
     if (m === "GET" && p === "/api/health")

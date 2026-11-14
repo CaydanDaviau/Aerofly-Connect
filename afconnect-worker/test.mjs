@@ -487,3 +487,44 @@ await call("DELETE", "/api/atc/tower?name=SBBR", null, "ctl");
   T("member edits ATIS", await G("PUT", "/api/atc/atis", { name: "SBGL", runways: "10" }, "tango7") === 200);
   T("member closes", await G("DELETE", "/api/atc/tower?name=SBGL", null, "tango7") === 200 && !hub.towers.has("SBGL"));
 }
+
+// positions: claiming, heartbeat expiry, coverage chain
+{
+  const T = (n, v) => console.log("positions " + n + ":", v ? "PASS" : "FAIL");
+  const st = async (name, holder) => Number((await call("PUT", "/api/atc/tower", { name, latitude: -15.87, longitude: -47.92, holder }, "pc" + holder)).slice(0, 3));
+  const del = async (name, holder) => Number((await call("DELETE", "/api/atc/tower?name=" + name + (holder ? "&holder=" + holder : ""), null, "x")).slice(0, 3));
+  hub.towers.clear();
+  T("open GND", await st("SBBR_GND", "h1") === 200 && hub.towers.get("SBBR_GND").pos === "GND" && hub.towers.get("SBBR_GND").apt === "SBBR");
+  T("plain name = TWR", await st("SBBR", "h2") === 200 && hub.towers.get("SBBR").pos === "TWR" && hub.towers.has("SBBR_GND"));
+  T("_TWR suffix = plain", await st("SBBR_TWR", "h2") === 200 && !hub.towers.has("SBBR_TWR"));
+  T("second claimant refused", await st("SBBR_GND", "h3") === 409);
+  T("holder heartbeat ok", await st("SBBR_GND", "h1") === 200);
+  T("bad position rejected", await st("SBBR_XYZ", "h1") === 400);
+  T("other cannot close claimed", await del("SBBR_GND", "h3") === 409 && hub.towers.has("SBBR_GND"));
+  T("holder closes", await del("SBBR_GND", "h1") === 200 && !hub.towers.has("SBBR_GND"));
+  await st("SBBR_APP", "h1");
+  hub.towers.get("SBBR_APP").at -= 130_000; hub.purge();
+  T("claim frees after 2 min", !hub.towers.has("SBBR_APP") && await st("SBBR_APP", "h3") === 200);
+  const ta = JSON.parse((await call("GET", "/api/traffic?lat=-15.87&lon=-47.92&radius_miles=50", null, "x")).slice(4)).aircraft.filter(a => a.virtual_tower);
+  T("traffic lists positions", ta.some(a => a.callsign === "ATC_SBBR_APP" && a.position === "APP" && a.claimed && a.airplane_model === "SBBR") && ta.some(a => a.callsign === "ATC_SBBR" && a.position === "TWR"));
+  // ATIS is shared per airport
+  const at = await call("PUT", "/api/atc/atis", { name: "SBBR_APP", runways: "11R" }, "x");
+  T("ATIS resolves to airport", at.startsWith("200") && JSON.parse((await call("GET", "/api/atis?name=SBBR", null, "x")).slice(4)).runways === "11R");
+  // coverage chain for auto-ATC
+  const P = (k, o) => call("PUT", "/api/position", { latitude: -15.871, longitude: -47.919, altitude_ft: 3500, ground_speed: 0, ...o }, k);
+  await call("PUT", "/api/flightplan", { callsign: "PPP1", departure_airport: "SBBR", departure_runway: "11R" }, "ppp");
+  await P("ppp", { phase: "ground" });
+  const R = async type => { hub.clients.get("ppp").lastReq = 0; return JSON.parse((await call("PUT", "/api/atc/request", { type }, "ppp")).slice(4)); };
+  hub.towers.clear();
+  await st("SBBR_APP", "h1");
+  T("APP only: taxi goes to auto-ATC (APP cannot cover it)", (await R("taxi")).mode === "auto");
+  // proximity rule still counts towers near the aircraft, so test with only the APP tower 8+ mi away covers nothing for takeoff
+  await st("SBBR_GND", "h2");
+  T("GND staffed: taxi goes to controller", (await R("taxi")).mode === "controller");
+  T("GND only: takeoff is auto (GND cannot clear takeoff)", (await R("takeoff")).mode === "auto");
+  await call("DELETE", "/api/atc/tower?name=SBBR_GND&holder=h2", null, "x");
+  await st("SBBR", "h4");
+  T("TWR staffed covers taxi (next up)", (await R("taxi")).mode === "controller");
+  T("TWR staffed: takeoff to controller", (await R("takeoff")).mode === "controller");
+  hub.towers.clear();
+}
