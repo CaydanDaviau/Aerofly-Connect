@@ -17,7 +17,7 @@ public class ControllerActivity extends Activity {
     private WebView web;
     private View err;
     private boolean failed;
-    private String url() { return BuildConfig.SERVER_URL + "/atc?key=" + Api.key(this) + "&lang=" + Api.uiLang(this) + (Api.voiceOn(this) ? "" : "&voice=0"); }
+    private String url() { return BuildConfig.SERVER_URL + "/atc?key=" + Api.key(this) + "&lang=" + Api.uiLang(this) + (Api.voiceOn(this) ? "" : "&voice=0") + (Api.group.isEmpty() ? "" : "&group=" + java.net.URLEncoder.encode(Api.group)); }
 
     @Override
     protected void onCreate(Bundle b) {
