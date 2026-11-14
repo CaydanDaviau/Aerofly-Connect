@@ -69,6 +69,7 @@ input::placeholder{color:var(--dim)}
     <input id="ll" size="16" placeholder="lat, lon or ICAO" title="Center on coordinates or an airport code">
     <button id="llGo">Go</button>
     <button id="voiceBtn" title="Voice on/off">Voice: on</button>
+    <button id="grpBtn" title="Group code (from Discord)">Group</button>
     <span id="rwStatus" class="m"></span>
     <span id="status">offline</span>
   </div>
@@ -273,7 +274,7 @@ function draw(){
   for(var k=0;k<ac.length;k++){var a=ac[k],id=a.icao_address,xy=proj(a),x=xy[0],y=xy[1];
     if(x<-60||y<-40||x>W+60||y>H+40)continue;
     var tw=isTwr(a),isSel=sel===id,asg=a.assigned_squawk;
-    var col=isSel?'#7ae9ff':tw?'#ff7ae9':!asg?'#ffb000':'#3dff7a';
+    var col=isSel?'#7ae9ff':tw?(a.member?'#ffd23f':'#ff7ae9'):a.member?'#b48cff':!asg?'#ffb000':'#3dff7a';
     var cf=confl[id];if(cf&&cf.lvl===2&&blinkOn)col='#ff3b30';if(a.emergency)col=blinkOn?'#ff3b30':'#ffd0cc';
     var tr=trails[id]||[];g.strokeStyle=col;g.globalAlpha=.45;
     g.fillStyle=col;for(var t=0;t<tr.length;t++){var q=proj(tr[t]);if(q[0]<-5||q[1]<-5||q[0]>W+5||q[1]>H+5)continue;g.fillRect(q[0]-1,q[1]-1,2,2)}
@@ -359,7 +360,8 @@ $('strips').addEventListener('click',function(e){
     else if(act==='vplay')playClip(btn.getAttribute('data-clip'));else if(act==='msg')sendMsg(id);else if(act==='auto')assign(id,'');else if(act==='clear')clearSq(id);return}
   if(e.target.id==='sqin'||e.target.id==='msgin'||e.target.id==='urg'||e.target.id==='ptt')return;
   sel=id;draw();renderStrips(true)});
-function api(path,opt){opt=opt||{};opt.headers=Object.assign({'X-API-Key':key},opt.headers||{});return fetch(path,opt)}
+var group='';try{group=new URLSearchParams(location.search).get('group')||localStorage.getItem('afc_group')||'';if(group)localStorage.setItem('afc_group',group)}catch(e){}
+function api(path,opt){opt=opt||{};opt.headers=Object.assign({'X-API-Key':key},group?{'X-Group':group}:{},opt.headers||{});return fetch(path,opt)}
 function assign(id,sq){var body={icao_address:id};if(sq)body.squawk=sq;
   api('/api/atc/squawk',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
    .then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j,s:r.status}})})
@@ -390,6 +392,8 @@ $('twList').addEventListener('click',function(e){var b=e.target.closest('button'
 function renderTowerBox(){var t=ac.filter(function(a){return a.virtual_tower});
   $('twList').innerHTML=t.length?t.map(function(a){var n=esc(String(a.callsign).replace(/^ATC_/,''));
     return'<div class="row"><span>'+esc(a.callsign)+' <span class="m">virtual</span></span><button data-name="'+n+'">Close</button></div>'}).join(''):'<div class="m" style="margin-top:6px">'+L('No virtual towers open.','Nenhuma torre virtual aberta.')+'</div>'}
+$('grpBtn').addEventListener('click',function(){var v=prompt(L('Group code (from Discord). Empty = none.','Código do grupo (do Discord). Vazio = nenhum.'),group);if(v===null)return;
+  group=v.trim();try{if(group)localStorage.setItem('afc_group',group);else localStorage.removeItem('afc_group')}catch(e){}refreshMyTowers()});
 function refreshMyTowers(){if(key)myTowers.forEach(function(t){putTower(t).catch(function(){})})}
 
 /* ---------- polling ---------- */
@@ -411,7 +415,7 @@ function applyTraffic(j){
       else if(!centroidDone&&ac.length){center.lat=ac.reduce(function(s,a){return s+a.latitude},0)/ac.length;
         center.lon=ac.reduce(function(s,a){return s+a.longitude},0)/ac.length;centroidDone=true}}
     computeConfl();
-    var nT=ac.filter(isTwr).length,nA=ac.length-nT;setStatus(nA+L(' aircraft',' aeronaves')+' · '+nT+L(nT===1?' tower':' towers',nT===1?' torre':' torres'),true);draw();renderStrips();renderTowerBox()}
+    var nT=ac.filter(isTwr).length,nA=ac.length-nT;setStatus(nA+L(' aircraft',' aeronaves')+' · '+nT+L(nT===1?' tower':' towers',nT===1?' torre':' torres')+(ac.some(function(x){return x.member})?L(' · violet/gold = group',' · violeta/dourado = grupo'):''),true);draw();renderStrips();renderTowerBox()}
 /* ---------- voice (push-to-talk, both directions) ---------- */
 var voiceOn=true,vclips=[],heard=null,pttBusy=false,actx=null,rec=null;
 try{voiceOn=localStorage.getItem('afc_voice')!=='0'}catch(e){}

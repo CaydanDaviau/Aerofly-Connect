@@ -2,7 +2,7 @@ import worker, { Hub } from "./src/index.js";
 const store = new Map();
 const ctx = { storage: { get: async k => store.get(k), put: async (k, v) => store.set(k, v), delete: async k => store.delete(k), list: async ({ prefix }) => new Map([...store].filter(([k]) => k.startsWith(prefix))) }, blockConcurrencyWhile: async f => f() };
 let hub = new Hub(ctx);
-const env = { HUB: { idFromName: () => 1, get: () => ({ fetch: (r) => hub.fetch(r) }) } };
+const env = { HUB: { idFromName: () => 1, get: () => ({ fetch: (r, init) => hub.fetch(init && init.headers ? new Request(r, { headers: init.headers }) : r) }) } };
 const call = async (method, path, body, key = "abc") => {
   const r = await worker.fetch(new Request("https://x" + path, { method, body: body && JSON.stringify(body), headers: key ? { "X-API-Key": key } : {} }), env);
   return `${r.status} ${await r.text()}`;
@@ -399,4 +399,33 @@ await call("DELETE", "/api/atc/tower?name=SBBR", null, "ctl");
   await J("PUT", "/api/voice/listen", { on: true }, "ctl");
   hub.clients.get("v1").lastClip = 0;
   T("pilot with voice off cannot send", (await J("PUT", "/api/voice/clip", clip, "v1")).j.error === "voice_off");
+}
+
+// group code
+{
+  const genv = { ...env, GROUP_CODE: "tango7" };
+  const G = async (method, path, body, key, group) => {
+    const h = { "X-API-Key": key }; if (group !== undefined) h["X-Group"] = group;
+    const r = await worker.fetch(new Request("https://x" + path, { method, body: body && JSON.stringify(body), headers: h }), genv);
+    const t = await r.text(); let j; try { j = JSON.parse(t); } catch (e) { j = t; } return { st: r.status, j, t };
+  };
+  const T = (n, v) => console.log("group " + n + ":", v ? "PASS" : "FAIL");
+  await G("PUT", "/api/position", { latitude: 5, longitude: 5 }, "gm", "tango7");
+  await G("PUT", "/api/position", { latitude: 5, longitude: 5.01 }, "gx", "wrong");
+  await G("PUT", "/api/position", { latitude: 5, longitude: 5.02 }, "gn");
+  await G("PUT", "/api/flightplan", { callsign: "SPOOF", member: true }, "gx", "wrong");
+  await G("PUT", "/api/position", { latitude: 5, longitude: 5.01 }, "gx", "wrong");
+  await G("PUT", "/api/atc/tower", { name: "SBMM", latitude: 5, longitude: 5 }, "gm", "tango7");
+  await G("PUT", "/api/atc/tower", { name: "SBXX", latitude: 5, longitude: 5 }, "gn", "nope");
+  const tr = (await G("GET", "/api/traffic?lat=5&lon=5&radius_miles=50", null, "gm", "tango7")).j.aircraft;
+  const mem = a => a.member === true;
+  T("member pilot", mem(tr.find(a => !a.virtual_tower && a.icao_address === hub.clients.get("gm").pos.icao_address)));
+  T("wrong code = plain (even if plan says member)", !mem(tr.find(a => a.icao_address === hub.clients.get("gx").pos.icao_address)));
+  T("no code = plain", !mem(tr.find(a => a.icao_address === hub.clients.get("gn").pos.icao_address)));
+  T("member tower", mem(tr.find(a => a.callsign === "ATC_SBMM")));
+  T("plain tower", !mem(tr.find(a => a.callsign === "ATC_SBXX")));
+  const all = JSON.stringify(tr) + (await G("GET", "/api/health", null, "gm")).t;
+  T("code never returned", !all.includes("tango7"));
+  const nocfg = await worker.fetch(new Request("https://x/api/position", { method: "PUT", body: JSON.stringify({ latitude: 6, longitude: 6 }), headers: { "X-API-Key": "q", "X-Group": "" } }), env);
+  T("no GROUP_CODE var = nobody member", nocfg.status === 200 && !hub.clients.get("q").member);
 }

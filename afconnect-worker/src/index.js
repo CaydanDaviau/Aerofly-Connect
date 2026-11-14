@@ -47,7 +47,7 @@ function towerAircraft(t, distance) {
     altitude_ft: t.altitude_ft, altitude: t.altitude_ft, heading_true: 0, track: 0,
     ground_speed: 0, velocity_knots: 0, vertical_speed_ft_min: 0, vertical_speed: 0,
     squawk: "0000", squawk_code: "0000", ...towerFields(callsign),
-    timestamp: Math.floor(Date.now() / 1000), assigned_squawk: null, virtual_tower: true,
+    timestamp: Math.floor(Date.now() / 1000), assigned_squawk: null, virtual_tower: true, member: !!t.member,
     distance_miles: Math.round(distance * 10) / 10,
   };
 }
@@ -153,6 +153,13 @@ const PUSH_MS = 3000;
 const VOICE_TTL_MS = 5 * 60 * 1000, VOICE_MAX_CLIPS = 40, VOICE_MAX_B64 = 150_000, VOICE_LISTEN_MS = 60_000;
 const up =v => String(v || "").trim().toUpperCase();
 
+// Group code: Worker var GROUP_CODE; clients send it as X-Group header (or ?group=). The Hub only ever sees X-Member 1/0, never the code.
+function memberFlag(request, env, url) {
+  const gc = String(env.GROUP_CODE || "").trim();
+  const got = String(request.headers.get("X-Group") || url.searchParams.get("group") || "").trim();
+  return !!gc && got === gc;
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -165,7 +172,7 @@ export default {
       const wk = (url.searchParams.get("key") || "").trim();
       const allowed = (env.ABFLUG_KEYS || "").split(",").map(s => s.trim()).filter(Boolean);
       if (!wk || (allowed.length && !allowed.includes(wk))) return json({ error: "invalid api key" }, 401);
-      const h = new Headers(request.headers); h.set("X-API-Key", wk);
+      const h = new Headers(request.headers); h.set("X-API-Key", wk); h.set("X-Member", memberFlag(request, env, url) ? "1" : "0");
       return env.HUB.get(env.HUB.idFromName("global")).fetch(request, { headers: h });
     }
     if (!url.pathname.startsWith("/api/")) return json({ name: "abflug-community", ok: true });
@@ -176,7 +183,8 @@ export default {
     }
     if (env.DEBUG) console.log(request.method, url.pathname + url.search, (await request.clone().text()).slice(0, 600));
     const stub = env.HUB.get(env.HUB.idFromName("global"));
-    return stub.fetch(request, { headers: request.headers });
+    const hh = new Headers(request.headers); hh.delete("X-Group"); hh.set("X-Member", memberFlag(request, env, url) ? "1" : "0");
+    return stub.fetch(request, { headers: hh });
   },
 };
 
@@ -337,7 +345,7 @@ export class Hub {
       const d = haversineMi(lat, lon, pos.latitude, pos.longitude);
       if (d <= rad) {
         const callsign = normCallsign(c.plan.callsign ?? pos.callsign);
-        out.push({ ...pos, ...c.plan, callsign, ...towerFields(callsign), assigned_squawk: c.assigned ? c.assigned.squawk : null, emergency: !!(c.emerg && Date.now() < c.emerg.until), no_clnc: !!(c.viol && Date.now() - c.viol.at < VIOL_SHOW_MS), ...(ck === key ? { self: true } : {}), distance_miles: Math.round(d * 10) / 10 });
+        out.push({ ...pos, ...c.plan, callsign, ...towerFields(callsign), member: !!c.member, assigned_squawk: c.assigned ? c.assigned.squawk : null, emergency: !!(c.emerg && Date.now() < c.emerg.until), no_clnc: !!(c.viol && Date.now() - c.viol.at < VIOL_SHOW_MS), ...(ck === key ? { self: true } : {}), distance_miles: Math.round(d * 10) / 10 });
       }
     }
     for (const t of this.towers.values()) {
@@ -373,7 +381,7 @@ export class Hub {
     const key = (request.headers.get("X-API-Key") || "").trim();
     const pair = new WebSocketPair();
     this.ctx.acceptWebSocket(pair[1]);
-    pair[1].serializeAttachment({ key, sub: null });
+    pair[1].serializeAttachment({ key, sub: null, member: request.headers.get("X-Member") === "1" });
     this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
     this.startPush();
     return new Response(null, { status: 101, webSocket: pair[0] });
@@ -434,7 +442,7 @@ export class Hub {
       try { ws.send(JSON.stringify({ id: d.id, status: 400, body: { error: "bad request" } })); } catch (e) {}
       return;
     }
-    const init = { method, headers: { "X-API-Key": a.key, "Content-Type": "application/json", "X-Via": "ws" } };
+    const init = { method, headers: { "X-API-Key": a.key, "Content-Type": "application/json", "X-Via": "ws", "X-Member": a.member ? "1" : "0" } };
     if (method !== "GET" && method !== "DELETE" && d.body !== undefined) init.body = JSON.stringify(d.body);
     let status = 500, body = { error: "server error" };
     try {
@@ -657,7 +665,7 @@ export class Hub {
       if (!/^[A-Z0-9]{2,8}$/.test(name) || !(Math.abs(lat) <= 90) || !(Math.abs(lon) <= 180))
         return json({ error: "need name (2-8 letters/digits), latitude and longitude" }, 400);
       if (!this.towers.has(name) && this.towers.size >= MAX_TOWERS) return json({ error: "too many towers" }, 409);
-      const t = { name, latitude: lat, longitude: lon, altitude_ft: Number(d.altitude_ft) || 0, at: Date.now() };
+      const t = { name, latitude: lat, longitude: lon, altitude_ft: Number(d.altitude_ft) || 0, at: Date.now(), member: request.headers.get("X-Member") === "1" };
       this.towers.set(name, t);
       await this.ctx.storage.put("tower:" + name, t);
       return json({ success: true, callsign: "ATC_" + name });
@@ -717,7 +725,7 @@ export class Hub {
         c = { plan: (await this.ctx.storage.get("plan:" + key)) || {},
               assigned: rec && Date.now() - rec.at < ASSIGN_TTL_MS ? rec : null };
       }
-      c.pos = pos; c.seen = Date.now();
+      c.pos = pos; c.seen = Date.now(); c.member = request.headers.get("X-Member") === "1";
       const lg = pick(d, "lang"); if (lg === "pt" || lg === "en") c.lang = lg;
       const lf = Number(pos.landing_fpm);
       if (pos.landing_fpm !== undefined && Number.isFinite(lf) && lf <= HARD_LANDING_FPM) {

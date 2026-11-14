@@ -74,8 +74,8 @@ function addLayers(){
   ['trails','planes','towers','ownsrc','crashes'].forEach(function(id){ if(!map.getSource(id))map.addSource(id,{type:'geojson',data:EMPTY}) });
   var halo={'text-halo-color':'#fff','text-halo-width':1.6};
   if(!map.getLayer('trails'))map.addLayer({id:'trails',type:'line',source:'trails',layout:{'line-cap':'round','line-join':'round'},paint:{'line-color':['get','c'],'line-width':2.5,'line-opacity':.65}});
-  if(!map.getLayer('towers'))map.addLayer({id:'towers',type:'symbol',source:'towers',layout:{'icon-image':'tower','icon-size':.7,'icon-allow-overlap':true,'text-field':['get','label'],'text-font':['Noto Sans Bold'],'text-size':12,'text-offset':[0,1.9],'text-anchor':'top','text-allow-overlap':true},paint:{'icon-color':'#c2189a','icon-halo-color':'#fff','icon-halo-width':1.2,'text-color':'#7a0f62','text-halo-color':'#fff','text-halo-width':1.6}});
-  if(!map.getLayer('planes'))map.addLayer({id:'planes',type:'symbol',source:'planes',layout:{'icon-image':'plane','icon-size':.55,'icon-rotate':['get','h'],'icon-rotation-alignment':'map','icon-allow-overlap':true,'icon-ignore-placement':true,'text-field':['get','label'],'text-font':['Noto Sans Bold'],'text-size':12,'text-offset':[1.4,0],'text-anchor':'left','text-optional':true},paint:{'icon-color':'#e8710a','text-color':'#7a3600','text-halo-color':'#fff','text-halo-width':1.6}});
+  if(!map.getLayer('towers'))map.addLayer({id:'towers',type:'symbol',source:'towers',layout:{'icon-image':'tower','icon-size':.7,'icon-allow-overlap':true,'text-field':['get','label'],'text-font':['Noto Sans Bold'],'text-size':12,'text-offset':[0,1.9],'text-anchor':'top','text-allow-overlap':true},paint:{'icon-color':['case',['==',['get','m'],1],'#d9a400','#c2189a'],'icon-halo-color':'#fff','icon-halo-width':1.2,'text-color':['case',['==',['get','m'],1],'#7a5a00','#7a0f62'],'text-halo-color':'#fff','text-halo-width':1.6}});
+  if(!map.getLayer('planes'))map.addLayer({id:'planes',type:'symbol',source:'planes',layout:{'icon-image':'plane','icon-size':.55,'icon-rotate':['get','h'],'icon-rotation-alignment':'map','icon-allow-overlap':true,'icon-ignore-placement':true,'text-field':['get','label'],'text-font':['Noto Sans Bold'],'text-size':12,'text-offset':[1.4,0],'text-anchor':'left','text-optional':true},paint:{'icon-color':['case',['==',['get','m'],1],'#7b3fe4','#e8710a'],'text-color':['case',['==',['get','m'],1],'#3d1b80','#7a3600'],'text-halo-color':'#fff','text-halo-width':1.6}});
   if(!map.getLayer('own'))map.addLayer({id:'own',type:'symbol',source:'ownsrc',layout:{'icon-image':'plane','icon-size':.65,'icon-rotate':['get','h'],'icon-rotation-alignment':'map','icon-allow-overlap':true,'icon-ignore-placement':true,'text-field':['get','label'],'text-font':['Noto Sans Bold'],'text-size':12,'text-offset':[1.6,0],'text-anchor':'left','text-optional':true},paint:{'icon-color':'#1a73e8','text-color':'#0b3d91','text-halo-color':'#fff','text-halo-width':1.6}});
   var hl={'text-font':['Noto Sans Bold'],'text-size':12,'text-allow-overlap':true,'text-ignore-placement':true};
   var pt2={'text-color':'#0b3d91','text-halo-color':'#fff','text-halo-width':1.6};
@@ -100,10 +100,10 @@ function render(){
   var pl=[],tw=[],tr=[],compact=document.body.classList.contains('pip');
   lastTraffic.forEach(function(a){
     var id=a.icao_address||a.callsign;
-    if(a.virtual_tower){tw.push(pt(a.longitude,a.latitude,{label:a.callsign||'TWR'}));return}
+    if(a.virtual_tower){tw.push(pt(a.longitude,a.latitude,{label:a.callsign||'TWR',m:a.member?1:0}));return}
     if(a.self)return;
-    pl.push(pt(a.longitude,a.latitude,{label:a.callsign||id,h:Number(a.heading_true)||0,id:String(id)}));
-    var sg=segs(id);if(sg.length)tr.push({type:'Feature',geometry:{type:'MultiLineString',coordinates:sg},properties:{c:'#e8710a'}});
+    pl.push(pt(a.longitude,a.latitude,{label:a.callsign||id,h:Number(a.heading_true)||0,id:String(id),m:a.member?1:0}));
+    var sg=segs(id);if(sg.length)tr.push({type:'Feature',geometry:{type:'MultiLineString',coordinates:sg},properties:{c:a.member?'#7b3fe4':'#e8710a'}});
   });
   map.getSource('planes').setData({type:'FeatureCollection',features:pl});
   map.getSource('towers').setData({type:'FeatureCollection',features:tw});
@@ -159,7 +159,7 @@ function applyTraffic(d){
   });
   if(firstFix&&own){firstFix=false;map.jumpTo({center:[own.lon,own.lat],zoom:13})}
   var nt=lastTraffic.filter(function(a){return a.virtual_tower}).length, n=lastTraffic.length-nt;
-  setInfo(n+' aircraft'+' · '+nt+(nt===1?' tower':' towers')+(KEY?'':' · view only'));
+  setInfo(n+' aircraft'+' · '+nt+(nt===1?' tower':' towers')+(lastTraffic.some(function(a){return a.member})?' · purple/gold = group':'')+(KEY?'':' · view only'));
   render();
 }
 // traffic pushed by the Android app (it comes back with the position upload, no extra request)
