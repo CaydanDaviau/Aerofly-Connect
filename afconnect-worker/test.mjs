@@ -469,3 +469,21 @@ await call("DELETE", "/api/atc/tower?name=SBBR", null, "ctl");
   T("weather down -> still answers", off.letter === "E" && off.wx_ok === false && off.weather === null);
   globalThis.fetch = realFetch;
 }
+
+// member towers are protected
+{
+  const genv = { ...env, GROUP_CODE: "tango7" };
+  const G = async (method, path, body, group) => { const h = { "X-API-Key": "k" }; if (group) h["X-Group"] = group;
+    const r = await worker.fetch(new Request("https://x" + path, { method, body: body && JSON.stringify(body), headers: h }), genv); return r.status; };
+  const T = (n, v) => console.log("tower guard " + n + ":", v ? "PASS" : "FAIL");
+  const tw = { name: "SBGL", latitude: -22.8, longitude: -43.2 };
+  T("member opens", await G("PUT", "/api/atc/tower", tw, "tango7") === 200);
+  T("non-member cannot close", await G("DELETE", "/api/atc/tower?name=SBGL", null, "no") === 403);
+  T("non-member cannot overwrite", await G("PUT", "/api/atc/tower", tw, "") === 403);
+  T("non-member cannot edit ATIS", await G("PUT", "/api/atc/atis", { name: "SBGL", runways: "10" }, "no") === 403);
+  T("non-member can still read ATIS", await G("GET", "/api/atis?name=SBGL", null, "no") === 200);
+  T("tower still open", hub.towers.has("SBGL"));
+  T("non-member tower stays open to all", await G("PUT", "/api/atc/tower", { name: "SBSP", latitude: -23.6, longitude: -46.6 }, "") === 200 && await G("DELETE", "/api/atc/tower?name=SBSP", null, "no") === 200);
+  T("member edits ATIS", await G("PUT", "/api/atc/atis", { name: "SBGL", runways: "10" }, "tango7") === 200);
+  T("member closes", await G("DELETE", "/api/atc/tower?name=SBGL", null, "tango7") === 200 && !hub.towers.has("SBGL"));
+}

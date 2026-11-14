@@ -691,6 +691,7 @@ export class Hub {
       if (!/^[A-Z0-9]{2,8}$/.test(name) || !(Math.abs(lat) <= 90) || !(Math.abs(lon) <= 180))
         return json({ error: "need name (2-8 letters/digits), latitude and longitude" }, 400);
       if (!this.towers.has(name) && this.towers.size >= MAX_TOWERS) return json({ error: "too many towers" }, 409);
+      if (this.towers.get(name)?.member && request.headers.get("X-Member") !== "1") return json({ error: "member_tower" }, 403);
       const t = { name, latitude: lat, longitude: lon, altitude_ft: Number(d.altitude_ft) || 0, at: Date.now(), member: request.headers.get("X-Member") === "1", atis: (this.towers.get(name) || {}).atis };
       this.towers.set(name, t);
       await this.ctx.storage.put("tower:" + name, t);
@@ -698,6 +699,7 @@ export class Hub {
     }
     if (m === "DELETE" && p === "/api/atc/tower") {
       const name = String(url.searchParams.get("name") || "").trim().toUpperCase();
+      if (this.towers.get(name)?.member && request.headers.get("X-Member") !== "1") return json({ error: "member_tower" }, 403);
       this.towers.delete(name);
       await this.ctx.storage.delete("tower:" + name);
       return json({ success: true });
@@ -711,6 +713,7 @@ export class Hub {
       const d = await request.json().catch(() => ({}));
       const name = String(d.name || "").trim().toUpperCase(), t = this.towers.get(name);
       if (!t) return json({ error: "no tower open at that airport" }, 404);
+      if (t.member && request.headers.get("X-Member") !== "1") return json({ error: "member_tower" }, 403);
       const a = t.atis || (t.atis = { letter: "A", runways: "", frequencies: "", remarks: "", at: Date.now(), sig: "" });
       const cl = (v, n) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
       let change = d.bump === true;
