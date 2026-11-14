@@ -69,6 +69,7 @@ input::placeholder{color:var(--dim)}
     <input id="ll" size="16" placeholder="lat, lon or ICAO" title="Center on coordinates or an airport code">
     <button id="llGo">Go</button>
     <button id="voiceBtn" title="Voice on/off">Voice: on</button>
+    <button id="grpBtn" title="Group code (from Discord)">Group</button>
     <span id="rwStatus" class="m"></span>
     <span id="status">offline</span>
   </div>
@@ -359,7 +360,7 @@ $('strips').addEventListener('click',function(e){
     else if(act==='vplay')playClip(btn.getAttribute('data-clip'));else if(act==='msg')sendMsg(id);else if(act==='auto')assign(id,'');else if(act==='clear')clearSq(id);return}
   if(e.target.id==='sqin'||e.target.id==='msgin'||e.target.id==='urg'||e.target.id==='ptt')return;
   sel=id;draw();renderStrips(true)});
-var group='';try{group=new URLSearchParams(location.search).get('group')||''}catch(e){}
+var group='';try{var gp=new URLSearchParams(location.search).get('group');group=gp!==null?gp:(localStorage.getItem('afc_group')||'');if(gp!==null){if(group)localStorage.setItem('afc_group',group);else localStorage.removeItem('afc_group')}}catch(e){}
 function api(path,opt){opt=opt||{};opt.headers=Object.assign({'X-API-Key':key},group?{'X-Group':group}:{},opt.headers||{});return fetch(path,opt)}
 function assign(id,sq){var body={icao_address:id};if(sq)body.squawk=sq;
   api('/api/atc/squawk',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
@@ -391,6 +392,8 @@ $('twList').addEventListener('click',function(e){var b=e.target.closest('button'
 function renderTowerBox(){var t=ac.filter(function(a){return a.virtual_tower});
   $('twList').innerHTML=t.length?t.map(function(a){var n=esc(String(a.callsign).replace(/^ATC_/,''));
     return'<div class="row"><span>'+esc(a.callsign)+' <span class="m">virtual</span></span><button data-name="'+n+'">Close</button></div>'}).join(''):'<div class="m" style="margin-top:6px">'+L('No virtual towers open.','Nenhuma torre virtual aberta.')+'</div>'}
+$('grpBtn').addEventListener('click',function(){var v=prompt(L('Group code (from Discord). Empty = none.','Código do grupo (do Discord). Vazio = nenhum.'),group);if(v===null)return;
+  group=v.trim();try{if(group)localStorage.setItem('afc_group',group);else localStorage.removeItem('afc_group')}catch(e){}refreshMyTowers()});
 function refreshMyTowers(){if(key)myTowers.forEach(function(t){putTower(t).catch(function(){})})}
 
 /* ---------- polling ---------- */
