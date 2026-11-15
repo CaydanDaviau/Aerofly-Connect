@@ -6,7 +6,7 @@ import MAP_HTML from "./map.js";
 const ROUTE_MAX = 200;   // SimBrief route points kept per flight
 const TTL_MS = 60_000;
 const ASSIGN_TTL_MS = 12 * 3600_000;
-const TOWER_TTL_MS = 24 * 3600_000;   // a virtual tower expires this long after it was last opened/refreshed
+const TOWER_TTL_MS = 120_000;   // an airport expires this long after its owner's page last refreshed it (the page sends a heartbeat every 45 s)
 const MAX_TOWERS = 50;
 // Positions of one airport: key = ICAO (TWR, kept for old towers) or ICAO_DEL / _GND / _APP / _DEP.
 // A claimed position (the page sends a `holder` id + heartbeat) is freed POS_TTL_MS after the last heartbeat.
@@ -174,6 +174,8 @@ const PUSH_MS = 3000;
 const VOICE_TTL_MS = 5 * 60 * 1000, VOICE_MAX_CLIPS = 120, VOICE_MAX_B64 = 250_000, VOICE_LISTEN_MS = 60_000;
 const up =v => String(v || "").trim().toUpperCase();
 
+// Hash of the caller's IP (never stored or sent in clear); used to keep one person from opening many airports with fresh browser ids.
+const ipTag = request => { const ip = request.headers.get("CF-Connecting-IP"); return ip ? "ip" + hid(ip) + hid(ip + "x") : ""; };
 // Group code: Worker var GROUP_CODE; clients send it as X-Group header (or ?group=). The Hub only ever sees X-Member 1/0, never the code.
 function memberFlag(request, env, url) {
   const gc = String(env.GROUP_CODE || "").trim();
@@ -193,7 +195,7 @@ export default {
       const wk = (url.searchParams.get("key") || "").trim();
       const allowed = (env.ABFLUG_KEYS || "").split(",").map(s => s.trim()).filter(Boolean);
       if (!wk || (allowed.length && !allowed.includes(wk))) return json({ error: "invalid api key" }, 401);
-      const h = new Headers(request.headers); h.set("X-API-Key", wk); h.set("X-Member", memberFlag(request, env, url) ? "1" : "0");
+      const h = new Headers(request.headers); h.set("X-API-Key", wk); h.set("X-Member", memberFlag(request, env, url) ? "1" : "0"); h.set("X-IP", ipTag(request));
       return env.HUB.get(env.HUB.idFromName("global")).fetch(request, { headers: h });
     }
     if (!url.pathname.startsWith("/api/")) return json({ name: "abflug-community", ok: true });
@@ -204,7 +206,7 @@ export default {
     }
     if (env.DEBUG) console.log(request.method, url.pathname + url.search, (await request.clone().text()).slice(0, 600));
     const stub = env.HUB.get(env.HUB.idFromName("global"));
-    const hh = new Headers(request.headers); hh.delete("X-Group"); hh.set("X-Member", memberFlag(request, env, url) ? "1" : "0");
+    const hh = new Headers(request.headers); hh.delete("X-Group"); hh.set("X-Member", memberFlag(request, env, url) ? "1" : "0"); hh.set("X-IP", ipTag(request));
     return stub.fetch(request, { headers: hh });
   },
 };
@@ -264,6 +266,15 @@ export class Hub {
   humanCovers(c, apt, type) {
     const ok = t => t.pos !== "APT" && (!type || !COVER[type] || COVER[type].includes(t.pos || "TWR"));
     return [...this.towers.values()].some(t => ok(t) && ((apt && (t.apt || t.name) === apt) || haversineMi(t.latitude, t.longitude, c.pos.latitude, c.pos.longitude) <= TOWER_COVER_MI));
+  }
+  towerOf(apt) { for (const t of this.towers.values()) if ((t.apt || t.name) === apt) return t; return null; }
+  // The airport this person (browser id `who` or IP tag) already has open as owner / role holder, or null.
+  airportOf(who, ipt) {
+    for (const t of this.towers.values()) {
+      if (t.member) continue;
+      if ((who && (t.owner === who || t.holder === who)) || (ipt && t.oip === ipt)) return t.apt || t.name;
+    }
+    return null;
   }
   // The airport a holder currently works a live role at (null = free). One airport at a time.
   lockedApt(who, now) {
@@ -441,7 +452,7 @@ export class Hub {
     const key = (request.headers.get("X-API-Key") || "").trim();
     const pair = new WebSocketPair();
     this.ctx.acceptWebSocket(pair[1]);
-    pair[1].serializeAttachment({ key, sub: null, member: request.headers.get("X-Member") === "1" });
+    pair[1].serializeAttachment({ key, sub: null, member: request.headers.get("X-Member") === "1", ip: request.headers.get("X-IP") || "" });
     this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
     this.startPush();
     return new Response(null, { status: 101, webSocket: pair[0] });
@@ -536,7 +547,7 @@ export class Hub {
       try { ws.send(JSON.stringify({ id: d.id, status: 400, body: { error: "bad request" } })); } catch (e) {}
       return;
     }
-    const init = { method, headers: { "X-API-Key": a.key, "Content-Type": "application/json", "X-Via": "ws", "X-Member": a.member ? "1" : "0" } };
+    const init = { method, headers: { "X-API-Key": a.key, "Content-Type": "application/json", "X-Via": "ws", "X-Member": a.member ? "1" : "0", "X-IP": a.ip || "" } };
     if (method !== "GET" && method !== "DELETE" && d.body !== undefined) init.body = JSON.stringify(d.body);
     let status = 500, body = { error: "server error" };
     try {
@@ -770,12 +781,18 @@ export class Hub {
       const freq = normFreq(d.freq);
       if (String(d.freq ?? "").trim() && !freq) return json({ error: "bad_freq" }, 400);
       if (!old && this.towers.size >= MAX_TOWERS) return json({ error: "too many towers" }, 409);
+      // one airport per person (by browser id or IP); group-code members are unrestricted
+      const ipt = request.headers.get("X-IP") || "";
+      if (!old && request.headers.get("X-Member") !== "1" && !this.towerOf(pn.apt)) {
+        const mine = this.airportOf(who, ipt);
+        if (mine && mine !== pn.apt) return json({ error: "one_tower", airport: mine }, 409);
+      }
       if (old?.member && request.headers.get("X-Member") !== "1") return json({ error: "member_tower" }, 403);
       // one controller per position: a live claim by someone else blocks (heartbeats keep it alive)
       if (old && old.holder && holder && old.holder !== holder && now - old.at <= POS_TTL_MS) return json({ error: "position_taken", position: pn.pos, airport: pn.apt }, 409);
       if (old && old.holder && !holder && now - old.at <= POS_TTL_MS) return json({ error: "position_taken", position: pn.pos, airport: pn.apt }, 409);
       const atis = old && old.atis;
-      const t = { name, apt: pn.apt, pos: pn.pos, freq, holder: holder || undefined, latitude: lat, longitude: lon, altitude_ft: Number(d.altitude_ft) || 0, at: now, member: request.headers.get("X-Member") === "1", atis };
+      const t = { name, apt: pn.apt, pos: pn.pos, freq, holder: holder || undefined, oip: (old && old.oip) || ipt || undefined, latitude: lat, longitude: lon, altitude_ft: Number(d.altitude_ft) || 0, at: now, member: request.headers.get("X-Member") === "1", atis };
       if (pn.pos === "APT") {   // the creator owns the airport (kept across re-PUTs); bans live on the airport record
         const ow = (old && old.owner) || String(d.owner || "").slice(0, 40);
         if (ow) t.owner = ow;

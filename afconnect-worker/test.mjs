@@ -681,3 +681,25 @@ await call("DELETE", "/api/atc/tower?name=SBBR_TWR", null, "ctl");
   await call("DELETE", "/api/position", null, k);
   T("cleared on DELETE", (await J("GET", "/api/route?icao_address=ABC123", null, "o")).s === 404 && !(await ctx.storage.get("route:" + k)));
 }
+
+// ---- one airport per person, 2-minute airport expiry
+{
+  const T = (n, v) => console.log("onetower " + n + ":", v ? "PASS" : "FAIL");
+  const put = async (name, who, ip, member) => { const h = { "X-API-Key": "k", "X-Member": member ? "1" : "0" }; if (ip) h["X-IP"] = ip;
+    const r = await hub.fetch(new Request("https://hub/api/atc/tower", { method: "PUT", headers: h, body: JSON.stringify({ name, latitude: 1, longitude: 1, owner: who }) })); return { s: r.status, j: await r.json() }; };
+  hub.towers.clear();
+  T("first airport ok", (await put("AAAA", "u1", "ip1")).s === 200);
+  T("refresh same airport ok", (await put("AAAA", "u1", "ip1")).s === 200);
+  const r2 = await put("BBBB", "u1", "ip1");
+  T("second airport same person blocked", r2.s === 409 && r2.j.error === "one_tower" && r2.j.airport === "AAAA");
+  T("same IP, fresh browser id blocked", (await put("CCCC", "u9", "ip1")).j.error === "one_tower");
+  T("other person ok", (await put("DDDD", "u2", "ip2")).s === 200);
+  T("member unrestricted", (await put("EEEE", "m1", "ip1", true)).s === 200 && (await put("FFFF", "m1", "ip1", true)).s === 200);
+  T("no IP header, other id ok", (await put("GGGG", "u3", "")).s === 200);
+  T("closing frees the slot", (await hub.fetch(new Request("https://hub/api/atc/tower?name=AAAA&holder=u1", { method: "DELETE", headers: { "X-API-Key": "k" } }))).status === 200 && (await put("BBBB", "u1", "ip1")).s === 200);
+  hub.towers.get("BBBB").at = Date.now() - 121_000; hub.purge();
+  T("expires after 2 min", !hub.towers.has("BBBB"));
+  hub.towers.get("DDDD").at = Date.now() - 100_000; hub.purge();
+  T("alive at 100 s", hub.towers.has("DDDD"));
+  hub.towers.clear();
+}
