@@ -311,6 +311,24 @@ function computeConfl(){
 }
 setInterval(function(){if(hasViol)draw()},450);
 
+var routeCache={},routeBusy={};
+function drawRoute(maxR){   /* SimBrief route of the selected aircraft: fetched once on selection, cached 60 s */
+  if(!sel)return;var a=null;for(var i=0;i<ac.length;i++)if(ac[i].icao_address===sel){a=ac[i];break}
+  if(!a||!a.has_route)return;
+  var c=routeCache[sel],now=Date.now();
+  if((!c||now-c.at>60000)&&!routeBusy[sel]){routeBusy[sel]=1;var id=sel;
+    api('/api/route?icao_address='+encodeURIComponent(id)).then(function(r){return r.ok?r.json():null}).then(function(j){
+      routeBusy[id]=0;routeCache[id]={at:Date.now(),d:j};if(sel===id)draw()}).catch(function(){routeBusy[id]=0;routeCache[id]={at:Date.now(),d:null}})}
+  if(!c||!c.d||!c.d.points)return;
+  var p=c.d.points;g.save();g.lineWidth=2;g.strokeStyle='rgba(255,92,224,.85)';g.setLineDash([7,4]);g.beginPath();
+  for(var k=0;k<p.length;k++){var q=projLL(p[k][0],p[k][1]);if(k)g.lineTo(q[0],q[1]);else g.moveTo(q[0],q[1])}
+  g.stroke();g.setLineDash([]);g.font='9px ui-monospace,monospace';g.textBaseline='middle';g.textAlign='left';
+  var lbl=maxR<=120,n=0;
+  for(var k=0;k<p.length;k++){var q=projLL(p[k][0],p[k][1]);if(q[0]<-4||q[1]<-4||q[0]>W+4||q[1]>H+4)continue;
+    g.fillStyle='#ff5ce0';g.beginPath();g.arc(q[0],q[1],2.6,0,6.2832);g.fill();
+    if(lbl&&p[k][3]&&n<80){n++;g.lineWidth=2;g.strokeStyle='rgba(20,25,30,.9)';g.fillStyle='#ffd1f6';g.strokeText(p[k][3],q[0]+5,q[1]-5);g.fillText(p[k][3],q[0]+5,q[1]-5)}}
+  g.restore();
+}
 function draw(){
   syncBg();if(bgOK)g.clearRect(0,0,W,H);else{g.fillStyle='#2b2b2b';g.fillRect(0,0,W,H)}
   var maxR=Math.hypot(W,H)/2*nmpp,steps=[1,2,5,10,20,25,50,100,200,500,1000],step=steps[steps.length-1];
@@ -324,6 +342,7 @@ function draw(){
   g.fillText(step+' nm rings',6,H-14);
   drawRunways(maxR);
   drawFixes(maxR);
+  drawRoute(maxR);
   var blinkOn=Math.floor(Date.now()/450)%2===0;
   for(var k=0;k<ac.length;k++){var cf0=confl[ac[k].icao_address];if(!cf0)continue;
     var cxy=proj(ac[k]),cr=Math.max(16,cf0.r/nmpp);
@@ -399,7 +418,7 @@ function renderStrips(force){
   if(!list.length){$('list').innerHTML='<div class="empty">'+L('No traffic.','Sem tráfego.')+'</div>';return}
   $('list').innerHTML=list.map(function(o){var a=o.a,r=o.r,id=a.icao_address,tw=isTwr(a),isSel=id===sel;
     var asg=a.assigned_squawk||null,st=tw?'':(asg?'<span class="ok">SQ '+esc(asg)+'</span>':'<span class="warn">'+L('NO CODE &ndash; assign one','SEM CÓDIGO &ndash; atribua um')+'</span>');
-    var route=[a.departure_airport,a.arrival_airport].filter(Boolean).map(esc).join(' &rarr; ');
+    var route=[a.departure_airport,a.arrival_airport].filter(Boolean).map(esc).join(' &rarr; ')+(a.has_route?' <span class="ok" title="SimBrief route">&#9670; SimBrief</span>':'');
     var cruise=a.cruise_altitude||a.cruise_altitude_ft||a.cruise_alt||'';
     var ctl=isSel&&!tw?'<div class="ctl"><input id="sqin" inputmode="numeric" maxlength="4" placeholder="'+(asg||'0000')+'" value="'+esc(asg||'')+'">'+
       '<button data-act="set">'+L('Assign','Atribuir')+'</button><button data-act="auto">Auto</button><button data-act="clear">'+L('Clear','Limpar')+'</button></div>'+

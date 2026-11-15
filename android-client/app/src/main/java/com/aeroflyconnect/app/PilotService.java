@@ -160,7 +160,7 @@ public class PilotService extends Service {
         PcLink pcl = Api.pcMode(this) ? new PcLink() : null;
         if (pcl != null) pcl.start();
         final String simHost = Api.simHost(this);
-        boolean planSent = false;
+        boolean planSent = false, routeSent = false;
         try {
             while (!stopFlag) {
                 long t0 = System.currentTimeMillis();
@@ -225,6 +225,12 @@ public class PilotService extends Service {
                             putIf(plan, "flightplan_route", Api.field(this, "route"));
                             int pc = Api.send("PUT", "/api/flightplan", plan.toString(), key);
                             planSent = pc < 400;
+                        }
+                        // SimBrief route (imported on the Pilot screen): once, right after the plan, only if dep/arr still match.
+                        if (planSent && !routeSent) {
+                            String rb = SimBrief.pendingBody(this);
+                            if (rb == null) routeSent = true;
+                            else routeSent = Api.send("PUT", "/api/flightplan/route", rb, key) < 400;
                         }
                         Api.Resp r = Api.request("PUT", mapShown && !WsLink.live() ? "/api/position?traffic=1" : "/api/position", pos.toString(), key);
                         int code = r.code;

@@ -3,6 +3,7 @@ import { parseMetar, wxSig, nextLetter } from "./atis.js";
 // All state lives in one Durable Object (in memory, TTL-based).
 import ATC_HTML from "./atc.js";
 import MAP_HTML from "./map.js";
+const ROUTE_MAX = 200;   // SimBrief route points kept per flight
 const TTL_MS = 60_000;
 const ASSIGN_TTL_MS = 12 * 3600_000;
 const TOWER_TTL_MS = 24 * 3600_000;   // a virtual tower expires this long after it was last opened/refreshed
@@ -390,7 +391,7 @@ export class Hub {
       const d = haversineMi(lat, lon, pos.latitude, pos.longitude);
       if (d <= rad) {
         const callsign = normCallsign(c.plan.callsign ?? pos.callsign);
-        out.push({ ...pos, ...c.plan, callsign, ...towerFields(callsign), member: !!c.member, freq: c.pos.freq || "", assigned_squawk: c.assigned ? c.assigned.squawk : null, emergency: !!(c.emerg && Date.now() < c.emerg.until), no_clnc: !!(c.viol && Date.now() - c.viol.at < VIOL_SHOW_MS), ...(ck === key ? { self: true } : {}), distance_miles: Math.round(d * 10) / 10 });
+        out.push({ ...pos, ...c.plan, callsign, ...towerFields(callsign), member: !!c.member, has_route: !!c.route, freq: c.pos.freq || "", assigned_squawk: c.assigned ? c.assigned.squawk : null, emergency: !!(c.emerg && Date.now() < c.emerg.until), no_clnc: !!(c.viol && Date.now() - c.viol.at < VIOL_SHOW_MS), ...(ck === key ? { self: true } : {}), distance_miles: Math.round(d * 10) / 10 });
       }
     }
     // one symbol per airport; its staffed roles are listed in `positions`
@@ -896,7 +897,7 @@ export class Hub {
       let c = this.clients.get(key);
       if (!c) {
         const rec = await this.ctx.storage.get("sq:" + icao);
-        c = { plan: (await this.ctx.storage.get("plan:" + key)) || {},
+        c = { plan: (await this.ctx.storage.get("plan:" + key)) || {}, route: (await this.ctx.storage.get("route:" + key)) || null,
               assigned: rec && Date.now() - rec.at < ASSIGN_TTL_MS ? rec : null };
       }
       c.pos = pos; c.seen = Date.now(); c.member = request.headers.get("X-Member") === "1";
@@ -939,14 +940,45 @@ export class Hub {
       for (const [k, v] of Object.entries(d).slice(0, 30))
         if (["string", "number", "boolean"].includes(typeof v)) plan[k] = typeof v === "string" ? v.slice(0, 500) : v;
       const c = this.clients.get(key) || {};
-      c.plan = plan; c.seen = Date.now();
+      c.plan = plan; c.seen = Date.now(); c.route = null;   // a new plan drops the old SimBrief route (the app sends the route right after)
       await this.ctx.storage.put("plan:" + key, plan);
+      await this.ctx.storage.delete("route:" + key);
       this.clients.set(key, c);
       return json({ success: true });
     }
 
+    // ---- SimBrief route: sent once by the app after the plan; never part of traffic replies. points: [[lat, lon, alt_ft, ident], ...]
+    if ((m === "POST" || m === "PUT") && p === "/api/flightplan/route") {
+      const blocked = this.crashBlock(key);
+      if (blocked) return blocked;
+      const d = await request.json().catch(() => ({}));
+      if (!Array.isArray(d.points)) return json({ error: "points required" }, 400);
+      const pts = [];
+      for (const q of d.points.slice(0, ROUTE_MAX)) {
+        if (!Array.isArray(q)) continue;
+        const la = Number(q[0]), lo = Number(q[1]);
+        if (!Number.isFinite(la) || !Number.isFinite(lo) || Math.abs(la) > 90 || Math.abs(lo) > 180) continue;
+        const al = Number(q[2]);
+        pts.push([Math.round(la * 1e5) / 1e5, Math.round(lo * 1e5) / 1e5, Number.isFinite(al) ? Math.round(al) : null, String(q[3] ?? "").slice(0, 12)]);
+      }
+      if (pts.length < 2) return json({ error: "need at least 2 valid points" }, 400);
+      const route = { points: pts, route: typeof d.route === "string" ? d.route.slice(0, 1500) : "", at: Date.now() };
+      const c = this.clients.get(key) || {};
+      c.route = route; c.seen = Date.now();
+      await this.ctx.storage.put("route:" + key, route);
+      this.clients.set(key, c);
+      return json({ success: true, points: pts.length });
+    }
+    if (m === "GET" && p === "/api/route") {
+      const icao = String(url.searchParams.get("icao_address") || "").toUpperCase();
+      const target = [...this.clients.values()].find(c => c.pos && c.pos.icao_address === icao);
+      if (!target || !target.route) return json({ error: "no route" }, 404);
+      return json(target.route);
+    }
+
     if (m === "DELETE" && p === "/api/position") {
       this.clients.delete(key);
+      await this.ctx.storage.delete("route:" + key);
       return json({ success: true });
     }
     return json({ error: "not found" }, 404);

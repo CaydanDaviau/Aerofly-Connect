@@ -337,6 +337,19 @@ public class MainActivity extends Activity {
         vcHint.setPadding(0, pad / 4, 0, 0);
         vc.addView(vcHint);
 
+        // ----- SimBrief (import a flight plan on the Pilot screen) -----
+        LinearLayout sbc = section(root, "SimBrief");
+        final EditText sbUser = addField(sbc, Api.t(this, "SimBrief username or Pilot ID", "Usuário ou Pilot ID do SimBrief"), Api.field(this, "sbuser"), false, false);
+        sbUser.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence c, int a, int b, int d) { }
+            @Override public void onTextChanged(CharSequence c, int a, int b, int d) { }
+            @Override public void afterTextChanged(android.text.Editable e) { Api.setField(MainActivity.this, "sbuser", e.toString().trim()); }
+        });
+        TextView sbHint = dim(Api.t(this, "Then tap \"Import from SimBrief\" on the Pilot screen. Needs a generated plan and a public profile.",
+                "Depois toque em \"Importar do SimBrief\" na tela do Piloto. Precisa de um plano gerado e perfil público."), 13);
+        sbHint.setPadding(0, pad / 4, 0, 0);
+        sbc.addView(sbHint);
+
         // ----- Floating ATC window (requests + Wilco / Unable over the sim) -----
         LinearLayout ov = section(root, Api.t(this, "ATC overlay", "Janela do ATC"));
         ov.addView(sw(Api.t(this, "Floating ATC window while flying", "Janela flutuante do ATC durante o voo"), Api.overlayOn(this),
@@ -688,6 +701,12 @@ public class MainActivity extends Activity {
         EditText route = addField(card, Api.t(this, "Route (optional)", "Rota (opcional)"), Api.field(this, "route"), true, false);
         extra = new EditText[]{dep, arr, deprwy, arrrwy, model, livery, cruise, route};   // same order as EXTRA_KEYS
 
+        importBtn = Ui.button(this, Api.t(this, "Import from SimBrief", "Importar do SimBrief"), Ui.SECONDARY);
+        importBtn.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { importSimBrief(); }
+        });
+        card.addView(importBtn, Ui.lp(this, 10));
+
         startStop = Ui.button(this, "", Ui.PRIMARY);
         startStop.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { toggle(); }
@@ -719,6 +738,43 @@ public class MainActivity extends Activity {
     }
 
     private EditText[] extra;
+    private Button importBtn;
+
+    /** Fills the Flight card from the latest SimBrief plan; the route is stored and uploaded at the next Start. */
+    private void importSimBrief() {
+        if (PilotService.running) return;
+        final String user = Api.field(this, "sbuser").trim();
+        if (user.isEmpty()) {
+            Toast.makeText(this, Api.t(this, "Enter your SimBrief username in Settings first.", "Informe seu usuário do SimBrief em Configurações primeiro."), Toast.LENGTH_LONG).show();
+            return;
+        }
+        importBtn.setEnabled(false);
+        Toast.makeText(this, Api.t(this, "Importing from SimBrief...", "Importando do SimBrief..."), Toast.LENGTH_SHORT).show();
+        SimBrief.fetch(user, new SimBrief.Cb() {
+            @Override public void done(final SimBrief.Plan p) {
+                ui.post(new Runnable() {
+                    @Override public void run() {
+                        importBtn.setEnabled(true);
+                        if (p.error != null) {
+                            String m = SimBrief.ERR_USER.equals(p.error) ? Api.t(MainActivity.this, "SimBrief user not found (or profile is private).", "Usuário do SimBrief não encontrado (ou perfil privado).")
+                                    : SimBrief.ERR_NOPLAN.equals(p.error) ? Api.t(MainActivity.this, "No flight plan found on SimBrief. Generate one first.", "Nenhum plano encontrado no SimBrief. Gere um primeiro.")
+                                    : SimBrief.ERR_BAD.equals(p.error) ? Api.t(MainActivity.this, "Could not read the SimBrief plan.", "Não foi possível ler o plano do SimBrief.")
+                                    : Api.t(MainActivity.this, "Could not reach SimBrief. Check your connection.", "Não foi possível acessar o SimBrief. Verifique a conexão.");
+                            Toast.makeText(MainActivity.this, m, Toast.LENGTH_LONG).show();
+                            return;
+                        }
+                        if (PilotService.running || callsignBox == null || extra == null) return;
+                        if (!p.callsign.isEmpty()) callsignBox.setText(p.callsign);
+                        String[] v = {p.dep, p.arr, p.depRwy, p.arrRwy, p.model, null, p.cruise, p.route};   // same order as EXTRA_KEYS (livery untouched)
+                        for (int i = 0; i < v.length; i++) if (v[i] != null && !v[i].isEmpty()) extra[i].setText(v[i]);
+                        SimBrief.store(MainActivity.this, p);
+                        Toast.makeText(MainActivity.this, Api.t(MainActivity.this, "Imported ", "Importado ") + p.dep + " \u2192 " + p.arr
+                                + (p.points.length() > 1 ? " (" + p.points.length() + Api.t(MainActivity.this, " route points)", " pontos de rota)") : ""), Toast.LENGTH_LONG).show();
+                    }
+                });
+            }
+        });
+    }
     private static final String[] EXTRA_KEYS = {"dep", "arr", "deprwy", "arrrwy", "model", "livery", "cruise", "route"};
 
     /** Horizontal row that holds two fields side by side. */
@@ -809,6 +865,7 @@ public class MainActivity extends Activity {
         statusHead.setText("\u25CF " + (on ? Api.t(this, "FLYING", "VOANDO") : Api.t(this, "STOPPED", "PARADO")));
         statusHead.setTextColor(on ? Ui.GREEN : Ui.DIM);
         callsignBox.setEnabled(!on);
+        importBtn.setEnabled(!on);
         for (EditText e : extra) e.setEnabled(!on);
         String raw = PilotService.lastRaw;
         if (raw.length() > 300) raw = raw.substring(0, 300) + "...";

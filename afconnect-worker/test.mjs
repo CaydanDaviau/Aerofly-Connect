@@ -654,3 +654,30 @@ await call("DELETE", "/api/atc/tower?name=SBBR_TWR", null, "ctl");
   T("handoff prefers human DEP frequency", d.messages.some(m => /119\.500/.test(m.text)));
   hub.towers.clear();
 }
+
+// ---- SimBrief route
+{
+  const T = (n, v) => console.log("route " + n + ":", v ? "PASS" : "FAIL");
+  const J = async (method, path, body, key) => { const r = await worker.fetch(new Request("https://x" + path, { method, body: body && JSON.stringify(body), headers: { "X-API-Key": key } }), env); return { s: r.status, j: await r.json().catch(() => ({})), }; };
+  const k = "rt1";
+  await call("PUT", "/api/flightplan", { callsign: "RT1", departure_airport: "SBBR" }, k);
+  await call("PUT", "/api/position", { latitude: 10, longitude: 20, icao_address: "ABC123" }, k);
+  const icao = JSON.parse((await call("GET", "/api/traffic?lat=10&lon=20&radius_miles=50", null, "o")).slice(4)).aircraft.find(a => a.callsign === "RT1");
+  T("no route yet", (await J("GET", "/api/route?icao_address=" + icao.icao_address, null, "o")).s === 404 && !icao.has_route);
+  T("bad body 400", (await J("PUT", "/api/flightplan/route", { points: "x" }, k)).s === 400);
+  T("one point 400", (await J("PUT", "/api/flightplan/route", { points: [[1, 2]] }, k)).s === 400);
+  const pts = []; for (let i = 0; i < 300; i++) pts.push([10 + i * 0.01, 20, 30000, "FX" + i]); pts.push([999, 0, 0, "BAD"]);
+  const put = await J("PUT", "/api/flightplan/route", { points: pts, route: "DCT FOO" }, k);
+  T("stored, capped at 200", put.s === 200 && put.j.points === 200);
+  const g = await J("GET", "/api/route?icao_address=" + icao.icao_address.toLowerCase(), null, "o");
+  T("fetch", g.s === 200 && g.j.points.length === 200 && g.j.points[0][3] === "FX0" && g.j.route === "DCT FOO");
+  const t2 = await call("GET", "/api/traffic?lat=10&lon=20&radius_miles=50", null, "o");
+  T("flag in traffic, points not", t2.includes('"has_route":true') && !t2.includes("FX0"));
+  hub = new Hub(ctx); await call("PUT", "/api/position", { latitude: 10, longitude: 20, icao_address: "ABC123" }, k);
+  T("survives restart", (await J("GET", "/api/route?icao_address=ABC123", null, "o")).s === 200);
+  await call("PUT", "/api/flightplan", { callsign: "RT1" }, k);
+  T("new plan clears route", (await J("GET", "/api/route?icao_address=ABC123", null, "o")).s === 404);
+  await J("PUT", "/api/flightplan/route", { points: [[1, 2], [3, 4]] }, k);
+  await call("DELETE", "/api/position", null, k);
+  T("cleared on DELETE", (await J("GET", "/api/route?icao_address=ABC123", null, "o")).s === 404 && !(await ctx.storage.get("route:" + k)));
+}
