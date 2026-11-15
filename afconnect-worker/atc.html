@@ -24,6 +24,7 @@ input::placeholder{color:var(--dim)}
 #strips{flex:1 1 45%;min-height:0;overflow:auto;border-top:1px solid var(--dim);padding:6px}
 @media (min-aspect-ratio:5/4){#main{flex-direction:row}#strips{flex:0 0 380px;border-top:0;border-left:1px solid var(--dim)}}
 .strip{border:1px solid var(--faint);border-left:4px solid var(--dim);border-radius:4px;padding:6px 8px;margin-bottom:6px;background:var(--panel)}
+.strip.dim{opacity:.38}
 .strip.sel{border-color:var(--cy);border-left-color:var(--cy)}
 .strip.twr{border-left-color:#ff7ae9}
 .strip.nocode{border-left-color:var(--amber)}
@@ -75,6 +76,7 @@ input::placeholder{color:var(--dim)}
     <button id="llGo">Go</button>
     <button id="voiceBtn" title="Voice on/off">Voice: on</button>
     <button id="grpBtn" title="Group code (from Discord)">Group</button>
+    <button id="dimBtn" title="Grey out aircraft that are not on my frequencies (they stay visible)">My freqs: off</button>
     <span id="rwStatus" class="m"></span>
     <span id="status">offline</span>
   </div>
@@ -328,12 +330,12 @@ function draw(){
     else{g.lineWidth=1.5;g.strokeStyle='rgba(255,176,0,.85)';g.beginPath();g.arc(cxy[0],cxy[1],cr,0,6.2832);g.stroke()}}
   for(var k=0;k<ac.length;k++){var a=ac[k],id=a.icao_address,xy=proj(a),x=xy[0],y=xy[1];
     if(x<-60||y<-40||x>W+60||y>H+40)continue;
-    var tw=isTwr(a),isSel=sel===id,asg=a.assigned_squawk;
+    var tw=isTwr(a),isSel=sel===id,asg=a.assigned_squawk,dm=isDim(a)&&!isSel;if(dm)g.globalAlpha=.3;
     var col=isSel?'#7ae9ff':tw?(a.member?'#ffd23f':'#ff7ae9'):a.member?'#b48cff':!asg?'#ffb000':'#3dff7a';
     var cf=confl[id];if(cf&&cf.lvl===2&&blinkOn)col='#ff3b30';if(a.emergency)col=blinkOn?'#ff3b30':'#ffd0cc';
     var tr=trails[id]||[];g.strokeStyle=col;g.globalAlpha=.45;
     g.fillStyle=col;for(var t=0;t<tr.length;t++){var q=proj(tr[t]);if(q[0]<-5||q[1]<-5||q[0]>W+5||q[1]>H+5)continue;g.fillRect(q[0]-1,q[1]-1,2,2)}
-    g.globalAlpha=1;
+    g.globalAlpha=dm?.3:1;
     if(tw){drawTower(g,x,y,24,col,'#2b2b2b')}
     else{g.strokeStyle=col;g.lineWidth=isSel?2:1.5;g.strokeRect(x-4,y-4,8,8);
       var gs=Number(a.ground_speed)||0,hd=(Number(a.heading_true)||0)*Math.PI/180;
@@ -342,7 +344,9 @@ function draw(){
     g.fillText((a.callsign||id),x+(tw?15:9),y-12);
     if(!tw&&a.airplane_model){g.textAlign='center';g.fillText(String(a.airplane_model).slice(0,12),x,y-25);g.textAlign='left'}
     if(!tw)g.fillText(altStr(a.altitude_ft)+' '+Math.round(Number(a.ground_speed)||0)+'kt'+(asg?'  '+asg:''),x+9,y-1);
+    if(!tw)g.fillText((a.freq||'')+' '+ctrlOf(a),x+9,y+10);
     if(isSel){g.strokeStyle='#7ae9ff';g.lineWidth=1;g.beginPath();g.arc(x,y,13,0,6.2832);g.stroke()}
+    g.globalAlpha=1;
   }
   /* crash sites: a red X, kept for 10 min; the pilot is locked out for the first 5 */
   crashes.forEach(function(c){var q=projLL(c.latitude,c.longitude),x=q[0],y=q[1];if(x<-40||y<-40||x>W+40||y>H+40)return;
@@ -401,8 +405,8 @@ function renderStrips(force){
       '<div class="ctl"><input id="msgin" maxlength="300" placeholder="'+L('Message to pilot','Mensagem ao piloto')+'"><label class="urg"><input type="checkbox" id="urg"'+(urgent?' checked':'')+'> '+L('Urgent','Urgente')+'</label><button data-act="msg">'+L('Send','Enviar')+'</button></div>':'';
     var vc=vclips.filter(function(v){return v.icao_address===id&&isHeard(v.freq)}).slice(-1).map(function(v){return'<div class="mlog chat"><b>'+L('PILOT voice','PILOTO voz')+'</b> '+Math.round((v.ms||0)/1000)+' s <button data-act="vplay" data-clip="'+esc(v.id)+'">&#9654;</button></div>'}).join('');
     var ml=vc+msgs.filter(function(m){return m.icao_address===id&&(m.kind!=='chat'||isHeard(m.freq))}).slice(-3).map(function(m){return m.kind==='chat'?'<div class="mlog chat"><b>'+L('PILOT','PILOTO')+':</b> '+esc(m.text)+'</div>':'<div class="mlog">&rsaquo; '+esc(m.text)+' &mdash; <b class="'+esc(m.status)+'">'+esc(m.status.toUpperCase())+'</b></div>'}).join('');
-    return'<div class="strip'+(isSel?' sel':'')+(tw?' twr':(asg?'':' nocode'))+(a.no_clnc?' noclnc':'')+(a.emergency?' emerg':'')+'" data-id="'+esc(id)+'">'+
-      '<div class="h"><span class="cs">'+esc(a.callsign||id)+(tw?' &#9650;':'')+(a.emergency?'<span class="mayday">MAYDAY</span>':'')+(a.no_clnc?'<span class="noc">NO CLNC</span>':'')+'</span><span class="m">'+Math.round(r.dist)+' nm / '+p3(r.brg)+'&deg;'+(a.freq?' &middot; '+esc(a.freq):'')+'</span></div>'+
+    return'<div class="strip'+(isSel?' sel':'')+(tw?' twr':(asg?'':' nocode'))+(a.no_clnc?' noclnc':'')+(a.emergency?' emerg':'')+(isDim(a)?' dim':'')+'" data-id="'+esc(id)+'">'+
+      '<div class="h"><span class="cs">'+esc(a.callsign||id)+(tw?' &#9650;':'')+(a.emergency?'<span class="mayday">MAYDAY</span>':'')+(a.no_clnc?'<span class="noc">NO CLNC</span>':'')+'</span><span class="m">'+Math.round(r.dist)+' nm / '+p3(r.brg)+'&deg;'+(tw?'':' &middot; '+(a.freq?esc(a.freq)+' ':'')+esc(ctrlOf(a)))+'</span></div>'+
       (tw?'':'<div>'+altStr(a.altitude_ft)+' &middot; '+Math.round(Number(a.ground_speed)||0)+' kt &middot; HDG '+p3(Number(a.heading_mag!=null?a.heading_mag:a.heading_true)||0)+'&deg;'+(a.heading_mag==null?'T':'')+' &middot; '+(Number(a.vertical_speed_ft_min)>100?'&uarr;':Number(a.vertical_speed_ft_min)<-100?'&darr;':'&rarr;')+'</div>')+
       (tw?'':'<div>'+st+'</div>')+
       (!tw&&(a.airplane_model||a.departure_runway||a.arrival_runway)?'<div class="m">'+(a.airplane_model?esc(a.airplane_model):'')+((a.departure_runway||a.arrival_runway)?(a.airplane_model?' &middot; ':'')+'RWY '+esc(a.departure_runway||'--')+' &rarr; '+esc(a.arrival_runway||'--'):'')+'</div>':'')+
@@ -436,13 +440,26 @@ var myTowers=[],myApts=[];try{myTowers=JSON.parse(localStorage.getItem('abflug_t
 myTowers=myTowers.map(function(t){if(/_/.test(t.name))return t;if(!myApts.some(function(a){return a.name===t.name}))myApts.push({name:t.name,latitude:t.latitude,longitude:t.longitude});return{name:t.name+'_TWR',freq:t.freq||'',latitude:t.latitude,longitude:t.longitude}});
 function saveTowers(){try{localStorage.setItem('abflug_towers',JSON.stringify(myTowers));localStorage.setItem('afc_apts',JSON.stringify(myApts))}catch(e){}}
 var holder=localStorage.getItem('afc_holder');if(!holder){holder='h'+Math.random().toString(36).slice(2,12);try{localStorage.setItem('afc_holder',holder)}catch(e){}}
-function putTower(t,noHolder){var b={};for(var k in t)b[k]=t[k];if(!noHolder)b.holder=holder;return api('/api/atc/tower',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)})}
+function putTower(t,noHolder){var b={};for(var k in t)b[k]=t[k];if(!noHolder)b.holder=holder;else b.owner=holder;return api('/api/atc/tower',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)})}
 function nf(v){v=String(v||'').trim();if(/^\d{4,6}$/.test(v))v=v.slice(0,3)+'.'+v.slice(3);var m=/^(\d{3})\.(\d{1,3})$/.exec(v);if(!m)return'';var f=m[1]+'.'+(m[2]+'00').slice(0,3),n=+f;return n>=118&&n<=136.975?f:''}
 /* a pilot's chat/clip is heard when it is on one of my roles' frequencies, or either side is untuned; no roles or "All" = I hear all */
 function isHeard(f){if(!f||!myTowers.length||talkName==='*')return true;return myTowers.some(function(t){return !t.freq||t.freq===f})}
 var talkName='';
 function talkFreq(){if(talkName==='*')return'';var t=myTowers.filter(function(x){return x.name===talkName})[0]||myTowers.filter(function(x){return x.freq})[0];return t&&t.freq?t.freq:''}
 function roleLabel(n){return n.replace('_',' ')}
+/* same short id as the Worker's hid(): lets me recognise my own airport/role without ever sending ids around */
+function hidOf(h){var x=2166136261;for(var i=0;i<h.length;i++)x=Math.imul(x^h.charCodeAt(i),16777619)>>>0;return x.toString(36).slice(0,6)}
+var myHid=hidOf(holder),isMember=false,dimOn=false;try{dimOn=localStorage.getItem('afc_dim')==='1'}catch(e){}
+/* who controls an aircraft: the live human role on its frequency, AUTO when none, ALL when untuned */
+function ctrlOf(a){if(!a.freq)return'ALL';
+  for(var i=0;i<ac.length;i++){var t=ac[i];if(!t.virtual_tower)continue;var ps=t.positions||[];
+    for(var k=0;k<ps.length;k++)if(ps[k].claimed&&ps[k].freq===a.freq)return String(t.callsign).replace(/^ATC_/,'')+'_'+ps[k].pos}
+  return'AUTO'}
+/* dimmed = tuned to a frequency none of my roles use (never an emergency, tower, or when I talk on All) */
+function isDim(a){return dimOn&&!a.virtual_tower&&!a.emergency&&!!a.freq&&!isHeard(a.freq)}
+$('dimBtn').onclick=function(){dimOn=!dimOn;try{localStorage.setItem('afc_dim',dimOn?'1':'0')}catch(e){}setDimBtn();draw();renderStrips(true)};
+function setDimBtn(){$('dimBtn').textContent=L('My freqs: ','Minhas freqs: ')+(dimOn?'on':'off');$('dimBtn').style.borderColor=dimOn?'#4FE3D0':''}
+setDimBtn();
 function updateTalk(){var row=$('talkRow'),sel=$('talkOn');if(!myTowers.length){row.style.display='none';talkName='';return}
   if(talkName!=='*'&&!myTowers.some(function(x){return x.name===talkName}))talkName=myTowers[0].name;
   sel.innerHTML='<option value="*"'+(talkName==='*'?' selected':'')+'>'+L('All frequencies (reach every aircraft)','Todas as frequências (alcança todas)')+'</option>'+myTowers.map(function(x){return'<option value="'+esc(x.name)+'"'+(x.name===talkName?' selected':'')+'>'+esc(roleLabel(x.name))+(x.freq?' '+esc(x.freq):'')+'</option>'}).join('');row.style.display='';
@@ -451,7 +468,10 @@ $('talkOn').onchange=function(){talkName=this.value;updateTalk();renderTowerBox(
 var NOTTUNED=function(j){return(j.callsign||'')+L(' is tuned to ',' está sintonizado em ')+j.freq+(talkFreq()?L(' (you are on ',' (você está em ')+talkFreq()+')'+L('. Pick "All frequencies" to reach everyone','.'):'')};
 var TAKEN=function(j){return L('Position '+(j.airport||'')+' '+(j.position||'')+' is already staffed by another controller','Posição '+(j.airport||'')+' '+(j.position||'')+' já está ocupada por outro controlador')};
 var MEMBER_MSG=function(){return L('Member tower: enter the group code first (Group button)','Torre de membro: digite antes o código do grupo (botão Group)')};
-function errToast(r,j){toast(j.error==='member_tower'?MEMBER_MSG():j.error==='position_taken'?TAKEN(j):L('Error: ','Erro: ')+(j.error||r.status))}
+var LOCKED=function(j){return L('You are working at '+(j.airport||'another airport')+' - release your role there first','Você está atuando em '+(j.airport||'outro aeroporto')+' - libere sua função lá primeiro')};
+var BANNED=function(j){return L('The owner of '+(j.airport||'this airport')+' removed you from its roles','O dono de '+(j.airport||'este aeroporto')+' removeu você das funções')};
+var NOTOWNER=function(j){return L('Only the owner of '+(j.airport||'this airport')+' can do that','Só o dono de '+(j.airport||'este aeroporto')+' pode fazer isso')};
+function errToast(r,j){toast(j.error==='member_tower'?MEMBER_MSG():j.error==='position_taken'?TAKEN(j):j.error==='locked_to_airport'?LOCKED(j):j.error==='banned'?BANNED(j):j.error==='not_owner'?NOTOWNER(j):L('Error: ','Erro: ')+(j.error||r.status))}
 /* open an airport: one symbol on every radar and map; roles are claimed from its row */
 $('twOpen').onclick=function(){var icao=$('twIcao').value.trim().toUpperCase();
   if(!/^[A-Z0-9]{2,8}$/.test(icao)){toast(L('Enter an airport code, e.g. SBBR','Digite um código de aeroporto, ex.: SBBR'));return}
@@ -470,9 +490,10 @@ function claimRole(apt,r){var tw=ac.filter(function(a){return a.virtual_tower&&a
 function openRole(name){talkName=name;updateTalk();renderTowerBox();var t=myTowers.filter(function(x){return x.name===name})[0];toast(L('Working as ','Atuando como ')+roleLabel(name)+(t&&t.freq?' '+t.freq:''))}
 function releaseRole(name){api('/api/atc/tower?name='+encodeURIComponent(name)+'&holder='+encodeURIComponent(holder),{method:'DELETE'}).then(function(r){
   myTowers=myTowers.filter(function(x){return x.name!==name});saveTowers();updateTalk();toast(L('Role released','Função liberada'));poll(true)})}
-function closeTower(name){api('/api/atc/tower?name='+encodeURIComponent(name)+'&holder='+encodeURIComponent(holder),{method:'DELETE'}).then(function(r){if(r.status===403){toast(MEMBER_MSG());return}
-  if(r.status===409){toast(L('A role is staffed by another controller - only they can release it first','Uma função está ocupada por outro controlador - ele precisa liberar antes'));return}
+function closeTower(name){api('/api/atc/tower?name='+encodeURIComponent(name)+'&holder='+encodeURIComponent(holder),{method:'DELETE'}).then(function(r){
+  if(r.status===403||r.status===409)return r.json().then(function(j){if(j.error==='position_taken')toast(L('A role is staffed by another controller - only they can release it first','Uma função está ocupada por outro controlador - ele precisa liberar antes'));else errToast(r,j)});
   myApts=myApts.filter(function(x){return x.name!==name});myTowers=myTowers.filter(function(x){return x.name.indexOf(name+'_')!==0});saveTowers();updateTalk();toast(L('Airport closed','Aeroporto fechado'));poll(true)})}
+function kickAct(path,body,okMsg){body.holder=holder;api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.json().then(function(j){if(!r.ok){errToast(r,j);return}toast(okMsg);poll(true)})}).catch(function(){toast(L('Network error','Erro de rede'))})}
 /* ---------- ATIS (inside each tower row) ---------- */
 var atisUI={};
 function brg(a,b,c,d){var r=Math.PI/180,y=Math.sin((d-b)*r)*Math.cos(c*r),x=Math.cos(a*r)*Math.sin(c*r)-Math.sin(a*r)*Math.cos(c*r)*Math.cos((d-b)*r);return(Math.atan2(y,x)/r+360)%360}
@@ -507,10 +528,10 @@ function atisFill(n){var u=atisUI[n],j=u&&u.data;if(!j)return;
   var b=document.querySelector('#twList [data-atis="'+n+'"]');if(b)b.textContent='ATIS '+j.letter}
 function atisLoad(n){api('/api/atis?name='+encodeURIComponent(n)).then(function(r){return r.json()}).then(function(j){
   if(j&&j.letter&&atisUI[n]){atisUI[n].data=j;atisFill(n)}}).catch(function(){})}
-function atisAct(n,act){var u=atisUI[n];if(!u)return;var body={name:n};
+function atisAct(n,act){var u=atisUI[n];if(!u)return;var body={name:n,holder:holder};
   if(act==='bump')body.bump=true;else{body.runways=u.el.querySelector('[data-r="rwy"]').value;body.frequencies=u.el.querySelector('[data-r="frq"]').value;body.remarks=u.el.querySelector('[data-r="rem"]').value}
   api('/api/atc/atis',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.json().then(function(j){
-    if(!r.ok){toast(j.error==='member_tower'?MEMBER_MSG():L('Error: ','Erro: ')+(j.error||r.status));return}
+    if(!r.ok){errToast(r,j);return}
     u.dirty=false;u.data=j;atisFill(n);toast('ATIS '+j.letter)})}).catch(function(){toast(L('Network error','Erro de rede'))})}
 setInterval(function(){for(var n in atisUI)if(atisUI[n].open)atisLoad(n)},60000);
 $('twList').addEventListener('click',function(e){var b=e.target.closest('button');if(!b)return;
@@ -518,32 +539,36 @@ $('twList').addEventListener('click',function(e){var b=e.target.closest('button'
   n=b.getAttribute('data-claim');if(n){var q=n.split('|');claimRole(q[0],q[1]);return}
   n=b.getAttribute('data-open');if(n){openRole(n);return}
   n=b.getAttribute('data-rel');if(n){releaseRole(n);return}
+  n=b.getAttribute('data-kick');if(n){var kq=n.split('|');if(confirm(L('Remove the controller on '+kq[0]+' '+kq[1]+' and block them from this airport?','Remover o controlador de '+kq[0]+' '+kq[1]+' e bloqueá-lo neste aeroporto?')))kickAct('/api/atc/kick',{airport:kq[0],pos:kq[1]},L('Controller removed and blocked','Controlador removido e bloqueado'));return}
+  n=b.getAttribute('data-unban');if(n){var uq=n.split('|');kickAct('/api/atc/unban',{airport:uq[0],hid:uq[1]},L('Unblocked','Desbloqueado'));return}
   n=b.getAttribute('data-atis');if(n){var u=atisPanelFor(n);u.open=!u.open;$('twList')._sig=null;renderTowerBox();if(u.open)atisLoad(n);return}
   var act=b.getAttribute('data-act'),row=b.closest('[data-tower]');if(act&&row)atisAct(row.getAttribute('data-tower'),act)});
 function renderTowerBox(){var box=$('twList'),names=ac.filter(function(a){return a.virtual_tower}).map(function(a){return String(a.callsign).replace(/^ATC_/,'')});
   for(var k in atisUI)if(names.indexOf(k)<0)delete atisUI[k];
   var twOf=function(n){return ac.filter(function(x){return x.virtual_tower&&x.callsign==='ATC_'+n})[0]||{}};
-  var sig=names.map(function(n){var t=twOf(n);return n+(atisUI[n]&&atisUI[n].open?'+':'')+(t.positions||[]).map(function(p){return p.pos+(p.claimed?'c':'')+(p.freq||'')+(myTowers.some(function(x){return x.name===n+'_'+p.pos})?'m':'')}).join('.')}).join(',')+'|'+myTowers.map(function(x){return x.name}).join('.')+'|'+talkName+'#';
+  var sig=names.map(function(n){var t=twOf(n);return n+(atisUI[n]&&atisUI[n].open?'+':'')+(t.owner_hid===myHid||isMember?'o':'')+(t.bans||[]).map(function(b){return b.hid+b.pos}).join('')+(t.positions||[]).map(function(p){return p.pos+(p.claimed?'c':'')+(p.freq||'')+(myTowers.some(function(x){return x.name===n+'_'+p.pos})?'m':'')}).join('.')}).join(',')+'|'+myTowers.map(function(x){return x.name}).join('.')+'|'+talkName+'#';
   if(box._sig===sig)return;box._sig=sig;   /* unchanged: leave the DOM alone so typed text is kept */
   box.innerHTML='';
   if(!names.length){box.innerHTML='<div class="m" style="margin-top:6px">'+L('No virtual towers open.','Nenhuma torre virtual aberta.')+'</div>';return}
   names.forEach(function(n){var row=document.createElement('div'),u=atisUI[n],tw0=twOf(n),pl=tw0.positions||[];row.setAttribute('data-tower',n);
     var h='<div class="row"><span>ATC_'+esc(n)+' <span class="m">'+L('airport','aeroporto')+'</span></span><span><button data-atis="'+esc(n)+'">ATIS'+(u&&u.data?' '+esc(u.data.letter):'')+'</button> <button data-name="'+esc(n)+'">'+L('Close','Fechar')+'</button></span></div>';
+    var canMod=tw0.owner_hid===myHid||isMember;
     ['DEL','GND','TWR','APP','DEP'].forEach(function(r){var nm=n+'_'+r,p=pl.filter(function(x){return x.pos===r})[0],mine=myTowers.some(function(x){return x.name===nm}),taken=p&&p.claimed&&!mine,act=mine&&talkName===nm;
       h+='<div class="row" style="margin-top:3px"><span><b>'+r+'</b> <span class="m">'+(mine?L('you','você'):taken?L('taken','ocupada'):L('free','livre'))+(p&&p.freq?' '+esc(p.freq):'')+'</span></span><span>'
         +(mine?'<button data-open="'+esc(nm)+'"'+(act?' style="border-color:#4FE3D0;color:#4FE3D0"':'')+'>'+(act?L('Open ✓','Aberta ✓'):L('Open','Abrir'))+'</button> <button data-rel="'+esc(nm)+'">'+L('Release','Liberar')+'</button>'
-        :taken?'':'<input data-f="'+esc(nm)+'" maxlength="7" placeholder="121.900" inputmode="decimal" style="width:70px"> <button data-claim="'+esc(n)+'|'+r+'">'+L('Claim','Assumir')+'</button>')+'</span></div>'});
+        :taken?(canMod?'<button data-kick="'+esc(n)+'|'+r+'">'+L('Kick','Expulsar')+'</button>':''):'<input data-f="'+esc(nm)+'" maxlength="7" placeholder="121.900" inputmode="decimal" style="width:70px"> <button data-claim="'+esc(n)+'|'+r+'">'+L('Claim','Assumir')+'</button>')+'</span></div>'});
+    if(canMod)(tw0.bans||[]).forEach(function(b){h+='<div class="row" style="margin-top:3px"><span class="m">'+L('blocked ','bloqueado ')+esc(b.pos)+' #'+esc(b.hid)+'</span><span><button data-unban="'+esc(n)+'|'+esc(b.hid)+'">'+L('Unban','Desbloquear')+'</button></span></div>'});
     row.innerHTML=h;
     if(u&&u.open){row.appendChild(u.el);atisFill(n)}
     box.appendChild(row)})}
 $('grpBtn').addEventListener('click',function(){var v=prompt(L('Group code (from Discord). Empty = none.','Código do grupo (do Discord). Vazio = nenhum.'),group);if(v===null)return;
   group=v.trim();try{if(group)localStorage.setItem('afc_group',group);else localStorage.removeItem('afc_group')}catch(e){}checkGroup();refreshMyTowers()});
 var grpMsg='';
-function checkGroup(){if(!group){grpMsg='';return}
+function checkGroup(){if(!group){grpMsg='';isMember=false;return}
   fetch('/api/health',{headers:{'X-Group':group}}).then(function(r){return r.json()}).then(function(j){
-    grpMsg=j.member?L(' · group: member',' · grupo: membro'):L(' · group code WRONG',' · código do grupo ERRADO')}).catch(function(){})}
+    isMember=!!j.member;grpMsg=j.member?L(' · group: member',' · grupo: membro'):L(' · group code WRONG',' · código do grupo ERRADO')}).catch(function(){})}
 checkGroup();
-function refreshMyTowers(){if(!key)return;myApts.forEach(function(t){putTower(t,true).catch(function(){})});myTowers.slice().forEach(function(t){putTower(t).then(function(r){if(r.status===409){r.json().then(function(j){myTowers=myTowers.filter(function(x){return x.name!==t.name});saveTowers();updateTalk();toast(TAKEN(j))})}}).catch(function(){})})}
+function refreshMyTowers(){if(!key)return;myApts.forEach(function(t){putTower(t,true).catch(function(){})});myTowers.slice().forEach(function(t){putTower(t).then(function(r){if(r.status===409||r.status===403){r.json().then(function(j){myTowers=myTowers.filter(function(x){return x.name!==t.name});saveTowers();updateTalk();errToast(r,j)})}}).catch(function(){})})}
 
 /* ---------- polling ---------- */
 function setStatus(t,ok){var s=$('status');s.textContent=t;s.className=ok?'ok':''}

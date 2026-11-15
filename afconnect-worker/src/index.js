@@ -19,6 +19,8 @@ const parseTowerName = s => {
   const pos = m[2] || "APT";   // plain ICAO = the airport itself (symbol, ATIS); roles are ICAO_DEL / _GND / _TWR / _APP / _DEP
   return { apt: m[1], pos, name: pos === "APT" ? m[1] : m[1] + "_" + pos };
 };
+// short public id for a holder id (ids themselves are secrets: they are what proves you own a role)
+const hid = h => { let x = 2166136261; for (const ch of String(h || "")) x = Math.imul(x ^ ch.charCodeAt(0), 16777619) >>> 0; return x.toString(36).slice(0, 6); };
 const MAX_TRAFFIC = 500;
 const CRASH_TIMEOUT_MS = 5 * 60_000;   // a pilot who crashes is locked out this long
 const CRASH_SHOW_MS = 10 * 60_000;     // the X stays on the maps this long
@@ -262,6 +264,12 @@ export class Hub {
     const ok = t => t.pos !== "APT" && (!type || !COVER[type] || COVER[type].includes(t.pos || "TWR"));
     return [...this.towers.values()].some(t => ok(t) && ((apt && (t.apt || t.name) === apt) || haversineMi(t.latitude, t.longitude, c.pos.latitude, c.pos.longitude) <= TOWER_COVER_MI));
   }
+  // The airport a holder currently works a live role at (null = free). One airport at a time.
+  lockedApt(who, now) {
+    if (!who) return null;
+    for (const t of this.towers.values()) if ((t.pos || "TWR") !== "APT" && t.holder === who && now - t.at <= POS_TTL_MS) return t.apt || t.name;
+    return null;
+  }
   // ATIS and weather belong to the airport: resolve an airport code (or any position name) to the tower record that holds them.
   towerKey(name) {
     const pn = parseTowerName(name), apt = pn ? pn.apt : name;
@@ -397,7 +405,9 @@ export class Hub {
       const d = haversineMi(lat, lon, base.latitude, base.longitude);
       if (d > rad) continue;
       const e = towerAircraft({ ...base, name: a, pos: "APT", holder: undefined, freq: "" }, d);
-      e.positions = g.roles.map(r => ({ pos: r.pos || "TWR", freq: r.freq || "", claimed: !!r.holder }));
+      e.positions = g.roles.map(r => ({ pos: r.pos || "TWR", freq: r.freq || "", claimed: !!r.holder, hid: r.holder ? hid(r.holder) : "" }));
+      e.owner_hid = g.anchor && g.anchor.owner ? hid(g.anchor.owner) : "";
+      e.bans = g.anchor && g.anchor.bans ? Object.values(g.anchor.bans).map(b => ({ hid: b.hid, pos: b.pos })) : [];
       e.claimed = g.roles.some(r => r.holder);
       out.push(e);
     }
@@ -751,7 +761,11 @@ export class Hub {
       if (!pn || !(Math.abs(lat) <= 90) || !(Math.abs(lon) <= 180))
         return json({ error: "need name (2-8 letters/digits, optional _DEL/_GND/_TWR/_APP/_DEP), latitude and longitude" }, 400);
       const name = pn.name, old = this.towers.get(name), now = Date.now();
-      const holder = String(d.holder || "").slice(0, 40);
+      const holder = String(d.holder || "").slice(0, 40), who = holder || String(d.owner || "").slice(0, 40);
+      const lk = this.lockedApt(who, now);
+      if (lk && lk !== pn.apt) return json({ error: "locked_to_airport", airport: lk }, 409);
+      const aptRec = this.towers.get(pn.apt);
+      if (pn.pos !== "APT" && holder && aptRec && aptRec.pos === "APT" && aptRec.bans && aptRec.bans[holder]) return json({ error: "banned", airport: pn.apt }, 403);
       const freq = normFreq(d.freq);
       if (String(d.freq ?? "").trim() && !freq) return json({ error: "bad_freq" }, 400);
       if (!old && this.towers.size >= MAX_TOWERS) return json({ error: "too many towers" }, 409);
@@ -761,6 +775,11 @@ export class Hub {
       if (old && old.holder && !holder && now - old.at <= POS_TTL_MS) return json({ error: "position_taken", position: pn.pos, airport: pn.apt }, 409);
       const atis = old && old.atis;
       const t = { name, apt: pn.apt, pos: pn.pos, freq, holder: holder || undefined, latitude: lat, longitude: lon, altitude_ft: Number(d.altitude_ft) || 0, at: now, member: request.headers.get("X-Member") === "1", atis };
+      if (pn.pos === "APT") {   // the creator owns the airport (kept across re-PUTs); bans live on the airport record
+        const ow = (old && old.owner) || String(d.owner || "").slice(0, 40);
+        if (ow) t.owner = ow;
+        if (old && old.bans) t.bans = old.bans;
+      }
       this.towers.set(name, t);
       await this.ctx.storage.put("tower:" + name, t);
       return json({ success: true, callsign: "ATC_" + name, position: pn.pos, airport: pn.apt });
@@ -769,6 +788,10 @@ export class Hub {
       const pn = parseTowerName(url.searchParams.get("name")), name = pn ? pn.name : String(url.searchParams.get("name") || "").trim().toUpperCase();
       if (this.towers.get(name)?.member && request.headers.get("X-Member") !== "1") return json({ error: "member_tower" }, 403);
       const cur = this.towers.get(name), hq = String(url.searchParams.get("holder") || "");
+      const lk = pn ? this.lockedApt(hq, Date.now()) : null;
+      if (lk && lk !== pn.apt) return json({ error: "locked_to_airport", airport: lk }, 409);
+      if (pn && pn.pos === "APT" && cur && cur.bans && Object.keys(cur.bans).length && cur.owner !== hq && request.headers.get("X-Member") !== "1")
+        return json({ error: "not_owner", airport: pn.apt }, 403);   // closing would wipe the bans
       if (pn && pn.pos === "APT") {   // closing the airport removes its roles, unless another controller is live on one
         const roles = [...this.towers.values()].filter(t => (t.apt || t.name) === pn.apt && t.name !== name);
         if (roles.some(t => t.holder && t.holder !== hq && Date.now() - t.at <= POS_TTL_MS)) return json({ error: "position_taken", airport: pn.apt }, 409);
@@ -777,6 +800,32 @@ export class Hub {
       if (cur && cur.holder && cur.holder !== hq && Date.now() - cur.at <= POS_TTL_MS) return json({ error: "position_taken", position: cur.pos, airport: cur.apt }, 409);
       this.towers.delete(name);
       await this.ctx.storage.delete("tower:" + name);
+      return json({ success: true });
+    }
+
+    if (m === "POST" && (p === "/api/atc/kick" || p === "/api/atc/unban")) {
+      const d = await request.json().catch(() => ({}));
+      const apt = String(d.airport || "").trim().toUpperCase(), who = String(d.holder || "").slice(0, 40), now = Date.now();
+      const a = this.towers.get(apt), member = request.headers.get("X-Member") === "1";
+      if (!a || a.pos !== "APT") return json({ error: "no airport open with that code" }, 404);
+      if (!member) {
+        if (!who || a.owner !== who) return json({ error: "not_owner", airport: apt }, 403);
+        const lk = this.lockedApt(who, now);
+        if (lk && lk !== apt) return json({ error: "locked_to_airport", airport: lk }, 409);
+      }
+      a.bans = a.bans || {};
+      if (p === "/api/atc/kick") {
+        const pos = String(d.pos || "").toUpperCase(), role = POS_NAMES.includes(pos) && this.towers.get(apt + "_" + pos);
+        if (!role) return json({ error: "no such role" }, 404);
+        if (role.holder && role.holder !== a.owner) a.bans[role.holder] = { hid: hid(role.holder), pos, at: now };
+        this.towers.delete(role.name); await this.ctx.storage.delete("tower:" + role.name);
+      } else {
+        const id = String(d.hid || ""), k = Object.keys(a.bans).find(x => a.bans[x].hid === id);
+        if (!k) return json({ error: "not banned" }, 404);
+        delete a.bans[k];
+      }
+      if (!Object.keys(a.bans).length) delete a.bans;
+      await this.ctx.storage.put("tower:" + apt, a);
       return json({ success: true });
     }
 
@@ -789,6 +838,8 @@ export class Hub {
       const name = this.towerKey(String(d.name || "").trim().toUpperCase()), t = name && this.towers.get(name);
       if (!t) return json({ error: "no tower open at that airport" }, 404);
       if (t.member && request.headers.get("X-Member") !== "1") return json({ error: "member_tower" }, 403);
+      const lk = this.lockedApt(String(d.holder || "").slice(0, 40), Date.now());
+      if (lk && lk !== (t.apt || name)) return json({ error: "locked_to_airport", airport: lk }, 409);
       const a = t.atis || (t.atis = { letter: "A", runways: "", frequencies: "", remarks: "", at: Date.now(), sig: "" });
       const cl = (v, n) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
       let change = d.bump === true;

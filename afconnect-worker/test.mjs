@@ -552,6 +552,61 @@ await call("DELETE", "/api/atc/tower?name=SBBR_TWR", null, "ctl");
   hub.towers.clear();
 }
 
+// role lock, airport owner, kick / unban
+{
+  const T = (n, v) => console.log("owner " + n + ":", v ? "PASS" : "FAIL");
+  const genv = { ...env, GROUP_CODE: "tango7" };
+  const raw = async (method, path, body, group) => { const h = { "X-API-Key": "k" }; if (group) h["X-Group"] = group;
+    const r = await worker.fetch(new Request("https://x" + path, { method, body: body && JSON.stringify(body), headers: h }), genv); return { s: r.status, t: await r.text() }; };
+  const put = (name, extra) => raw("PUT", "/api/atc/tower", { name, latitude: -15.87, longitude: -47.92, ...extra }).then(r => r.s);
+  const del = (name, holder) => raw("DELETE", "/api/atc/tower?name=" + name + "&holder=" + holder).then(r => r.s);
+  const kick = (b, g) => raw("POST", "/api/atc/kick", b, g).then(r => r.s), unban = (b, g) => raw("POST", "/api/atc/unban", b, g).then(r => r.s);
+  const traf = async () => JSON.parse((await raw("GET", "/api/traffic?lat=-15.87&lon=-47.92&radius_miles=3000")).t).aircraft.find(a => a.callsign === "ATC_SBBR");
+  hub.towers.clear();
+  // owner is the creator and never changes
+  T("airport open records owner", await put("SBBR", { owner: "own" }) === 200 && hub.towers.get("SBBR").owner === "own");
+  T("re-PUT by someone else keeps owner", await put("SBBR", { owner: "troll" }) === 200 && hub.towers.get("SBBR").owner === "own");
+  // role lock: one airport at a time
+  await put("SBGL", { owner: "other" });
+  T("claim a role", await put("SBBR_GND", { holder: "h1", freq: "121.9" }) === 200);
+  T("lock: claim at another airport refused", await put("SBGL_TWR", { holder: "h1" }) === 409);
+  T("lock: open/anchor at another airport refused", await put("SBGL", { owner: "h1" }) === 409);
+  T("lock: close at another airport refused", await del("SBGL", "h1") === 409 && hub.towers.has("SBGL"));
+  T("lock: ATIS at another airport refused", (await raw("PUT", "/api/atc/atis", { name: "SBGL", runways: "10", holder: "h1" })).s === 409);
+  T("lock: own airport ATIS ok", (await raw("PUT", "/api/atc/atis", { name: "SBBR", runways: "11R", holder: "h1" })).s === 200);
+  T("lock: second role at same airport ok", await put("SBBR_APP", { holder: "h1" }) === 200);
+  T("lock: someone else unaffected", await put("SBGL_TWR", { holder: "h7" }) === 200);
+  await del("SBGL_TWR", "h7");
+  await del("SBBR_APP", "h1"); await del("SBBR_GND", "h1");
+  T("lock released with the role", await put("SBGL_TWR", { holder: "h1" }) === 200);
+  await del("SBGL_TWR", "h1");
+  // kick + permanent ban
+  await put("SBBR_GND", { holder: "h2" });
+  T("kick by non-owner refused", await kick({ airport: "SBBR", pos: "GND", holder: "h2" }) === 403 && hub.towers.has("SBBR_GND"));
+  T("kick by owner frees the role", await kick({ airport: "SBBR", pos: "GND", holder: "own" }) === 200 && !hub.towers.has("SBBR_GND"));
+  T("kicked holder cannot re-claim", await put("SBBR_GND", { holder: "h2" }) === 403 && await put("SBBR_DEP", { holder: "h2" }) === 403);
+  T("ban survives re-PUT of the airport", await put("SBBR", { owner: "own" }) === 200 && await put("SBBR_GND", { holder: "h2" }) === 403);
+  T("others can still claim", await put("SBBR_GND", { holder: "h3" }) === 200);
+  const e = await traf();
+  T("traffic lists bans + owner hid, no raw ids", e.bans.length === 1 && e.bans[0].pos === "GND" && e.owner_hid && !JSON.stringify(e).includes('"h2"') && !JSON.stringify(e).includes('"h3"') && !JSON.stringify(e).includes('"own"'));
+  T("non-owner cannot close an airport with bans", await del("SBBR", "h3") === 403 && hub.towers.has("SBBR"));
+  T("non-owner cannot unban", await unban({ airport: "SBBR", hid: e.bans[0].hid, holder: "h3" }) === 403);
+  T("owner unbans", await unban({ airport: "SBBR", hid: e.bans[0].hid, holder: "own" }) === 200 && !hub.towers.get("SBBR").bans);
+  T("unbanned holder can claim again", await put("SBBR_DEP", { holder: "h2" }) === 200);
+  // member override, owner immune, close clears bans
+  T("member kicks on any airport", await kick({ airport: "SBBR", pos: "GND" }, "tango7") === 200 && !hub.towers.has("SBBR_GND"));
+  T("member kick bans too", await put("SBBR_GND", { holder: "h3" }) === 403);
+  await put("SBBR_TWR", { holder: "own" });
+  T("owner's own role kick does not ban the owner", await kick({ airport: "SBBR", pos: "TWR" }, "tango7") === 200 && await put("SBBR_TWR", { holder: "own" }) === 200);
+  T("owner closes (roles of others live -> refused)", await del("SBBR", "own") === 409);
+  await del("SBBR_DEP", "h2"); await del("SBBR_TWR", "own");
+  T("owner closes airport", await del("SBBR", "own") === 200 && !hub.towers.has("SBBR"));
+  await put("SBBR", { owner: "own" });
+  T("closing the airport cleared the bans", await put("SBBR_GND", { holder: "h3" }) === 200);
+  T("kick on missing role / airport", await kick({ airport: "SBBR", pos: "APP", holder: "own" }) === 404 && await kick({ airport: "ZZZZ", pos: "GND", holder: "own" }) === 404);
+  hub.towers.clear();
+}
+
 // frequencies: tuning, routing of text/clips, stations, human handoff frequency
 {
   const T = (n, v) => console.log("freq " + n + ":", v ? "PASS" : "FAIL");
