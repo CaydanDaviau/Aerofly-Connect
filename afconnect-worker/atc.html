@@ -79,6 +79,7 @@ input::placeholder{color:var(--dim)}
     <button id="replayVoiceBtn" title="Replay the last voice message (sent or received). Plays locally, nothing is transmitted." disabled>Replay last</button>
     <button id="grpBtn" title="Group code (from Discord)">Group</button>
     <button id="dimBtn" title="Grey out aircraft that are not on my frequencies (they stay visible)">My freqs: off</button>
+    <button id="wpBtn" title="Waypoints: show all, or only those used by pilots' routes">Waypoints: all</button>
     <span id="rwStatus" class="m"></span>
     <span id="status">offline</span>
   </div>
@@ -216,17 +217,30 @@ function loadFixes(){
     }).catch(function(e){fixState='failed';console.warn('ATC waypoint data unavailable:',e)});
   });
 }
+var wpUsed=false,usedIdx={};try{wpUsed=localStorage.getItem('afc_wpused')==='1'}catch(e){}
+function rebuildUsed(){usedIdx={};for(var id in routeCache){var c=routeCache[id],p=c&&c.d&&c.d.points;if(!p||!ac.some(function(a){return a.icao_address===id}))continue;
+  for(var k=0;k<p.length;k++){var n=p[k][3];if(n)(usedIdx[String(n).toUpperCase()]||(usedIdx[String(n).toUpperCase()]=[])).push([p[k][0],p[k][1]])}}}
+function fixUsed(f){var l=usedIdx[f[0]];if(!l)return false;var cl=Math.cos(f[1]*Math.PI/180);
+  for(var i=0;i<l.length;i++)if(Math.abs(l[i][0]-f[1])<.05&&Math.abs(l[i][1]-f[2])*cl<.05)return true;return false}
+function fetchUsedRoutes(){var now=Date.now(),ch=false;
+  ac.forEach(function(a){if(!a.has_route)return;var id=a.icao_address,c=routeCache[id];
+    if((!c||now-c.at>60000)&&!routeBusy[id]){routeBusy[id]=1;
+      api('/api/route?icao_address='+encodeURIComponent(id)).then(function(r){return r.ok?r.json():null}).then(function(j){
+        routeBusy[id]=0;routeCache[id]={at:Date.now(),d:j};rebuildUsed();draw()}).catch(function(){routeBusy[id]=0;routeCache[id]={at:Date.now(),d:null}})}});
+  rebuildUsed()}
+function setWpBtn(){var b=$('wpBtn');b.textContent=L('Waypoints: ','Waypoints: ')+(wpUsed?L('used','usados'):L('all','todos'));b.style.borderColor=wpUsed?'#4FE3D0':''}
 function drawFixes(maxR){
   if(fixState!=='ready'||!FIXES.length||maxR>420)return;
+  if(wpUsed)fetchUsedRoutes();
   var latPad=maxR/60+1,cos=Math.max(.08,Math.cos(center.lat*Math.PI/180)),lonPad=Math.min(180,maxR/(60*cos)+1);
   var la0=Math.max(-90,Math.floor(center.lat-latPad)),la1=Math.min(89,Math.floor(center.lat+latPad));
-  var lo0=Math.floor(center.lon-lonPad),lo1=Math.floor(center.lon+lonPad),lbl=maxR<=48,labels=0;
+  var lo0=Math.floor(center.lon-lonPad),lo1=Math.floor(center.lon+lonPad),lbl=wpUsed||maxR<=48,labels=0;
   g.save();g.font='9px ui-monospace,monospace';g.textBaseline='middle';g.textAlign='left';
   for(var la=la0;la<=la1;la++)for(var lo=lo0;lo<=lo1;lo++){
     var norm=((lo+180)%360+360)%360-180,cell=FIX_GRID[la+','+norm];if(!cell)continue;
     for(var j=0;j<cell.length;j++){var f=cell[j],dy=(f[1]-center.lat)*60,dx=(f[2]-center.lon)*60*cos;
       if(Math.abs(dx)>maxR+8||Math.abs(dy)>maxR+8)continue;
-      var q=projLL(f[1],f[2]);if(q[0]<-4||q[1]<-4||q[0]>W+4||q[1]>H+4)continue;
+      if(wpUsed&&!fixUsed(f))continue;var q=projLL(f[1],f[2]);if(q[0]<-4||q[1]<-4||q[0]>W+4||q[1]>H+4)continue;
       g.fillStyle=f[3]==='ENROUTE'?'#8edfff':'#b9c9ff';g.beginPath();g.arc(q[0],q[1],1.7,0,6.2832);g.fill();
       if(lbl&&labels<100){g.lineWidth=2;g.strokeStyle='rgba(20,25,30,.9)';g.fillStyle='#d5eaff';g.strokeText(f[0],q[0]+4,q[1]-4);g.fillText(f[0],q[0]+4,q[1]-4);labels++}
     }
@@ -490,6 +504,7 @@ function ctrlOf(a){if(!a.freq)return'ALL';
   return'AUTO'}
 /* dimmed = tuned to a frequency none of my roles use (never an emergency, tower, or when I talk on All) */
 function isDim(a){return dimOn&&!a.virtual_tower&&!a.emergency&&!!a.freq&&!isHeard(a.freq)}
+$('wpBtn').onclick=function(){wpUsed=!wpUsed;try{localStorage.setItem('afc_wpused',wpUsed?'1':'0')}catch(e){}setWpBtn();draw()};setWpBtn();
 $('dimBtn').onclick=function(){dimOn=!dimOn;try{localStorage.setItem('afc_dim',dimOn?'1':'0')}catch(e){}setDimBtn();draw();renderStrips(true)};
 function setDimBtn(){$('dimBtn').textContent=L('My freqs: ','Minhas freqs: ')+(dimOn?'on':'off');$('dimBtn').style.borderColor=dimOn?'#4FE3D0':''}
 setDimBtn();
