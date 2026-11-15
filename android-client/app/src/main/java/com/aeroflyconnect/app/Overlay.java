@@ -74,6 +74,11 @@ final class Overlay {
     private LinearLayout panel, msgRow, reqGrid;
     private Button bWilco, bUnable, bClr, bTaxi, bTakeoff, bLand, bEmerg;
     private EditText chatIn;
+    // frequency row
+    private EditText freqIn, typingField;
+    private Button bFqDn, bFqUp, bFqAll;
+    private LinearLayout quickRow;
+    private String quickSig = "";
     private View micBtn;
     private Button bAtis, bAtisSwap;
     private LinearLayout atisBox;
@@ -339,6 +344,8 @@ final class Overlay {
             ep.topMargin = dp(6);
             panel.addView(emRow, ep);
 
+            buildFreqRows();
+
             statusView = new TextView(ctx);
             statusView.setTextSize(12);
             statusView.setTextColor(Ui.DIM);
@@ -582,6 +589,7 @@ final class Overlay {
         bEmerg.setEnabled(!reqBusy);
         bEmerg.setText(PilotService.emergency ? Api.t(ctx, "Cancel Mayday", "Cancelar Mayday")
                 : emergArmed ? Api.t(ctx, "Tap again: MAYDAY", "Toque de novo: MAYDAY") : Api.t(ctx, "Emergency", "Emergência"));
+        updateFreqUi();
         String st = statusMsg;
         if (st.isEmpty() && !PilotService.contact.isEmpty()) st = Api.t(ctx, "Controller: ", "Controlador: ") + PilotService.contact;
         statusView.setText(st);
@@ -672,9 +680,12 @@ final class Overlay {
 
     // ---------- typing ----------
     /** Gives the overlay window keyboard focus (and parks it at the top so the keyboard does not cover it). */
-    private void beginTyping() {
+    private void beginTyping() { beginTyping(chatIn); }
+
+    private void beginTyping(EditText field) {
         if (root == null || typing) return;
         typing = true;
+        typingField = field;
         autoExpanded = false;
         savedY = lp.y;
         lp.flags &= ~WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
@@ -683,10 +694,10 @@ final class Overlay {
         try { wm.updateViewLayout(root, lp); } catch (Exception ignored) { }
         h.post(new Runnable() {
             @Override public void run() {
-                if (!typing || chatIn == null) return;
-                chatIn.requestFocus();
+                if (!typing || typingField == null) return;
+                typingField.requestFocus();
                 InputMethodManager imm = (InputMethodManager) ctx.getSystemService(Context.INPUT_METHOD_SERVICE);
-                if (imm != null) imm.showSoftInput(chatIn, InputMethodManager.SHOW_IMPLICIT);
+                if (imm != null) imm.showSoftInput(typingField, InputMethodManager.SHOW_IMPLICIT);
             }
         });
     }
@@ -695,10 +706,13 @@ final class Overlay {
     private void endTyping() {
         if (!typing) return;
         typing = false;
+        EditText f = typingField != null ? typingField : chatIn;
+        typingField = null;
+        if (f == freqIn) commitFreqText();
         try {
             InputMethodManager imm = (InputMethodManager) ctx.getSystemService(Context.INPUT_METHOD_SERVICE);
-            if (imm != null && chatIn != null) imm.hideSoftInputFromWindow(chatIn.getWindowToken(), 0);
-            if (chatIn != null) chatIn.clearFocus();
+            if (imm != null && f != null) imm.hideSoftInputFromWindow(f.getWindowToken(), 0);
+            if (f != null) f.clearFocus();
         } catch (Exception ignored) { }
         if (root == null) return;
         lp.flags |= WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
@@ -754,6 +768,190 @@ final class Overlay {
                 });
             }
         });
+    }
+
+    // ---------- radio frequency (VHF airband 118.000-136.975, 25 kHz channels) ----------
+    private static int parseKhz(String s) {
+        if (s == null) return -1;
+        String t = s.trim().replace(',', '.');
+        if (t.matches("\\d{4,6}")) t = t.substring(0, 3) + "." + t.substring(3);
+        if (!t.matches("\\d{3}\\.\\d{1,3}")) return -1;
+        int dot = t.indexOf('.');
+        String dec = (t.substring(dot + 1) + "00").substring(0, 3);
+        int k = Integer.parseInt(t.substring(0, dot)) * 1000 + Integer.parseInt(dec);
+        return k >= 118000 && k <= 136975 ? k : -1;
+    }
+
+    private static String fmtKhz(int k) { return String.format(java.util.Locale.US, "%d.%03d", k / 1000, k % 1000); }
+
+    private void setFreq(String f) {
+        PilotService.freq = f == null ? "" : f;
+        try { Api.prefs(ctx).edit().putString("freq", PilotService.freq).apply(); } catch (Exception ignored) { }
+        updateFreqUi();
+    }
+
+    /** Tap = next 25 kHz channel; hold = 1 MHz jumps. */
+    private void stepFreq(int dir, boolean big) {
+        int k = parseKhz(PilotService.freq);
+        if (k < 0) k = 118000;
+        else if (big) k += dir * 1000;
+        else if (dir > 0) k = (k / 25 + 1) * 25;
+        else k = (k % 25 == 0) ? k - 25 : (k / 25) * 25;
+        k = Math.max(118000, Math.min(136975, k));
+        setFreq(fmtKhz(k));
+    }
+
+    private void commitFreqText() {
+        if (freqIn == null) return;
+        String t = freqIn.getText().toString().trim();
+        if (t.isEmpty()) { setFreq(""); return; }
+        int k = parseKhz(t);
+        if (k < 0) { setStatus(Api.t(ctx, "Frequency must be 118.000-136.975", "Frequência deve ser 118.000-136.975"), 4000); updateFreqUi(); return; }
+        setFreq(fmtKhz(k));
+    }
+
+    private int fqDir;
+    private boolean fqHeldBig;
+    private final Runnable fqHold = new Runnable() {
+        @Override public void run() {
+            fqHeldBig = true;
+            stepFreq(fqDir, true);
+            h.postDelayed(this, 220);
+        }
+    };
+
+    private View.OnTouchListener stepTouch(final int dir) {
+        return new View.OnTouchListener() {
+            @Override public boolean onTouch(View v, MotionEvent e) {
+                switch (e.getActionMasked()) {
+                    case MotionEvent.ACTION_DOWN:
+                        fqDir = dir; fqHeldBig = false;
+                        v.setPressed(true);
+                        h.removeCallbacks(fqHold);
+                        h.postDelayed(fqHold, 450);
+                        return true;
+                    case MotionEvent.ACTION_UP:
+                        v.setPressed(false);
+                        h.removeCallbacks(fqHold);
+                        if (!fqHeldBig) stepFreq(dir, false);
+                        fqHeldBig = false;
+                        return true;
+                    case MotionEvent.ACTION_CANCEL:
+                        v.setPressed(false);
+                        h.removeCallbacks(fqHold);
+                        fqHeldBig = false;
+                        return true;
+                }
+                return true;
+            }
+        };
+    }
+
+    private void buildFreqRows() {
+        LinearLayout row = new LinearLayout(ctx);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        bFqAll = small(Api.t(ctx, "ALL", "TODOS"), Ui.SECONDARY);
+        bFqAll.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { setFreq(""); } });
+        bFqDn = small("\u2039", Ui.SECONDARY);
+        bFqDn.setOnTouchListener(stepTouch(-1));
+        bFqUp = small("\u203A", Ui.SECONDARY);
+        bFqUp.setOnTouchListener(stepTouch(1));
+        freqIn = new EditText(ctx);
+        freqIn.setHint(Api.t(ctx, "FREQ (all)", "FREQ (todas)"));
+        freqIn.setHintTextColor(Ui.DIM);
+        freqIn.setTextColor(Ui.TXT);
+        freqIn.setTextSize(15);
+        freqIn.setGravity(Gravity.CENTER);
+        freqIn.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+        freqIn.setSingleLine(true);
+        freqIn.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        freqIn.setImeOptions(EditorInfo.IME_ACTION_DONE | EditorInfo.IME_FLAG_NO_EXTRACT_UI);
+        freqIn.setFilters(new android.text.InputFilter[] { new android.text.InputFilter.LengthFilter(7) });
+        freqIn.setPadding(dp(4), 0, dp(4), 0);
+        freqIn.setBackground(Ui.shape(ctx, Ui.FIELD, Ui.STROKE, 10));
+        freqIn.setOnTouchListener(new View.OnTouchListener() {
+            @Override public boolean onTouch(View v, MotionEvent e) {
+                if (e.getActionMasked() == MotionEvent.ACTION_DOWN && !typing) beginTyping(freqIn);
+                return false;
+            }
+        });
+        freqIn.setOnEditorActionListener(new android.widget.TextView.OnEditorActionListener() {
+            @Override public boolean onEditorAction(TextView v, int actionId, KeyEvent ev) {
+                if (actionId == EditorInfo.IME_ACTION_DONE) { endTyping(); return true; }
+                return false;
+            }
+        });
+        LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(dp(44), dp(40));
+        bp.rightMargin = dp(3);
+        LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(dp(54), dp(40));
+        ap.rightMargin = dp(3);
+        row.addView(bFqAll, ap);
+        row.addView(bFqDn, bp);
+        LinearLayout.LayoutParams fp = new LinearLayout.LayoutParams(0, dp(40), 1f);
+        fp.rightMargin = dp(3);
+        row.addView(freqIn, fp);
+        row.addView(bFqUp, new LinearLayout.LayoutParams(dp(44), dp(40)));
+        LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        rp.topMargin = dp(6);
+        panel.addView(row, rp);
+
+        quickRow = new LinearLayout(ctx);
+        quickRow.setOrientation(LinearLayout.HORIZONTAL);
+        quickRow.setVisibility(View.GONE);
+        LinearLayout.LayoutParams qp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        qp.topMargin = dp(3);
+        panel.addView(quickRow, qp);
+        PilotService.freq = Api.prefs(ctx).getString("freq", "");
+    }
+
+    /** Quick buttons: frequencies typed by staffed positions first, then OurAirports data for the airport we are at / heading to. */
+    private java.util.List<String[]> quickList() {
+        java.util.LinkedHashMap<String, String> m = new java.util.LinkedHashMap<String, String>();
+        String[] order = { "DEL", "GND", "TWR", "APP", "DEP" };
+        String ours = "air".equals(Phase.phaseName) && !PilotService.fqArr.isEmpty() ? PilotService.fqArr : PilotService.fqDep;
+        for (String src : new String[] { PilotService.stations, ours }) {
+            for (String kv : src.split(";")) {
+                String[] p = kv.split("=");
+                if (p.length != 2) continue;
+                String role = p[0].trim().toUpperCase();
+                int k = parseKhz(p[1]);
+                if (k < 0 || m.containsKey(role)) continue;
+                m.put(role, fmtKhz(k));
+            }
+        }
+        java.util.List<String[]> out = new java.util.ArrayList<String[]>();
+        for (String r : order) if (m.containsKey(r)) out.add(new String[] { r, m.get(r) });
+        for (String r : m.keySet()) { boolean known = false; for (String o2 : order) if (o2.equals(r)) known = true; if (!known && out.size() < 5) out.add(new String[] { r, m.get(r) }); }
+        return out;
+    }
+
+    private void updateFreqUi() {
+        if (freqIn == null) return;
+        if (!typing || typingField != freqIn) {
+            String f = PilotService.freq;
+            if (!freqIn.getText().toString().equals(f)) freqIn.setText(f);
+        }
+        java.util.List<String[]> q = quickList();
+        StringBuilder sb = new StringBuilder();
+        for (String[] e : q) sb.append(e[0]).append('=').append(e[1]).append(';');
+        String sig = sb.toString();
+        if (!sig.equals(quickSig)) {
+            quickSig = sig;
+            quickRow.removeAllViews();
+            for (final String[] e : q) {
+                Button b = small(e[0] + " " + e[1], Ui.SECONDARY);
+                b.setTextSize(11);
+                b.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { setFreq(e[1]); } });
+                quickRow.addView(b, weight());
+            }
+        }
+        quickRow.setVisibility(q.isEmpty() ? View.GONE : View.VISIBLE);
+        for (int i = 0; i < quickRow.getChildCount(); i++) {
+            quickRow.getChildAt(i).setAlpha(((Button) quickRow.getChildAt(i)).getText().toString().endsWith(PilotService.freq) && !PilotService.freq.isEmpty() ? 1f : 0.75f);
+        }
     }
 
     private void request(String type) {

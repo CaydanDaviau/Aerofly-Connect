@@ -206,6 +206,7 @@ public class PilotService extends Service {
                         // Auto-ATC: where the aircraft is (ground / runway / air), which runway, distance to the arrival airport.
                         pos.put("phase", Phase.phaseName);
                         pos.put("lang", Api.voiceLang(this));
+                        if (!freq.isEmpty()) pos.put("freq", freq);
                         if (!fqDep.isEmpty()) pos.put("fq_dep", fqDep);
                         if (!fqArr.isEmpty()) pos.put("fq_arr", fqArr);
                         if (!Phase.rwyOn.isEmpty()) { pos.put("rwy_on", Phase.rwyOn); pos.put("rwy_apt", Phase.rwyApt); }
@@ -235,6 +236,7 @@ public class PilotService extends Service {
                             okCount++; serverState = "OK (HTTP " + code + ")";
                             showMessages(r.body);
                             showVoice(r.body);
+                            showStations(r.body);
                             showTraffic(r.body);
                             if (mapShown && r.body.contains("\"aircraft\"")) { trafficJson = r.body; trafficAt = System.currentTimeMillis(); }
                         }
@@ -491,6 +493,25 @@ public class PilotService extends Service {
     /** Mayday declared and not yet cancelled (cleared at Start and when the aircraft lands). */
     static volatile boolean emergency;
     static volatile String fqDep = "", fqArr = "";
+    /** Radio frequency the pilot is tuned to ("118.300"); empty = untuned, hears everyone. Sent with every position upload. */
+    static volatile String freq = "";
+    /** Frequencies typed by staffed human positions at the current airport, "GND=121.900;TWR=118.300" (from the position reply). */
+    static volatile String stations = "";
+
+    /** Position reply carries "stations":[{pos,freq}] for the dep/arr airport; remembered for the overlay's quick buttons. */
+    void showStations(String body) {
+        if (!body.contains("\"stations\"")) { stations = ""; return; }
+        try {
+            JSONArray arr = new JSONObject(body).optJSONArray("stations");
+            StringBuilder sb = new StringBuilder();
+            if (arr != null) for (int i = 0; i < arr.length(); i++) {
+                JSONObject o = arr.getJSONObject(i);
+                if (sb.length() > 0) sb.append(';');
+                sb.append(o.optString("pos")).append('=').append(o.optString("freq"));
+            }
+            stations = sb.toString();
+        } catch (Exception ignored) { }
+    }
     /** Controller named in the last handoff ("Departure 119.5"); shown in the overlay status line. */
     static volatile String contact = "";
     private boolean wasAir;
