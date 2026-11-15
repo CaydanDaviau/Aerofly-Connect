@@ -58,7 +58,7 @@ input::placeholder{color:var(--dim)}
 #rwStatus button{padding:1px 6px;font-size:11px}
 #bgmap{position:absolute;inset:0;z-index:0}
 #radar{z-index:1}
-#attr{position:absolute;right:4px;bottom:2px;z-index:2;font-size:8px;color:#8c8c8c;opacity:.45;pointer-events:none}
+#attr{position:absolute;right:4px;bottom:2px;z-index:2;font-size:8px;color:#8c8c8c;opacity:.65;pointer-events:auto}#attr a{color:inherit;text-decoration:underline}
 .maplibregl-canvas{outline:none}
 .ptt{touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;background:#1b5e3a;color:#fff;border:1px solid #3dff7a;border-radius:6px;padding:8px 12px;font-weight:700}
 .ptt.rec{background:#c0392b;border-color:#ff8a80}.ptt.off{opacity:.4}
@@ -79,7 +79,7 @@ input::placeholder{color:var(--dim)}
     <span id="status">offline</span>
   </div>
   <div id="main">
-    <div id="scope"><div id="bgmap"></div><canvas id="radar"></canvas><div id="attr">© OSM · OpenFreeMap</div></div>
+    <div id="scope"><div id="bgmap"></div><canvas id="radar"></canvas><div id="attr">© OSM · OpenFreeMap · Contains data from <a href="https://github.com/laegsgaardTroels/whatisflying-db" target="_blank" rel="noopener">What is flying?</a>, available under <a href="https://opendatacommons.org/licenses/odbl/1-0/" target="_blank" rel="noopener">ODbL 1.0</a>.</div></div>
     <div id="strips">
       <div id="twrbox" class="strip twr">
         <div class="h"><span class="cs">Towers</span></div>
@@ -181,6 +181,54 @@ function loadRunways(){rwState='loading';$('rwStatus').textContent='runways: loa
       fetch(RW_URLS[i++]).then(function(r){if(!r.ok)throw 0;return r.text()}).then(function(t){
         var data=buildRunways(parseCSV(t));useRunways(data);idbSet('runways',{t:Date.now(),data:data})}).catch(next)})()})}
 $('rwStatus').addEventListener('click',function(e){if(e.target.id==='rwRetry')loadRunways()});
+
+/* ---------- global waypoint fixes (What is flying? database; ODbL-1.0) ---------- */
+var FIXES=[],FIX_GRID={},fixState='idle';
+var FIX_URL='https://raw.githubusercontent.com/laegsgaardTroels/whatisflying-db/master/data/fixes.csv';
+function buildFixes(rows){
+  if(!rows.length)throw new Error('empty fixes dataset');
+  var h={};rows[0].forEach(function(n,i){h[String(n).replace(/^\uFEFF/,'').trim().replace(/^"|"$/g,'')]=i});
+  var need=['identifier','latitude','longitude','usage','region'];
+  for(var n=0;n<need.length;n++)if(!(need[n] in h))throw new Error('unexpected fixes file format');
+  var out=[];
+  for(var i=1;i<rows.length;i++){var r=rows[i],id=(r[h.identifier]||'').trim().toUpperCase(),lat=Number(r[h.latitude]),lon=Number(r[h.longitude]),usage=(r[h.usage]||'').trim().toUpperCase();
+    if(!id||!isFinite(lat)||!isFinite(lon)||lat<-90||lat>90||lon<-180||lon>180)continue;
+    if(usage!=='ENROUTE'&&usage!=='TERMINAL')continue;
+    out.push([id,lat,lon,usage,(r[h.region]||'').trim(),h.airport==null?'':(r[h.airport]||'').trim()]);
+  }
+  if(!out.length)throw new Error('no usable waypoint fixes');return out;
+}
+function useFixes(list){
+  FIXES=list;FIX_GRID={};
+  for(var i=0;i<list.length;i++){var f=list[i],k=Math.floor(f[1])+','+Math.floor(f[2]);(FIX_GRID[k]||(FIX_GRID[k]=[])).push(f)}
+  fixState='ready';draw();
+}
+function loadFixes(){
+  fixState='loading';
+  idbGet('atc-waypoint-fixes').then(function(c){
+    if(c&&c.data&&c.data.length&&Date.now()-c.t<30*86400000){useFixes(c.data);return}
+    fetch(FIX_URL).then(function(r){if(!r.ok)throw new Error('fix dataset HTTP '+r.status);return r.text()}).then(function(t){
+      var data=buildFixes(parseCSV(t));useFixes(data);idbSet('atc-waypoint-fixes',{t:Date.now(),data:data});
+    }).catch(function(e){fixState='failed';console.warn('ATC waypoint data unavailable:',e)});
+  });
+}
+function drawFixes(maxR){
+  if(fixState!=='ready'||!FIXES.length||maxR>420)return;
+  var latPad=maxR/60+1,cos=Math.max(.08,Math.cos(center.lat*Math.PI/180)),lonPad=Math.min(180,maxR/(60*cos)+1);
+  var la0=Math.max(-90,Math.floor(center.lat-latPad)),la1=Math.min(89,Math.floor(center.lat+latPad));
+  var lo0=Math.floor(center.lon-lonPad),lo1=Math.floor(center.lon+lonPad),lbl=maxR<=48,labels=0;
+  g.save();g.font='9px ui-monospace,monospace';g.textBaseline='middle';g.textAlign='left';
+  for(var la=la0;la<=la1;la++)for(var lo=lo0;lo<=lo1;lo++){
+    var norm=((lo+180)%360+360)%360-180,cell=FIX_GRID[la+','+norm];if(!cell)continue;
+    for(var j=0;j<cell.length;j++){var f=cell[j],dy=(f[1]-center.lat)*60,dx=(f[2]-center.lon)*60*cos;
+      if(Math.abs(dx)>maxR+8||Math.abs(dy)>maxR+8)continue;
+      var q=projLL(f[1],f[2]);if(q[0]<-4||q[1]<-4||q[0]>W+4||q[1]>H+4)continue;
+      g.fillStyle=f[3]==='ENROUTE'?'#8edfff':'#b9c9ff';g.beginPath();g.arc(q[0],q[1],1.7,0,6.2832);g.fill();
+      if(lbl&&labels<100){g.lineWidth=2;g.strokeStyle='rgba(20,25,30,.9)';g.fillStyle='#d5eaff';g.strokeText(f[0],q[0]+4,q[1]-4);g.fillText(f[0],q[0]+4,q[1]-4);labels++}
+    }
+  }
+  g.restore();
+}
 function drawRunways(maxR){   /* light runway bars over the map, plus the numbers */
   if(!RW.length)return;var lim=maxR+8,lbl=nmpp<0.12,cl=Math.cos(center.lat*Math.PI/180);
   g.font='bold 11px ui-monospace,monospace';g.textAlign='center';g.textBaseline='middle';g.lineJoin='round';g.lineWidth=3;g.strokeStyle='rgba(30,30,30,.85)';g.fillStyle='#f0f0f0';
@@ -271,6 +319,7 @@ function draw(){
   g.fillStyle='rgba(61,255,122,.55)';g.textBaseline='top';g.fillText('N',W/2+4,3);
   g.fillText(step+' nm rings',6,H-14);
   drawRunways(maxR);
+  drawFixes(maxR);
   var blinkOn=Math.floor(Date.now()/450)%2===0;
   for(var k=0;k<ac.length;k++){var cf0=confl[ac[k].icao_address];if(!cf0)continue;
     var cxy=proj(ac[k]),cr=Math.max(16,cf0.r/nmpp);
@@ -596,7 +645,7 @@ function wsOpen(){
   me.onerror=function(){try{me.close()}catch(x){}};
 }
 document.addEventListener('visibilitychange',function(){if(!document.hidden){if(!ws)wsOpen();poll(true)}});
-initBg();resize();applyRange();draw();loadRunways();updateTalk();refreshMyTowers();setInterval(refreshMyTowers,45000);poll(true);setInterval(poll,5000);wsOpen();
+initBg();resize();applyRange();draw();loadRunways();loadFixes();updateTalk();refreshMyTowers();setInterval(refreshMyTowers,45000);poll(true);setInterval(poll,5000);wsOpen();
 })();
 </script>
 </body>
