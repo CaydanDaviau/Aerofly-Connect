@@ -79,7 +79,8 @@ input::placeholder{color:var(--dim)}
     <button id="menuBtn" title="Menu" aria-label="Menu" style="font-size:16px;line-height:1">&#9776;</button>
     <button id="replayVoiceBtn" title="Replay the last voice message (sent or received). Plays locally, nothing is transmitted." disabled>Replay last</button>
     <div id="menu" style="display:none"><button id="voiceBtn" title="Voice on/off">Voice: on</button>
-    <button id="grpBtn" title="Group code (from Discord)">Group</button>
+    <button id="grpBtn" title="Aerofly Connect ATC Network code (from Discord)">ATC Network</button>
+    <button id="credBtn" title="ATC credential issued by the network management: lets you open towers in the network" disabled>ATC Credential</button>
     <button id="dimBtn" title="Grey out aircraft that are not on my frequencies (they stay visible)">My freqs: off</button>
     <button id="wpBtn" title="Waypoints: show all, or only those used by pilots' routes">Waypoints: all</button></div>
     <span id="rwStatus" class="m"></span>
@@ -486,7 +487,8 @@ $('strips').addEventListener('click',function(e){
   if(e.target.id==='sqin'||e.target.id==='msgin'||e.target.id==='urg'||e.target.id==='ptt')return;
   sel=(strip.classList.contains('twr')&&sel===id)?null:id;draw();renderStrips(true)});
 var group='';try{var gp=new URLSearchParams(location.search).get('group');group=gp!==null?gp:(localStorage.getItem('afc_group')||'');if(gp!==null){if(group)localStorage.setItem('afc_group',group);else localStorage.removeItem('afc_group')}}catch(e){}
-function httpApi(path,opt){opt=opt||{};opt.headers=Object.assign({'X-API-Key':key},group?{'X-Group':group}:{},opt.headers||{});return fetch(path,opt)}
+var atcCode='';try{var ap=new URLSearchParams(location.search).get('atc');atcCode=ap!==null?ap:(localStorage.getItem('afc_atc')||'');if(ap!==null){if(atcCode)localStorage.setItem('afc_atc',atcCode);else localStorage.removeItem('afc_atc')}}catch(e){}
+function httpApi(path,opt){opt=opt||{};opt.headers=Object.assign({'X-API-Key':key},group?{'X-Group':group}:{},atcCode?{'X-Atc':atcCode}:{},opt.headers||{});return fetch(path,opt)}
 /* While the socket is live every call goes through it (one billed message instead of an HTTP request); otherwise plain HTTP.
    Reply is shaped like a fetch Response (ok/status/json/text). A timed-out write is not retried over HTTP (it may have happened). */
 var wsPend={},wsSeq=0;
@@ -545,12 +547,12 @@ function updateTalk(){var row=$('talkRow'),sel=$('talkOn');if(!myTowers.length){
 $('talkOn').onchange=function(){talkName=this.value;updateTalk();renderTowerBox()};
 var NOTTUNED=function(j){return(j.callsign||'')+L(' is tuned to ',' está sintonizado em ')+j.freq+(talkFreq()?L(' (you are on ',' (você está em ')+talkFreq()+')'+L('. Pick "All frequencies" to reach everyone','.'):'')};
 var TAKEN=function(j){return L('Position '+(j.airport||'')+' '+(j.position||'')+' is already staffed by another controller','Posição '+(j.airport||'')+' '+(j.position||'')+' já está ocupada por outro controlador')};
-var MEMBER_MSG=function(){return L('Member tower: enter the group code first (Group button)','Torre de membro: digite antes o código do grupo (botão Group)')};
+var MEMBER_MSG=function(){return L('Member tower: enter the ATC Network code first (ATC Network button)','Torre de membro: digite antes o código da ATC Network (botão ATC Network)')};
 var LOCKED=function(j){return L('You are working at '+(j.airport||'another airport')+' - release your role there first','Você está atuando em '+(j.airport||'outro aeroporto')+' - libere sua função lá primeiro')};
 var BANNED=function(j){return L('The owner of '+(j.airport||'this airport')+' removed you from its roles','O dono de '+(j.airport||'este aeroporto')+' removeu você das funções')};
 var ONETOWER=function(j){return L('You already have '+(j.airport||'an airport')+' open - close it before opening another','Você já tem '+(j.airport||'um aeroporto')+' aberto - feche-o antes de abrir outro')};
 var NOTOWNER=function(j){return L('Only the owner of '+(j.airport||'this airport')+' can do that','Só o dono de '+(j.airport||'este aeroporto')+' pode fazer isso')};
-function errToast(r,j){toast(j.error==='member_tower'?MEMBER_MSG():j.error==='position_taken'?TAKEN(j):j.error==='locked_to_airport'?LOCKED(j):j.error==='banned'?BANNED(j):j.error==='not_owner'?NOTOWNER(j):j.error==='one_tower'?ONETOWER(j):L('Error: ','Erro: ')+(j.error||r.status))}
+function errToast(r,j){toast(j.error==='atc_credential'?L('You need an ATC credential to open towers in the network (ATC Credential button)','Você precisa de uma credencial ATC para abrir torres na rede (botão ATC Credential)'):j.error==='member_tower'?MEMBER_MSG():j.error==='position_taken'?TAKEN(j):j.error==='locked_to_airport'?LOCKED(j):j.error==='banned'?BANNED(j):j.error==='not_owner'?NOTOWNER(j):j.error==='one_tower'?ONETOWER(j):L('Error: ','Erro: ')+(j.error||r.status))}
 /* open an airport: one symbol on every radar and map; roles are claimed from its row */
 $('twOpen').onclick=function(){var icao=$('twIcao').value.trim().toUpperCase();
   if(!/^[A-Z0-9]{2,8}$/.test(icao)){toast(L('Enter an airport code, e.g. SBBR','Digite um código de aeroporto, ex.: SBBR'));return}
@@ -643,12 +645,17 @@ function renderTowerBox(){var box=$('twList'),names=ac.filter(function(a){return
     row.innerHTML=h;
     if(u&&u.open){row.appendChild(u.el);atisFill(n)}
     twRows[n]=row});mountTowers()}
-$('grpBtn').addEventListener('click',function(){var v=prompt(L('Group code (from Discord). Empty = none.','Código do grupo (do Discord). Vazio = nenhum.'),group);if(v===null)return;
-  group=v.trim();try{if(group)localStorage.setItem('afc_group',group);else localStorage.removeItem('afc_group')}catch(e){}checkGroup();if(ws){var old=ws;ws=null;try{old.close()}catch(x){}}clearTimeout(wsTimer);wsOpen();setTimeout(refreshMyTowers,1500)});
-var grpMsg='';
-function checkGroup(){if(!group){grpMsg='';isMember=false;return}
-  fetch('/api/health',{headers:{'X-Group':group}}).then(function(r){return r.json()}).then(function(j){
-    isMember=!!j.member;grpMsg=j.member?L(' · group: member',' · grupo: membro'):L(' · group code WRONG',' · código do grupo ERRADO')}).catch(function(){})}
+$('grpBtn').addEventListener('click',function(){var v=prompt(L('Aerofly Connect ATC Network code (from Discord). Empty = public section.','Código da Aerofly Connect ATC Network (do Discord). Vazio = seção pública.'),group);if(v===null)return;
+  group=v.trim();try{if(group)localStorage.setItem('afc_group',group);else localStorage.removeItem('afc_group')}catch(e){}checkGroup();reopenWs();setTimeout(refreshMyTowers,1500)});
+function reopenWs(){if(ws){var old=ws;ws=null;try{old.close()}catch(x){}}clearTimeout(wsTimer);wsOpen()}
+$('credBtn').addEventListener('click',function(){var v=prompt(L('ATC credential (issued by the network management). Empty = remove.','Credencial ATC (emitida pela administração da rede). Vazio = remover.'),atcCode);if(v===null)return;
+  atcCode=v.trim();try{if(atcCode)localStorage.setItem('afc_atc',atcCode);else localStorage.removeItem('afc_atc')}catch(e){}checkGroup();reopenWs();setTimeout(refreshMyTowers,1500)});
+function setCredBtn(){var b=$('credBtn');b.disabled=!(isMember&&credReq);b.style.borderColor=hasCred?'#3dff7a':'';b.style.color=hasCred?'#3dff7a':''}
+var grpMsg='',hasCred=false,credReq=false;
+function checkGroup(){if(!group){grpMsg='';isMember=false;hasCred=false;credReq=false;setCredBtn();return}
+  fetch('/api/health',{headers:Object.assign({'X-Group':group},atcCode?{'X-Atc':atcCode}:{})}).then(function(r){return r.json()}).then(function(j){
+    isMember=!!j.member;hasCred=!!j.atc;credReq=!!j.atc_required;
+    grpMsg=j.member?L(' · ATC Network: member',' · ATC Network: membro')+(credReq?(hasCred?L(' · ATC credential OK',' · credencial ATC OK'):L(' · no ATC credential',' · sem credencial ATC')):''):L(' · ATC Network code WRONG',' · código da ATC Network ERRADO');setCredBtn()}).catch(function(){})}
 checkGroup();
 function refreshMyTowers(){if(!key)return;myApts.slice().forEach(function(t){putTower(t,true).then(function(r){if(r.status===409||r.status===403)r.json().then(function(j){if(j.error==='one_tower'){myApts=myApts.filter(function(x){return x.name!==t.name});saveTowers();poll(true)}})}).catch(function(){})});myTowers.slice().forEach(function(t){putTower(t).then(function(r){if(r.status===409||r.status===403){r.json().then(function(j){myTowers=myTowers.filter(function(x){return x.name!==t.name});saveTowers();updateTalk();errToast(r,j)})}}).catch(function(){})})}
 
@@ -671,7 +678,7 @@ function applyTraffic(j){
       else if(!centroidDone&&ac.length){center.lat=ac.reduce(function(s,a){return s+a.latitude},0)/ac.length;
         center.lon=ac.reduce(function(s,a){return s+a.longitude},0)/ac.length;centroidDone=true}}
     computeConfl();
-    var nT=ac.filter(isTwr).length,nA=ac.length-nT;setStatus(nA+L(' aircraft',' aeronaves')+' · '+nT+L(nT===1?' tower':' towers',nT===1?' torre':' torres')+(isMember?L(' · private group section',' · seção privada do grupo'):'')+grpMsg,true);draw();renderStrips();renderTowerBox()}
+    var nT=ac.filter(isTwr).length,nA=ac.length-nT;setStatus(nA+L(' aircraft',' aeronaves')+' · '+nT+L(nT===1?' tower':' towers',nT===1?' torre':' torres')+(isMember?L(' · private ATC Network section',' · seção privada da ATC Network'):'')+grpMsg,true);draw();renderStrips();renderTowerBox()}
 /* ---------- voice (push-to-talk, both directions) ---------- */
 var voiceOn=true,vclips=[],heard=null,pttBusy=false,actx=null,rec=null,lastBuf=null;
 try{voiceOn=localStorage.getItem('afc_voice')!=='0'}catch(e){}
@@ -743,7 +750,7 @@ var ws=null,wsAt=0,wsTry=0,wsTimer=0,wsPing=0;
 function wsLive(){return ws&&ws.readyState===1&&Date.now()-wsAt<12000}
 function wsOpen(){
   if(!key||!window.WebSocket||ws)return;
-  try{ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws?key='+encodeURIComponent(key)+(group?'&group='+encodeURIComponent(group):''))}catch(e){ws=null;return}
+  try{ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws?key='+encodeURIComponent(key)+(group?'&group='+encodeURIComponent(group):'')+(atcCode?'&atc='+encodeURIComponent(atcCode):''))}catch(e){ws=null;return}
   var me=ws;
   me.onopen=function(){wsTry=0;wsAt=Date.now();setTimeout(listen,300);me.send(JSON.stringify({sub:{lat:0,lon:0,radius_miles:13000}}));
     clearInterval(wsPing);wsPing=setInterval(function(){if(me.readyState===1)me.send('ping')},25000)};

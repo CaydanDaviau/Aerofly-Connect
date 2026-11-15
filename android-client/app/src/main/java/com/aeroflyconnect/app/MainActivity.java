@@ -261,17 +261,17 @@ public class MainActivity extends Activity {
         root.addView(text(Api.t(this, "Settings", "Configurações"), 24, true));
 
         // ----- Group code -----
-        LinearLayout grp = section(root, Api.t(this, "Group code", "Código do grupo"));
+        LinearLayout grp = section(root, Api.t(this, "Aerofly Connect ATC Network", "Aerofly Connect ATC Network"));
         Api.key(this);   // loads Api.group
-        final EditText grpIn = addField(grp, Api.t(this, "Code from the Discord server (optional)", "Código do servidor Discord (opcional)"), Api.group, false, false);
+        final EditText grpIn = addField(grp, Api.t(this, "Network code from Discord (optional)", "Código da rede do Discord (opcional)"), Api.group, false, false);
         grpIn.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD);   // no autocorrect/auto-capital
         grpIn.addTextChangedListener(new android.text.TextWatcher() {
             @Override public void beforeTextChanged(CharSequence c, int a, int b, int d) { }
             @Override public void onTextChanged(CharSequence c, int a, int b, int d) { }
             @Override public void afterTextChanged(android.text.Editable e) { Api.setGroup(MainActivity.this, e.toString()); }
         });
-        TextView grpHint = dim(Api.t(this, "Members show in a different colour on the radar and map. Takes effect at the next Start.",
-                "Membros aparecem em outra cor no radar e no mapa. Vale a partir do próximo Iniciar."), 13);
+        TextView grpHint = dim(Api.t(this, "Network members only see each other (separate from the public section). Takes effect at the next Start.",
+                "Membros da rede só veem uns aos outros (separado da seção pública). Vale a partir do próximo Iniciar."), 13);
         grpHint.setPadding(0, pad / 4, 0, 0);
         grp.addView(grpHint);
 

@@ -108,14 +108,14 @@
     const ipBox = h("div", { style: cfg.simSource === "tcp" ? "" : "display:none" }, h("label", {}, t("IP of the device running Aerofly", "IP do dispositivo com o Aerofly")), ip,
       h("div", { class: "note" }, t("Phone, iPhone or iPad running Aerofly FS on the same Wi-Fi (not a mobile-data 192.0.0.x address). Port 58585.", "Celular, iPhone ou iPad com o Aerofly FS no mesmo Wi-Fi (não um endereço de dados móveis 192.0.0.x). Porta 58585.")));
     const simNote = h("div", { class: "note" }, cfg.simSource === "udp" ? t("In Aerofly on this PC set the address to 127.0.0.1, port 49002.", "No Aerofly deste PC use o endereço 127.0.0.1, porta 49002.") : "");
-    const grp = h("input", { value: cfg.group || "", placeholder: t("Group code (from Discord)", "Código do grupo (do Discord)"), autocomplete: "off", spellcheck: "false", oninput: () => { cfg.group = grp.value.trim(); window.afc.set({ group: cfg.group }); } });
+    const grp = h("input", { value: cfg.group || "", placeholder: t("Network code (from Discord)", "Código da rede (do Discord)"), autocomplete: "off", spellcheck: "false", oninput: () => { cfg.group = grp.value.trim(); window.afc.set({ group: cfg.group }); } });
     const sb = h("input", { value: cfg.simbrief || "", placeholder: t("Username or ID", "Usuário ou ID"), autocomplete: "off", spellcheck: "false", oninput: () => { cfg.simbrief = sb.value.trim(); window.afc.set({ simbrief: cfg.simbrief }); } });
     root.append(
       h("button", { class: "back", onclick: () => go("start") }, "← " + t("Back", "Voltar")),
       card(t("Sim link", "Link do simulador"),
         seg(cfg.simSource, [["udp", t("Aerofly on this PC", "Aerofly neste PC")], ["tcp", t("Aerofly on another device", "Aerofly em outro dispositivo")]], v => { cfg.simSource = v; window.afc.set({ simSource: v }); render(); }),
         simNote, ipBox),
-      card(t("Group code", "Código do grupo"), grp, h("div", { class: "note" }, t("Posted in the Discord server. Leave empty for the public section.", "Publicado no servidor do Discord. Deixe vazio para a seção pública."))),
+      card("Aerofly Connect ATC Network", grp, h("div", { class: "note" }, t("Posted in the Discord server. Members only see each other. Leave empty for the public section.", "Publicado no servidor do Discord. Membros só veem uns aos outros. Deixe vazio para a seção pública."))),
       card(t("Language", "Idioma"), seg(lang, [["en", "English"], ["pt", "Português (BR)"]], v => { lang = v; cfg.lang = v; window.afc.set({ lang: v }); render(); })),
       card("SimBrief", sb, h("div", { class: "note" }, t("Used by the Import button on the Pilot screen.", "Usado pelo botão Importar na tela Piloto."))),
     );

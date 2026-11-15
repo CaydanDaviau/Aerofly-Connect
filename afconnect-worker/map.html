@@ -23,7 +23,8 @@ body.pip #bar,body.pip #info,body.pip .maplibregl-ctrl-attrib{display:none!impor
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script>
 (function(){
-var P=new URLSearchParams(location.search), KEY=P.get('key')||'', BASE=location.origin;
+var P=new URLSearchParams(location.search), KEY=P.get('key')||'', BASE=location.origin, GROUP=(function(){var g=P.get('group');if(g!==null)return g;try{return localStorage.getItem('afc_group')||''}catch(e){return ''}})();
+function hdrs(){var h={'X-API-Key':KEY||'viewer'};if(GROUP)h['X-Group']=GROUP;return h}
 var STYLES=[['Liberty','https://tiles.openfreemap.org/styles/liberty'],['Positron','https://tiles.openfreemap.org/styles/positron'],['Bright','https://tiles.openfreemap.org/styles/bright']];
 var si=0; try{si=Math.min(STYLES.length-1,Math.max(0,parseInt(localStorage.getItem('rv_style')||'0',10)||0))}catch(e){}
 var own=null, follow=true, hdgUp=false, trails={}, ttimes={}, lastTraffic=[], lastCrashes=[], towers=[], ready=false;
@@ -170,7 +171,7 @@ function applyTraffic(d){
   checkOwnRoute(lastTraffic.filter(function(a){return a.self})[0]);
   if(firstFix&&own){firstFix=false;map.jumpTo({center:[own.lon,own.lat],zoom:13})}
   var nt=lastTraffic.filter(function(a){return a.virtual_tower}).length, n=lastTraffic.length-nt;
-  setInfo(n+' aircraft'+' · '+nt+(nt===1?' tower':' towers')+(lastTraffic.some(function(a){return a.member})?' · purple/gold = group':'')+(KEY?'':' · view only'));
+  setInfo(n+' aircraft'+' · '+nt+(nt===1?' tower':' towers')+(lastTraffic.some(function(a){return a.member})?' · purple/gold = ATC Network':'')+(KEY?'':' · view only'));
   render();
 }
 // traffic pushed by the Android app (it comes back with the position upload, no extra request)
@@ -181,7 +182,7 @@ function poll(){
   if(paused||document.hidden)return;
   if(Date.now()-lastPush<10000)return;   // pushed feed (app or socket) is fresh
   var c=own?{lat:own.lat,lon:own.lon}:{lat:map.getCenter().lat,lon:map.getCenter().lng};
-  fetch(BASE+'/api/traffic?lat='+c.lat+'&lon='+c.lon+'&radius_miles=13000',{headers:{'X-API-Key':KEY||'viewer'}})
+  fetch(BASE+'/api/traffic?lat='+c.lat+'&lon='+c.lon+'&radius_miles=13000',{headers:hdrs()})
    .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json()})
    .then(applyTraffic).catch(function(e){failures++;setInfo('server error: '+e.message)});
 }
@@ -190,7 +191,7 @@ setInterval(poll,3000);poll();
 var ws=null,wsTimer=0,wsPing=0,wsTry=0,wsAt=0;
 function wsOpen(){
   if(window.Android||!KEY||!window.WebSocket||ws)return;
-  try{ws=new WebSocket(BASE.replace(/^http/,'ws')+'/ws?key='+encodeURIComponent(KEY))}catch(e){ws=null;return}
+  try{ws=new WebSocket(BASE.replace(/^http/,'ws')+'/ws?key='+encodeURIComponent(KEY)+(GROUP?'&group='+encodeURIComponent(GROUP):''))}catch(e){ws=null;return}
   var me=ws;
   me.onopen=function(){wsTry=0;me.send(JSON.stringify({sub:{lat:0,lon:0,radius_miles:13000,max:300}}));
     clearInterval(wsPing);wsPing=setInterval(function(){if(me.readyState===1)me.send('ping')},25000)};
@@ -222,7 +223,7 @@ map.on('click','planes',function(e){
   var pp=popup;pp.on('close',function(){if(popup===pp){popup=null;routeId=null;tapRoute=null;showRoute()}});
   routeId=null;tapRoute=null;showRoute();
   if(a.has_route){var id=String(a.icao_address||'');routeId=id;
-    fetch(BASE+'/api/route?icao_address='+encodeURIComponent(id),{headers:{'X-API-Key':KEY||'viewer'}})
+    fetch(BASE+'/api/route?icao_address='+encodeURIComponent(id),{headers:hdrs()})
       .then(function(r){return r.ok?r.json():null}).then(function(j){if(routeId===id&&j){tapRoute=j.points;showRoute()}}).catch(function(){})}
 });
 var routeId=null,ownRoute=null,ownRouteId='',ownRouteAt=0,ownBusy=false;
@@ -233,7 +234,7 @@ function checkOwnRoute(a){
   var id=String(a.icao_address||'');if(!id||ownBusy)return;
   if(ownRouteId===id&&Date.now()-ownRouteAt<300000)return;
   ownBusy=true;
-  fetch(BASE+'/api/route?icao_address='+encodeURIComponent(id),{headers:{'X-API-Key':KEY||'viewer'}})
+  fetch(BASE+'/api/route?icao_address='+encodeURIComponent(id),{headers:hdrs()})
     .then(function(r){return r.ok?r.json():null}).then(function(j){ownBusy=false;ownRouteId=id;ownRouteAt=Date.now();if(j&&j.points){ownRoute=j.points;showRoute()}}).catch(function(){ownBusy=false;ownRouteAt=Date.now()-290000})
 }
 function setRoute(p,act){

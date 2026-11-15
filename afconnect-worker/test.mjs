@@ -706,3 +706,27 @@ await call("DELETE", "/api/atc/tower?name=SBBR_TWR", null, "ctl");
   T("alive at 100 s", hub.towers.has("DDDD"));
   hub.towers.clear();
 }
+
+// ATC credential
+{
+  const aenv = { ...env, GROUP_CODE: "tango7", ATC_CODES: "JOHN-1=John, ZED-9" };
+  const A = async (method, path, body, key, hdr = {}) => {
+    const r = await worker.fetch(new Request("https://x" + path, { method, body: body && JSON.stringify(body), headers: { "X-API-Key": key, ...hdr } }), aenv);
+    const t = await r.text(); let j; try { j = JSON.parse(t); } catch (e) { j = t; } return { st: r.status, j };
+  };
+  const T = (n, v) => console.log("cred " + n + ":", v ? "PASS" : "FAIL");
+  const M = { "X-Group": "tango7" };
+  T("member without credential refused", (await A("PUT", "/api/atc/tower", { name: "SBCF", latitude: 1, longitude: 1 }, "c1", M)).st === 403);
+  T("error name", (await A("PUT", "/api/atc/tower", { name: "SBCF", latitude: 1, longitude: 1 }, "c1", M)).j.error === "atc_credential");
+  T("wrong credential refused", (await A("PUT", "/api/atc/tower", { name: "SBCF", latitude: 1, longitude: 1 }, "c1", { ...M, "X-Atc": "nope" })).st === 403);
+  T("valid credential opens tower", (await A("PUT", "/api/atc/tower", { name: "SBCF", latitude: 1, longitude: 1 }, "c1", { ...M, "X-Atc": "JOHN-1" })).st === 200);
+  T("second code (no label) works", (await A("PUT", "/api/atc/tower", { name: "SBCF", latitude: 1, longitude: 1 }, "c2", { ...M, "X-Atc": "ZED-9" })).st === 200);
+  T("credential without group code = public, no effect", (await A("PUT", "/api/atc/tower", { name: "SBPA", latitude: 2, longitude: 2 }, "c3", { "X-Atc": "JOHN-1" })).st === 200);
+  T("public tower unaffected", (await A("PUT", "/api/atc/tower", { name: "SBRJ", latitude: 3, longitude: 3 }, "c4")).st === 200);
+  T("member without credential can't close/ATIS", (await A("DELETE", "/api/atc/tower?name=SBCF", null, "c1", M)).st === 403 && (await A("PUT", "/api/atc/atis", { name: "SBCF", remarks: "x" }, "c1", M)).st === 403);
+  T("health flags", (async () => 0) && (await A("GET", "/api/health", null, "c1", { ...M, "X-Atc": "JOHN-1" })).j.atc === true && (await A("GET", "/api/health", null, "c1", M)).j.atc === false && (await A("GET", "/api/health", null, "c1", M)).j.atc_required === true);
+  T("code never returned", !JSON.stringify((await A("GET", "/api/health", null, "c1", { ...M, "X-Atc": "JOHN-1" })).j).includes("JOHN"));
+  T("client-sent X-Member can't spoof", (await A("PUT", "/api/atc/tower", { name: "SBXX", latitude: 1, longitude: 1 }, "c5", { "X-Member": "1", "X-Atc": "1" })).st === 200);
+  const off = await worker.fetch(new Request("https://x/api/atc/tower", { method: "PUT", body: JSON.stringify({ name: "SBYY", latitude: 1, longitude: 1 }), headers: { "X-API-Key": "c6", "X-Group": "tango7" } }), { ...env, GROUP_CODE: "tango7" });
+  T("no ATC_CODES = rule off", off.status === 200);
+}

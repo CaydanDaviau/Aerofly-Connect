@@ -183,6 +183,16 @@ function memberFlag(request, env, url) {
   return !!gc && got === gc;
 }
 
+// ATC credential: Worker var ATC_CODES (comma separated, each "CODE" or "CODE=Name"), issued by the network management to controllers.
+// Only meaningful for group members. X-Atc to the Hub: "1" valid, "0" invalid/missing, "n" no codes configured (rule off).
+function atcFlag(request, env, url, member) {
+  const codes = String(env.ATC_CODES || "").split(",").map(s => s.split("=")[0].trim()).filter(Boolean);
+  if (!codes.length) return "n";
+  const got = String(request.headers.get("X-Atc") || url.searchParams.get("atc") || "").trim();
+  return member && got && codes.includes(got) ? "1" : "0";
+}
+const noCred = request => request.headers.get("X-Member") === "1" && request.headers.get("X-Atc") === "0";
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -195,7 +205,7 @@ export default {
       const wk = (url.searchParams.get("key") || "").trim();
       const allowed = (env.ABFLUG_KEYS || "").split(",").map(s => s.trim()).filter(Boolean);
       if (!wk || (allowed.length && !allowed.includes(wk))) return json({ error: "invalid api key" }, 401);
-      const h = new Headers(request.headers); h.set("X-API-Key", wk); h.set("X-Member", memberFlag(request, env, url) ? "1" : "0"); h.set("X-IP", ipTag(request));
+      const h = new Headers(request.headers); h.set("X-API-Key", wk); const mem = memberFlag(request, env, url); h.set("X-Member", mem ? "1" : "0"); h.set("X-Atc", atcFlag(request, env, url, mem)); h.set("X-IP", ipTag(request));
       return env.HUB.get(env.HUB.idFromName("global")).fetch(request, { headers: h });
     }
     if (!url.pathname.startsWith("/api/")) return json({ name: "abflug-community", ok: true });
@@ -206,7 +216,7 @@ export default {
     }
     if (env.DEBUG) console.log(request.method, url.pathname + url.search, (await request.clone().text()).slice(0, 600));
     const stub = env.HUB.get(env.HUB.idFromName("global"));
-    const hh = new Headers(request.headers); hh.delete("X-Group"); hh.set("X-Member", memberFlag(request, env, url) ? "1" : "0"); hh.set("X-IP", ipTag(request));
+    const hh = new Headers(request.headers); hh.delete("X-Group"); hh.delete("X-Atc"); const mem2 = memberFlag(request, env, url); hh.set("X-Member", mem2 ? "1" : "0"); hh.set("X-Atc", atcFlag(request, env, url, mem2)); hh.set("X-IP", ipTag(request));
     return stub.fetch(request, { headers: hh });
   },
 };
@@ -453,7 +463,7 @@ export class Hub {
     const key = (request.headers.get("X-API-Key") || "").trim();
     const pair = new WebSocketPair();
     this.ctx.acceptWebSocket(pair[1]);
-    pair[1].serializeAttachment({ key, sub: null, member: request.headers.get("X-Member") === "1", ip: request.headers.get("X-IP") || "" });
+    pair[1].serializeAttachment({ key, sub: null, member: request.headers.get("X-Member") === "1", atc: request.headers.get("X-Atc") || "n", ip: request.headers.get("X-IP") || "" });
     this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
     this.startPush();
     return new Response(null, { status: 101, webSocket: pair[0] });
@@ -550,7 +560,7 @@ export class Hub {
       try { ws.send(JSON.stringify({ id: d.id, status: 400, body: { error: "bad request" } })); } catch (e) {}
       return;
     }
-    const init = { method, headers: { "X-API-Key": a.key, "Content-Type": "application/json", "X-Via": "ws", "X-Member": a.member ? "1" : "0", "X-IP": a.ip || "" } };
+    const init = { method, headers: { "X-API-Key": a.key, "Content-Type": "application/json", "X-Via": "ws", "X-Member": a.member ? "1" : "0", "X-Atc": a.atc || "n", "X-IP": a.ip || "" } };
     if (method !== "GET" && method !== "DELETE" && d.body !== undefined) init.body = JSON.stringify(d.body);
     let status = 500, body = { error: "server error" };
     try {
@@ -770,6 +780,7 @@ export class Hub {
     }
 
     if ((m === "PUT" || m === "POST") && p === "/api/atc/tower") {
+      if (noCred(request)) return json({ error: "atc_credential" }, 403);
       const d = await request.json().catch(() => ({}));
       const pn = parseTowerName(d.name);
       const lat = Number(d.latitude), lon = Number(d.longitude);
@@ -806,6 +817,7 @@ export class Hub {
       return json({ success: true, callsign: "ATC_" + name, position: pn.pos, airport: pn.apt });
     }
     if (m === "DELETE" && p === "/api/atc/tower") {
+      if (noCred(request)) return json({ error: "atc_credential" }, 403);
       const pn = parseTowerName(url.searchParams.get("name")), name = pn ? pn.name : String(url.searchParams.get("name") || "").trim().toUpperCase();
       if (this.towers.get(name)?.member && request.headers.get("X-Member") !== "1") return json({ error: "member_tower" }, 403);
       const cur = this.towers.get(name), hq = String(url.searchParams.get("holder") || "");
@@ -825,6 +837,7 @@ export class Hub {
     }
 
     if (m === "POST" && (p === "/api/atc/kick" || p === "/api/atc/unban")) {
+      if (noCred(request)) return json({ error: "atc_credential" }, 403);
       const d = await request.json().catch(() => ({}));
       const apt = String(d.airport || "").trim().toUpperCase(), who = String(d.holder || "").slice(0, 40), now = Date.now();
       const a = this.towers.get(apt), member = request.headers.get("X-Member") === "1";
@@ -855,6 +868,7 @@ export class Hub {
       return r ? json(r) : json({ error: "no tower open at that airport" }, 404);
     }
     if ((m === "PUT" || m === "POST") && p === "/api/atc/atis") {
+      if (noCred(request)) return json({ error: "atc_credential" }, 403);
       const d = await request.json().catch(() => ({}));
       const name = this.towerKey(String(d.name || "").trim().toUpperCase()), t = name && this.towers.get(name);
       if (!t) return json({ error: "no tower open at that airport" }, 404);
@@ -873,7 +887,7 @@ export class Hub {
     }
 
     if (m === "GET" && p === "/api/health")
-      return json({ status: "ok", active_clients: this.clients.size, pilots: [...this.clients.values()].filter(c => c.pos).length, towers: this.towers.size, member: request.headers.get("X-Member") === "1" });
+      return json({ status: "ok", active_clients: this.clients.size, pilots: [...this.clients.values()].filter(c => c.pos).length, towers: this.towers.size, member: request.headers.get("X-Member") === "1", atc: request.headers.get("X-Atc") === "1", atc_required: request.headers.get("X-Atc") !== "n" });
 
     if (m === "GET" && p === "/api/traffic") {
       const q = url.searchParams;
