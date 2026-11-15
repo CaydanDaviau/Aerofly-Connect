@@ -381,7 +381,7 @@ final class Overlay {
                 }
             });
             chatRow.addView(chatIn, new LinearLayout.LayoutParams(0, dp(40), 1f));
-            // push-to-talk: hold to record (max 10 s), release to send; only with Voice on in Settings and the mic permission
+            // push-to-talk: hold to record (max 20 s), release to send; only with Voice on in Settings and the mic permission
             micBtn = new View(ctx) {
                 private final Paint pt = new Paint(Paint.ANTI_ALIAS_FLAG);
                 private final RectF rf = new RectF();

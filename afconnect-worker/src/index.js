@@ -16,8 +16,8 @@ const COVER = { clearance: ["DEL", "GND", "TWR"], taxi: ["GND", "TWR"], takeoff:
 const parseTowerName = s => {
   const m = /^([A-Z0-9]{2,8}?)(?:_(DEL|GND|TWR|APP|DEP))?$/.exec(String(s || "").trim().toUpperCase());
   if (!m) return null;
-  const pos = m[2] || "TWR";
-  return { apt: m[1], pos, name: pos === "TWR" ? m[1] : m[1] + "_" + pos };
+  const pos = m[2] || "APT";   // plain ICAO = the airport itself (symbol, ATIS); roles are ICAO_DEL / _GND / _TWR / _APP / _DEP
+  return { apt: m[1], pos, name: pos === "APT" ? m[1] : m[1] + "_" + pos };
 };
 const MAX_TRAFFIC = 500;
 const CRASH_TIMEOUT_MS = 5 * 60_000;   // a pilot who crashes is locked out this long
@@ -168,7 +168,7 @@ const oppRunway = r => { const m = /^(\d\d)([LRC]?)$/.exec(r); if (!m) return r;
 const rwyKey = (apt, r) => (apt || "?") + "/" + [r, oppRunway(r)].sort()[0];
 const GRACE_MS = 20_000, VIOL_SHOW_MS = 30_000, VIOL_RENEW_MS = 20_000, MAX_VIOL = 100;
 const PUSH_MS = 3000;
-const VOICE_TTL_MS = 5 * 60 * 1000, VOICE_MAX_CLIPS = 40, VOICE_MAX_B64 = 150_000, VOICE_LISTEN_MS = 60_000;
+const VOICE_TTL_MS = 5 * 60 * 1000, VOICE_MAX_CLIPS = 120, VOICE_MAX_B64 = 250_000, VOICE_LISTEN_MS = 60_000;
 const up =v => String(v || "").trim().toUpperCase();
 
 // Group code: Worker var GROUP_CODE; clients send it as X-Group header (or ?group=). The Hub only ever sees X-Member 1/0, never the code.
@@ -259,7 +259,7 @@ export class Hub {
 
   // type given: only a staffed position that can answer it counts (COVER chain); no type: any position of the airport.
   humanCovers(c, apt, type) {
-    const ok = t => !type || !COVER[type] || COVER[type].includes(t.pos || "TWR");
+    const ok = t => t.pos !== "APT" && (!type || !COVER[type] || COVER[type].includes(t.pos || "TWR"));
     return [...this.towers.values()].some(t => ok(t) && ((apt && (t.apt || t.name) === apt) || haversineMi(t.latitude, t.longitude, c.pos.latitude, c.pos.longitude) <= TOWER_COVER_MI));
   }
   // ATIS and weather belong to the airport: resolve an airport code (or any position name) to the tower record that holds them.
@@ -268,7 +268,7 @@ export class Hub {
     let best = null, bestScore = -1;
     for (const [k, t] of this.towers) {
       if ((t.apt || t.name) !== apt) continue;
-      const score = (t.atis ? 2 : 0) + ((t.pos || "TWR") === "TWR" ? 1 : 0);
+      const score = (t.atis ? 2 : 0) + ((t.pos || "TWR") === "APT" ? 1 : 0);
       if (score > bestScore) { best = k; bestScore = score; }
     }
     return best;
@@ -385,9 +385,21 @@ export class Hub {
         out.push({ ...pos, ...c.plan, callsign, ...towerFields(callsign), member: !!c.member, freq: c.pos.freq || "", assigned_squawk: c.assigned ? c.assigned.squawk : null, emergency: !!(c.emerg && Date.now() < c.emerg.until), no_clnc: !!(c.viol && Date.now() - c.viol.at < VIOL_SHOW_MS), ...(ck === key ? { self: true } : {}), distance_miles: Math.round(d * 10) / 10 });
       }
     }
+    // one symbol per airport; its staffed roles are listed in `positions`
+    const byApt = new Map();
     for (const t of this.towers.values()) {
-      const d = haversineMi(lat, lon, t.latitude, t.longitude);
-      if (d <= rad) out.push(towerAircraft(t, d));
+      const a = t.apt || t.name;
+      let g = byApt.get(a); if (!g) byApt.set(a, g = { anchor: null, roles: [] });
+      if ((t.pos || "TWR") === "APT") g.anchor = t; else g.roles.push(t);
+    }
+    for (const [a, g] of byApt) {
+      const base = g.anchor || g.roles[0];
+      const d = haversineMi(lat, lon, base.latitude, base.longitude);
+      if (d > rad) continue;
+      const e = towerAircraft({ ...base, name: a, pos: "APT", holder: undefined, freq: "" }, d);
+      e.positions = g.roles.map(r => ({ pos: r.pos || "TWR", freq: r.freq || "", claimed: !!r.holder }));
+      e.claimed = g.roles.some(r => r.holder);
+      out.push(e);
     }
     out.sort((a, b) => a.distance_miles - b.distance_miles);
     const truncated = out.length > max;
@@ -482,10 +494,18 @@ export class Hub {
   addClip(dir, target, d) {
     const audio = String(d.audio || "");
     const id = "v" + Date.now().toString(36) + (++this.msgSeq).toString(36);
-    const ms = Math.max(0, Math.min(10_000, Number(d.ms) || 0));
+    const ms = Math.max(0, Math.min(20_000, Number(d.ms) || 0));
     const pos = target.pos || {};
     this.clips.set(id, { id, dir, icao: pos.icao_address, callsign: normCallsign(target.plan.callsign ?? pos.callsign), audio, mime: String(d.mime || "audio/mp4").slice(0, 40), ms, freq: dir === "up" ? (pos.freq || "") : "", at: Date.now(), delivered: false });
-    if (this.clips.size > VOICE_MAX_CLIPS) this.clips.delete(this.clips.keys().next().value);
+    // everyone tuned to the same frequency hears it (pilots too); untuned = no relay
+    const f = dir === "up" ? (pos.freq || "") : normFreq(d.freq), nowT = Date.now();
+    if (f) for (const o of this.clients.values()) {
+      const q = o.pos;
+      if (!q || q.icao_address === pos.icao_address || q.voice === false || q.freq !== f || nowT - o.seen > 15_000) continue;
+      const id2 = id + "r" + (++this.msgSeq).toString(36);
+      this.clips.set(id2, { id: id2, dir: "down", icao: q.icao_address, callsign: normCallsign(target.plan.callsign ?? pos.callsign), audio, mime: String(d.mime || "audio/mp4").slice(0, 40), ms, freq: "", at: nowT, delivered: false });
+    }
+    while (this.clips.size > VOICE_MAX_CLIPS) this.clips.delete(this.clips.keys().next().value);
     return id;
   }
   async webSocketMessage(ws, raw) {
@@ -583,7 +603,7 @@ export class Hub {
       return json({ success: true });
     }
 
-    // ---- Push-to-talk voice clips (in memory, 5 min, base64 audio <= ~110 KB, max 10 s).
+    // ---- Push-to-talk voice clips (in memory, 5 min, base64 audio <= ~110 KB, max 20 s).
     if ((m === "PUT" || m === "POST") && p === "/api/voice/listen") {   // controller page: "I can hear voice" (renew every <= 30 s)
       const d = await request.json().catch(() => ({}));
       if (d.on === true) this.listeners.set(key, { on: true, at: Date.now() }); else this.listeners.delete(key);
@@ -597,7 +617,8 @@ export class Hub {
       if (!d.audio || typeof d.audio !== "string" || d.audio.length > VOICE_MAX_B64) return json({ error: "bad audio" }, 400);
       const now = Date.now();
       if (c.lastClip && now - c.lastClip < 1500) return json({ error: "too many clips" }, 429);
-      if (!this.voiceListening()) return json({ error: "no_listener" }, 409);
+      const peers = c.pos.freq && [...this.clients.values()].some(o => o !== c && o.pos && o.pos.freq === c.pos.freq && o.pos.voice !== false);
+      if (!this.voiceListening() && !peers) return json({ error: "no_listener" }, 409);
       c.lastClip = now;
       return json({ success: true, id: this.addClip("up", c, d) });
     }
@@ -748,6 +769,11 @@ export class Hub {
       const pn = parseTowerName(url.searchParams.get("name")), name = pn ? pn.name : String(url.searchParams.get("name") || "").trim().toUpperCase();
       if (this.towers.get(name)?.member && request.headers.get("X-Member") !== "1") return json({ error: "member_tower" }, 403);
       const cur = this.towers.get(name), hq = String(url.searchParams.get("holder") || "");
+      if (pn && pn.pos === "APT") {   // closing the airport removes its roles, unless another controller is live on one
+        const roles = [...this.towers.values()].filter(t => (t.apt || t.name) === pn.apt && t.name !== name);
+        if (roles.some(t => t.holder && t.holder !== hq && Date.now() - t.at <= POS_TTL_MS)) return json({ error: "position_taken", airport: pn.apt }, 409);
+        for (const t of roles) { this.towers.delete(t.name); await this.ctx.storage.delete("tower:" + t.name); }
+      }
       if (cur && cur.holder && cur.holder !== hq && Date.now() - cur.at <= POS_TTL_MS) return json({ error: "position_taken", position: cur.pos, airport: cur.apt }, 409);
       this.towers.delete(name);
       await this.ctx.storage.delete("tower:" + name);

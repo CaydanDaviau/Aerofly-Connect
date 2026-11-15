@@ -9,11 +9,11 @@ import android.os.Build;
 import java.io.File;
 import java.io.FileInputStream;
 
-/** Push-to-talk recorder: AAC in mp4, 16 kHz mono, 24 kbps (about 3 KB per second), 10 s maximum. */
+/** Push-to-talk recorder: AAC in mp4, 16 kHz mono, 24 kbps (about 3 KB per second), 20 s maximum. */
 final class Mic {
     private Mic() { }
 
-    static final int MAX_MS = 10_000;
+    static final int MAX_MS = 20_000;
     private static MediaRecorder rec;
     private static File file;
     private static long t0;
