@@ -264,7 +264,7 @@ export class Hub {
 
   // type given: only a staffed position that can answer it counts (COVER chain); no type: any position of the airport.
   humanCovers(c, apt, type) {
-    const ok = t => t.pos !== "APT" && (!type || !COVER[type] || COVER[type].includes(t.pos || "TWR"));
+    const ok = t => !!t.member === !!c.member && t.pos !== "APT" && (!type || !COVER[type] || COVER[type].includes(t.pos || "TWR"));
     return [...this.towers.values()].some(t => ok(t) && ((apt && (t.apt || t.name) === apt) || haversineMi(t.latitude, t.longitude, c.pos.latitude, c.pos.longitude) <= TOWER_COVER_MI));
   }
   towerOf(apt) { for (const t of this.towers.values()) if ((t.apt || t.name) === apt) return t; return null; }
@@ -394,11 +394,11 @@ export class Hub {
     }
   }
 
-  trafficList(key, lat, lon, rad, max) {
+  trafficList(key, lat, lon, rad, max, vm) {
     let out = [];
     for (const [ck, c] of this.clients) {
       const pos = c.pos;
-      if (!pos) continue;
+      if (!pos || !!c.member !== !!vm) continue;   // members and public never see each other
       const d = haversineMi(lat, lon, pos.latitude, pos.longitude);
       if (d <= rad) {
         const callsign = normCallsign(c.plan.callsign ?? pos.callsign);
@@ -414,6 +414,7 @@ export class Hub {
     }
     for (const [a, g] of byApt) {
       const base = g.anchor || g.roles[0];
+      if (!!base.member !== !!vm) continue;
       const d = haversineMi(lat, lon, base.latitude, base.longitude);
       if (d > rad) continue;
       const e = towerAircraft({ ...base, name: a, pos: "APT", holder: undefined, freq: "" }, d);
@@ -428,14 +429,14 @@ export class Hub {
     return { out: out.slice(0, max), truncated };
   }
 
-  crashList() {
-    return [...this.crashes.values()].map(x => ({ callsign: x.callsign, icao_address: x.icao, latitude: x.latitude, longitude: x.longitude, landing_fpm: x.landing_fpm, at: x.at, until: x.until }));
+  crashList(vm) {
+    return [...this.crashes.values()].filter(x => !!x.member === !!vm).map(x => ({ callsign: x.callsign, icao_address: x.icao, latitude: x.latitude, longitude: x.longitude, landing_fpm: x.landing_fpm, at: x.at, until: x.until }));
   }
 
   trafficAlerts(key, c) {
     const now = Date.now(), out = [];
     for (const [k2, o] of this.clients) {
-      if (k2 === key || !o.pos || now - o.seen > 15_000) continue;
+      if (k2 === key || !o.pos || now - o.seen > 15_000 || !!o.member !== !!c.member) continue;
       const al = computeTA(c.pos, o.pos);
       if (!al) continue;
       const pk = key + "|" + k2;
@@ -469,17 +470,19 @@ export class Hub {
     for (const ws of socks) {
       const a = ws.deserializeAttachment() || {};
       if (!a.sub) continue;
-      const sk = a.key + "|" + a.sub.lat + "|" + a.sub.lon + "|" + a.sub.rad + "|" + a.sub.max;
+      const sk = (a.member ? "m" : "p") + a.key + "|" + a.sub.lat + "|" + a.sub.lon + "|" + a.sub.rad + "|" + a.sub.max;
       let body = cache.get(sk);
-      if (!body) { body = JSON.stringify({ push: "traffic", ...this.trafficBody(a.key, a.sub.lat, a.sub.lon, a.sub.rad, a.sub.max) }); cache.set(sk, body); }
+      if (!body) { body = JSON.stringify({ push: "traffic", ...this.trafficBody(a.key, a.sub.lat, a.sub.lon, a.sub.rad, a.sub.max, a.member) }); cache.set(sk, body); }
       try { ws.send(body); } catch (e) {}
     }
   }
-  trafficBody(key, lat, lon, rad, max) {
-    const { out, truncated } = this.trafficList(key, lat, lon, rad, Math.max(1, Math.min(MAX_TRAFFIC, Number(max) || MAX_TRAFFIC)));
-    const atc_messages = [...this.msgs.values()].map(x => ({ id: x.id, icao_address: x.icao, text: x.text, kind: x.kind, urgent: !!x.urgent, status: x.status, at: x.at, freq: x.freq || "" }));
-    const voice_clips = [...this.clips.values()].filter(v => v.dir === "up").map(v => ({ id: v.id, icao_address: v.icao, callsign: v.callsign, ms: v.ms, at: v.at, freq: v.freq || "" }));
-    return { aircraft: out, traffic: out, truncated, active_clients: this.clients.size, atc_messages, crashes: this.crashList(), voice_clips };
+  trafficBody(key, lat, lon, rad, max, vm) {
+    const { out, truncated } = this.trafficList(key, lat, lon, rad, Math.max(1, Math.min(MAX_TRAFFIC, Number(max) || MAX_TRAFFIC)), vm);
+    const grp = new Map(); for (const c of this.clients.values()) if (c.pos) grp.set(c.pos.icao_address, !!c.member);
+    const same = icao => grp.has(icao) ? grp.get(icao) === !!vm : !vm;
+    const atc_messages = [...this.msgs.values()].filter(x => same(x.icao)).map(x => ({ id: x.id, icao_address: x.icao, text: x.text, kind: x.kind, urgent: !!x.urgent, status: x.status, at: x.at, freq: x.freq || "" }));
+    const voice_clips = [...this.clips.values()].filter(v => v.dir === "up" && same(v.icao)).map(v => ({ id: v.id, icao_address: v.icao, callsign: v.callsign, ms: v.ms, at: v.at, freq: v.freq || "" }));
+    return { aircraft: out, traffic: out, truncated, active_clients: [...this.clients.values()].filter(c => !!c.member === !!vm).length, atc_messages, crashes: this.crashList(vm), voice_clips };
   }
 
   // ---- ATIS (per open tower): letter, runways, frequencies, remarks + METAR from aviationweather.gov (cached 5 min)
@@ -523,7 +526,7 @@ export class Hub {
     const f = dir === "up" ? (pos.freq || "") : normFreq(d.freq), nowT = Date.now();
     if (f) for (const o of this.clients.values()) {
       const q = o.pos;
-      if (!q || q.icao_address === pos.icao_address || q.voice === false || q.freq !== f || nowT - o.seen > 15_000) continue;
+      if (!q || !!o.member !== !!target.member || q.icao_address === pos.icao_address || q.voice === false || q.freq !== f || nowT - o.seen > 15_000) continue;
       const id2 = id + "r" + (++this.msgSeq).toString(36);
       this.clips.set(id2, { id: id2, dir: "down", icao: q.icao_address, callsign: normCallsign(target.plan.callsign ?? pos.callsign), audio, mime: String(d.mime || "audio/mp4").slice(0, 40), ms, freq: "", at: nowT, delivered: false });
     }
@@ -539,7 +542,7 @@ export class Hub {
       const s = d.sub, lat = Number(s && s.lat) || 0, lon = Number(s && s.lon) || 0, rad = Number(s && s.radius_miles) || 250;
       const max = Math.max(1, Math.min(MAX_TRAFFIC, Number(s && s.max) || MAX_TRAFFIC));
       a.sub = s ? { lat, lon, rad, max } : null; ws.serializeAttachment(a);
-      if (a.sub) { try { ws.send(JSON.stringify({ push: "traffic", ...this.trafficBody(a.key, lat, lon, rad, max) })); } catch (e) {} }
+      if (a.sub) { try { ws.send(JSON.stringify({ push: "traffic", ...this.trafficBody(a.key, lat, lon, rad, max, a.member) })); } catch (e) {} }
       return;
     }
     const method = String(d.method || "GET").toUpperCase(), path = String(d.path || "");
@@ -707,7 +710,7 @@ export class Hub {
         if (erwy && eapt) this.rwy.set(rwyKey(eapt, erwy), { key, type: "emerg", until: now + 10 * 60_000 });
         const cs = normCallsign(plan.callsign ?? c.pos.callsign);
         for (const [k2, o] of this.clients) {
-          if (k2 === key || !o.pos || now - o.seen > 15_000) continue;
+          if (k2 === key || !o.pos || now - o.seen > 15_000 || !!o.member !== !!c.member) continue;
           const mi = haversineMi(o.pos.latitude, o.pos.longitude, c.pos.latitude, c.pos.longitude);
           if (mi <= MAYDAY_NEAR_MI) this.addMsg(o, PHRASE[o.lang === "pt" ? "pt" : "en"].maydayNear(cs, Math.round(mi)), "auto", { urgent: true });
         }
@@ -877,7 +880,7 @@ export class Hub {
       const lat = parseFloat(q.get("lat") ?? q.get("latitude") ?? "0") || 0;
       const lon = parseFloat(q.get("lon") ?? q.get("lng") ?? q.get("longitude") ?? "0") || 0;
       const rad = parseFloat(q.get("radius_miles") ?? q.get("radius") ?? "250") || 250;
-      return json(this.trafficBody(key, lat, lon, rad));
+      return json(this.trafficBody(key, lat, lon, rad, undefined, request.headers.get("X-Member") === "1"));
     }
 
     if ((m === "POST" || m === "PUT") && p === "/api/position") {
@@ -923,7 +926,7 @@ export class Hub {
       if (pos.landing_fpm !== undefined && Number.isFinite(lf) && lf <= HARD_LANDING_FPM) {
         // hard landing = crash: the plane vanishes from traffic, an X is marked, the pilot waits CRASH_TIMEOUT_MS
         const now = Date.now();
-        const cr = { key, icao, callsign: normCallsign(c.plan.callsign ?? pos.callsign), latitude: lat, longitude: lon, landing_fpm: Math.round(lf), at: now, until: now + CRASH_TIMEOUT_MS };
+        const cr = { key, icao, callsign: normCallsign(c.plan.callsign ?? pos.callsign), latitude: lat, longitude: lon, member: !!c.member, landing_fpm: Math.round(lf), at: now, until: now + CRASH_TIMEOUT_MS };
         this.crashes.set(key, cr);
         await this.ctx.storage.put("crash:" + key, cr);
         this.clients.delete(key);
@@ -935,15 +938,15 @@ export class Hub {
       messages.push(...this.track(key, c, Date.now()));
       const reply = { success: true, messages, traffic_alerts: this.trafficAlerts(key, c) };
       const sApt = up(c.pos.phase === "air" ? c.plan.arrival_airport : c.plan.departure_airport);
-      const stations = sApt ? [...this.towers.values()].filter(t => t.freq && (t.apt || t.name) === sApt).map(t => ({ pos: t.pos || "TWR", freq: t.freq, airport: sApt })) : [];
+      const stations = sApt ? [...this.towers.values()].filter(t => t.freq && !!t.member === !!c.member && (t.apt || t.name) === sApt).map(t => ({ pos: t.pos || "TWR", freq: t.freq, airport: sApt })) : [];
       if (stations.length) reply.stations = stations;
       const voice = [];
       for (const v of this.clips.values()) if (v.dir === "down" && v.icao === icao && !v.delivered) { v.delivered = true; voice.push({ id: v.id, audio: v.audio, mime: v.mime, ms: v.ms, at: v.at }); }
       if (voice.length) reply.voice = voice;
       if (url.searchParams.get("traffic") === "1") {
         // our client: nearest 100 entries (whole planet) + crashes, so it needs no separate /api/traffic poll
-        const t = this.trafficList(key, lat, lon, 13000, 100);
-        reply.aircraft = t.out; reply.truncated = t.truncated; reply.crashes = this.crashList();
+        const t = this.trafficList(key, lat, lon, 13000, 100, c.member);
+        reply.aircraft = t.out; reply.truncated = t.truncated; reply.crashes = this.crashList(c.member);
       }
       return json(reply);
     }
