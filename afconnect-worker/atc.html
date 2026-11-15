@@ -76,6 +76,7 @@ input::placeholder{color:var(--dim)}
     <input id="ll" size="16" placeholder="lat, lon or ICAO" title="Center on coordinates or an airport code">
     <button id="llGo">Go</button>
     <button id="voiceBtn" title="Voice on/off">Voice: on</button>
+    <button id="replayVoiceBtn" title="Replay the last voice message (sent or received). Plays locally, nothing is transmitted." disabled>Replay last</button>
     <button id="grpBtn" title="Group code (from Discord)">Group</button>
     <button id="dimBtn" title="Grey out aircraft that are not on my frequencies (they stay visible)">My freqs: off</button>
     <span id="rwStatus" class="m"></span>
@@ -596,7 +597,7 @@ function applyTraffic(j){
     computeConfl();
     var nT=ac.filter(isTwr).length,nA=ac.length-nT;setStatus(nA+L(' aircraft',' aeronaves')+' · '+nT+L(nT===1?' tower':' towers',nT===1?' torre':' torres')+(ac.some(function(x){return x.member})?L(' · violet/gold = group',' · violeta/dourado = grupo'):'')+grpMsg,true);draw();renderStrips();renderTowerBox()}
 /* ---------- voice (push-to-talk, both directions) ---------- */
-var voiceOn=true,vclips=[],heard=null,pttBusy=false,actx=null,rec=null;
+var voiceOn=true,vclips=[],heard=null,pttBusy=false,actx=null,rec=null,lastBuf=null;
 try{voiceOn=localStorage.getItem('afc_voice')!=='0'}catch(e){}
 if(/[?&]voice=0/.test(location.search))voiceOn=false;
 function ac_(){if(!actx){try{actx=new (window.AudioContext||window.webkitAudioContext)()}catch(e){}}if(actx&&actx.state==='suspended')actx.resume();return actx}
@@ -616,7 +617,9 @@ function playClip(id){
   api('/api/voice/clip?id='+encodeURIComponent(id)).then(function(r){return r.ok?r.json():null}).then(function(j){
     if(!j){toast(L('Clip expired','Áudio expirado'));return}
     var c=ac_();if(!c){toast(L('Audio not available','Áudio indisponível'));return}
-    c.decodeAudioData(b64buf(j.audio),function(buf){
+    c.decodeAudioData(b64buf(j.audio),function(buf){playBuf(buf)},function(){toast(L('Cannot play clip','Não foi possível tocar'))})
+  }).catch(function(){toast(L('Network error','Erro de rede'))})}
+function playBuf(buf){lastBuf=buf;$('replayVoiceBtn').disabled=false;var c=ac_();if(!c)return;
       var src=c.createBufferSource();src.buffer=buf;
       var hp=c.createBiquadFilter();hp.type='highpass';hp.frequency.value=420;
       var lp=c.createBiquadFilter();lp.type='lowpass';lp.frequency.value=2800;
@@ -624,9 +627,8 @@ function playClip(id){
       var t=c.currentTime+.05;src.start(t);
       var n=Math.floor(c.sampleRate*.07),nb=c.createBuffer(1,n,c.sampleRate),d=nb.getChannelData(0);
       for(var i=0;i<n;i++)d[i]=(Math.random()*2-1)*.25*(1-i/n);
-      var ns=c.createBufferSource();ns.buffer=nb;var ng=c.createGain();ng.gain.value=.5;ns.connect(ng);ng.connect(c.destination);ns.start(t+buf.duration);
-    },function(){toast(L('Cannot play clip','Não foi possível tocar'))})
-  }).catch(function(){toast(L('Network error','Erro de rede'))})}
+      var ns=c.createBufferSource();ns.buffer=nb;var ng=c.createGain();ng.gain.value=.5;ns.connect(ng);ng.connect(c.destination);ns.start(t+buf.duration)}
+$('replayVoiceBtn').onclick=function(){if(lastBuf)playBuf(lastBuf)};
 function pttStart(btn){
   if(!voiceOn){toast(L('Turn Voice on first','Ligue a voz primeiro'));return}
   if(btn.getAttribute('data-voice')==='0'){toast(btn.getAttribute('data-cs')+L(" can't listen to voice, send text instead",' não pode ouvir voz, envie texto'));return}
@@ -641,6 +643,7 @@ function pttStart(btn){
     mr.onstop=function(){st.getTracks().forEach(function(t){t.stop()});
       var ms=Date.now()-t0;if(ms<400){toast(L('Too short','Muito curto'));return}
       var blob=new Blob(parts,{type:mr.mimeType||mime||'audio/webm'}),fr=new FileReader();
+      var c0=ac_();if(c0)blob.arrayBuffer().then(function(ab){c0.decodeAudioData(ab,function(b){lastBuf=b;$('replayVoiceBtn').disabled=false},function(){})});
       fr.onload=function(){var b=String(fr.result).split(',')[1]||'';
         api('/api/atc/voice',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({icao_address:btn.getAttribute('data-icao'),audio:b,mime:(mr.mimeType||mime||'audio/webm').split(';')[0],ms:Math.min(ms,20000),freq:talkFreq()})})
          .then(function(r){return r.json().then(function(j){

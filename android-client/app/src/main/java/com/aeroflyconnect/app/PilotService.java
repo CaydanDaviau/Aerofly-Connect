@@ -275,6 +275,7 @@ public class PilotService extends Service {
     private static int nextNid = 100;
     private AtcVoice voice;
     private String voiceLang;
+    private static volatile byte[] lastVoiceReplay;
 
     /** Speaks the message with the radio effect, if "Speak" is on. Created on first use. */
     private synchronized void speak(String text, Runnable onStart) {
@@ -302,15 +303,32 @@ public class PilotService extends Service {
             }
             for (int i = 0; i < arr.length(); i++) {
                 byte[] data = android.util.Base64.decode(arr.getJSONObject(i).optString("audio"), android.util.Base64.DEFAULT);
-                if (data.length > 0) voice.playClip(data, new Runnable() { @Override public void run() { Overlay.poke(); } });
+                if (data.length > 0) { lastVoiceReplay = data.clone(); voice.playClip(data, new Runnable() { @Override public void run() { Overlay.poke(); } }); }
             }
         } catch (Exception ignored) {
+        }
+    }
+
+    /** Replays the most recent voice clip locally; it does not transmit anything. */
+    static void replayLastVoice(Context c) {
+        final byte[] data = lastVoiceReplay;
+        final PilotService service = inst;
+        if (data == null || data.length == 0 || service == null) return;
+        synchronized (service) {
+            String lang = Api.voiceLang(service);
+            if (service.voice == null || !lang.equals(service.voiceLang)) {
+                if (service.voice != null) service.voice.shutdown();
+                service.voice = new AtcVoice(service, lang);
+                service.voiceLang = lang;
+            }
+            service.voice.playClip(data.clone(), null);
         }
     }
 
     /** Sends a recorded push-to-talk clip to the controllers from a background thread. */
     static void voiceSend(final Context c, final byte[] data, final long ms, final ReqCb cb) {
         final Context app = c.getApplicationContext();
+        lastVoiceReplay = data == null ? null : data.clone();
         new Thread(new Runnable() {
             @Override public void run() {
                 String fb;

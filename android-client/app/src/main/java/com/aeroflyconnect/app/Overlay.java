@@ -416,6 +416,19 @@ final class Overlay {
                 mp.leftMargin = dp(4);
                 chatRow.addView(micBtn, mp);
             }
+            android.widget.Button replayBtn = new android.widget.Button(ctx);
+            replayBtn.setText("↻");
+            replayBtn.setTextSize(18);
+            replayBtn.setContentDescription(Api.t(ctx, "Replay last voice transmission", "Repetir última transmissão de voz"));
+            replayBtn.setMinWidth(0);
+            replayBtn.setMinimumWidth(dp(40));
+            replayBtn.setPadding(0, 0, 0, 0);
+            replayBtn.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View v) { PilotService.replayLastVoice(ctx); }
+            });
+            LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(dp(40), dp(40));
+            rp.leftMargin = dp(4);
+            chatRow.addView(replayBtn, rp);
             // send symbol: a paper plane drawn on a canvas (no text, no emoji font dependency)
             sendBtn = new View(ctx) {
                 private final Paint pt = new Paint(Paint.ANTI_ALIAS_FLAG);
