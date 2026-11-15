@@ -730,3 +730,31 @@ await call("DELETE", "/api/atc/tower?name=SBBR_TWR", null, "ctl");
   const off = await worker.fetch(new Request("https://x/api/atc/tower", { method: "PUT", body: JSON.stringify({ name: "SBYY", latitude: 1, longitude: 1 }), headers: { "X-API-Key": "c6", "X-Group": "tango7" } }), { ...env, GROUP_CODE: "tango7" });
   T("no ATC_CODES = rule off", off.status === 200);
 }
+
+// Manager + managed credentials
+{
+  const menv = { ...env, GROUP_CODE: "tango7", MANAGER_CODES: "BOSS-1, BOSS-2" };
+  const A = async (method, path, body, key, hdr = {}) => {
+    const r = await worker.fetch(new Request("https://x" + path, { method, body: body && JSON.stringify(body), headers: { "X-API-Key": key, ...hdr } }), menv);
+    const t = await r.text(); let j; try { j = JSON.parse(t); } catch (e) { j = t; } return { st: r.status, j };
+  };
+  const T = (n, v) => console.log("mgr " + n + ":", v ? "PASS" : "FAIL");
+  const M = { "X-Group": "tango7" }, B = { "X-Manager": "BOSS-1" };
+  T("page served", (await worker.fetch(new Request("https://x/manager"), menv)).status === 200);
+  T("no manager code refused", (await A("GET", "/api/manager/creds", null, "m1")).st === 403);
+  T("wrong manager code refused", (await A("PUT", "/api/manager/creds", { name: "X" }, "m1", { "X-Manager": "no" })).st === 403);
+  T("health mgr flag", (await A("GET", "/api/health", null, "m1", B)).j.mgr === true && (await A("GET", "/api/health", null, "m1")).j.mgr === false);
+  T("name required", (await A("PUT", "/api/manager/creds", {}, "m1", B)).st === 400);
+  const g = await A("PUT", "/api/manager/creds", { name: "Ana" }, "m1", B);
+  const code = g.j.code;
+  T("generated format", g.st === 200 && /^ATC-[A-Z2-9]{5}-[A-Z2-9]{5}$/.test(code));
+  T("listed", (await A("GET", "/api/manager/creds", null, "m1", { "X-Manager": "BOSS-2" })).j.creds.some(c => c.code === code && c.name === "Ana"));
+  T("member without cred refused now", (await A("PUT", "/api/atc/tower", { name: "SBGR", latitude: 1, longitude: 1 }, "c1", M)).st === 403);
+  T("managed cred opens tower", (await A("PUT", "/api/atc/tower", { name: "SBGR", latitude: 1, longitude: 1 }, "c1", { ...M, "X-Atc": code })).st === 200);
+  T("health atc true", (await A("GET", "/api/health", null, "c1", { ...M, "X-Atc": code })).j.atc === true);
+  T("cred without group = public", (await A("PUT", "/api/atc/tower", { name: "SBKP", latitude: 1, longitude: 1 }, "c9", { "X-Atc": code })).st === 200);
+  T("revoke", (await A("DELETE", "/api/manager/creds?code=" + code, null, "m1", B)).st === 200);
+  T("revoked cred refused at once", (await A("PUT", "/api/atc/tower", { name: "SBGR", latitude: 1, longitude: 1 }, "c1", { ...M, "X-Atc": code })).st === 403);
+  T("revoke unknown 404", (await A("DELETE", "/api/manager/creds?code=ZZZ", null, "m1", B)).st === 404);
+  T("client X-Mgr can't spoof", (await A("GET", "/api/manager/creds", null, "m1", { "X-Mgr": "1" })).st === 403);
+}

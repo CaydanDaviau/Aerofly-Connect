@@ -3,6 +3,7 @@ import { parseMetar, wxSig, nextLetter } from "./atis.js";
 // All state lives in one Durable Object (in memory, TTL-based).
 import ATC_HTML from "./atc.js";
 import MAP_HTML from "./map.js";
+import MANAGER_HTML from "./manager.js";
 const ROUTE_MAX = 200;   // SimBrief route points kept per flight
 const TTL_MS = 60_000;
 const ASSIGN_TTL_MS = 12 * 3600_000;
@@ -191,7 +192,15 @@ function atcFlag(request, env, url, member) {
   const got = String(request.headers.get("X-Atc") || url.searchParams.get("atc") || "").trim();
   return member && got && codes.includes(got) ? "1" : "0";
 }
-const noCred = request => request.headers.get("X-Member") === "1" && request.headers.get("X-Atc") === "0";
+// Manager: Worker var MANAGER_CODES (comma separated). A manager can generate/revoke ATC credentials from /manager. X-Mgr to the Hub: "1"/"0".
+function mgrFlag(request, env, url) {
+  const codes = String(env.MANAGER_CODES || "").split(",").map(s => s.trim()).filter(Boolean);
+  const got = String(request.headers.get("X-Manager") || url.searchParams.get("manager") || "").trim();
+  return codes.length && got && codes.includes(got) ? "1" : "0";
+}
+const atcRaw = (request, url) => String(request.headers.get("X-Atc") || url.searchParams.get("atc") || "").trim().slice(0, 40);
+const CRED_ALPHA = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+function newCred() { const b = crypto.getRandomValues(new Uint8Array(10)); const c = [...b].map(x => CRED_ALPHA[x % 32]).join(""); return "ATC-" + c.slice(0, 5) + "-" + c.slice(5); }
 
 export default {
   async fetch(request, env) {
@@ -200,12 +209,14 @@ export default {
       return new Response(ATC_HTML, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
     if (url.pathname === "/map" || url.pathname === "/map/")
       return new Response(MAP_HTML, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+    if (url.pathname === "/manager" || url.pathname === "/manager/")
+      return new Response(MANAGER_HTML, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
     if (url.pathname === "/ws") {
       if (request.headers.get("Upgrade") !== "websocket") return json({ error: "websocket expected" }, 426);
       const wk = (url.searchParams.get("key") || "").trim();
       const allowed = (env.ABFLUG_KEYS || "").split(",").map(s => s.trim()).filter(Boolean);
       if (!wk || (allowed.length && !allowed.includes(wk))) return json({ error: "invalid api key" }, 401);
-      const h = new Headers(request.headers); h.set("X-API-Key", wk); const mem = memberFlag(request, env, url); h.set("X-Member", mem ? "1" : "0"); h.set("X-Atc", atcFlag(request, env, url, mem)); h.set("X-IP", ipTag(request));
+      const h = new Headers(request.headers); h.set("X-API-Key", wk); const mem = memberFlag(request, env, url); h.set("X-Member", mem ? "1" : "0"); h.set("X-Atc", atcFlag(request, env, url, mem)); h.set("X-Atc-Raw", atcRaw(request, url)); h.set("X-IP", ipTag(request));
       return env.HUB.get(env.HUB.idFromName("global")).fetch(request, { headers: h });
     }
     if (!url.pathname.startsWith("/api/")) return json({ name: "abflug-community", ok: true });
@@ -216,16 +227,18 @@ export default {
     }
     if (env.DEBUG) console.log(request.method, url.pathname + url.search, (await request.clone().text()).slice(0, 600));
     const stub = env.HUB.get(env.HUB.idFromName("global"));
-    const hh = new Headers(request.headers); hh.delete("X-Group"); hh.delete("X-Atc"); const mem2 = memberFlag(request, env, url); hh.set("X-Member", mem2 ? "1" : "0"); hh.set("X-Atc", atcFlag(request, env, url, mem2)); hh.set("X-IP", ipTag(request));
+    const hh = new Headers(request.headers); hh.delete("X-Group"); hh.delete("X-Atc"); hh.delete("X-Manager"); hh.set("X-Atc-Raw", atcRaw(request, url)); hh.set("X-Mgr", mgrFlag(request, env, url)); const mem2 = memberFlag(request, env, url); hh.set("X-Member", mem2 ? "1" : "0"); hh.set("X-Atc", atcFlag(request, env, url, mem2)); hh.set("X-IP", ipTag(request));
     return stub.fetch(request, { headers: hh });
   },
 };
 
 export class Hub {
   constructor(ctx) {
-    this.towers = new Map(); this.wx = new Map(); this.crashes = new Map(); this.ta = new Map();
+    this.towers = new Map(); this.creds = new Map(); this.credOn = false; this.wx = new Map(); this.crashes = new Map(); this.ta = new Map();
     ctx.blockConcurrencyWhile(async () => {
       for (const [k, v] of await ctx.storage.list({ prefix: "tower:" })) this.towers.set(k.slice(6), v);
+      for (const [k, v] of await ctx.storage.list({ prefix: "cred:" })) this.creds.set(k.slice(5), v);
+      this.credOn = !!(await ctx.storage.get("credon")) || this.creds.size > 0;
       for (const [k, v] of await ctx.storage.list({ prefix: "crash:" })) this.crashes.set(k.slice(6), v);
     }); this.ctx = ctx; this.clients = new Map(); this.msgs = new Map(); this.rwy = new Map(); this.rwyQ = new Map(); this.violations = []; this.clips = new Map(); this.listeners = new Map(); this.msgSeq = 0; this.since = Date.now(); this.counts = {}; }
 
@@ -463,7 +476,7 @@ export class Hub {
     const key = (request.headers.get("X-API-Key") || "").trim();
     const pair = new WebSocketPair();
     this.ctx.acceptWebSocket(pair[1]);
-    pair[1].serializeAttachment({ key, sub: null, member: request.headers.get("X-Member") === "1", atc: request.headers.get("X-Atc") || "n", ip: request.headers.get("X-IP") || "" });
+    pair[1].serializeAttachment({ key, sub: null, member: request.headers.get("X-Member") === "1", atc: request.headers.get("X-Atc") || "n", atcRaw: request.headers.get("X-Atc-Raw") || "", ip: request.headers.get("X-IP") || "" });
     this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
     this.startPush();
     return new Response(null, { status: 101, webSocket: pair[0] });
@@ -560,7 +573,7 @@ export class Hub {
       try { ws.send(JSON.stringify({ id: d.id, status: 400, body: { error: "bad request" } })); } catch (e) {}
       return;
     }
-    const init = { method, headers: { "X-API-Key": a.key, "Content-Type": "application/json", "X-Via": "ws", "X-Member": a.member ? "1" : "0", "X-Atc": a.atc || "n", "X-IP": a.ip || "" } };
+    const init = { method, headers: { "X-API-Key": a.key, "Content-Type": "application/json", "X-Via": "ws", "X-Member": a.member ? "1" : "0", "X-Atc": a.atc || "n", "X-Atc-Raw": a.atcRaw || "", "X-IP": a.ip || "" } };
     if (method !== "GET" && method !== "DELETE" && d.body !== undefined) init.body = JSON.stringify(d.body);
     let status = 500, body = { error: "server error" };
     try {
@@ -569,6 +582,15 @@ export class Hub {
     } catch (e) {}
     try { ws.send(JSON.stringify({ id: d.id, status, body })); } catch (e) {}
   }
+  // "1" valid, "0" invalid/missing, "n" rule off. Env codes are decided at the edge; managed codes (this.creds) here, so revoking is immediate.
+  atcState(request) {
+    const f = request.headers.get("X-Atc") || "n";
+    if (f === "1") return "1";
+    const raw = request.headers.get("X-Atc-Raw") || "";
+    if (request.headers.get("X-Member") === "1" && raw && this.creds.has(raw)) return "1";
+    return f === "n" && (this.credOn || this.creds.size) ? "0" : f;
+  }
+  noCred(request) { return request.headers.get("X-Member") === "1" && this.atcState(request) === "0"; }
   webSocketClose(ws) { try { ws.close(); } catch (e) {} }
   webSocketError() {}
 
@@ -780,7 +802,7 @@ export class Hub {
     }
 
     if ((m === "PUT" || m === "POST") && p === "/api/atc/tower") {
-      if (noCred(request)) return json({ error: "atc_credential" }, 403);
+      if (this.noCred(request)) return json({ error: "atc_credential" }, 403);
       const d = await request.json().catch(() => ({}));
       const pn = parseTowerName(d.name);
       const lat = Number(d.latitude), lon = Number(d.longitude);
@@ -817,7 +839,7 @@ export class Hub {
       return json({ success: true, callsign: "ATC_" + name, position: pn.pos, airport: pn.apt });
     }
     if (m === "DELETE" && p === "/api/atc/tower") {
-      if (noCred(request)) return json({ error: "atc_credential" }, 403);
+      if (this.noCred(request)) return json({ error: "atc_credential" }, 403);
       const pn = parseTowerName(url.searchParams.get("name")), name = pn ? pn.name : String(url.searchParams.get("name") || "").trim().toUpperCase();
       if (this.towers.get(name)?.member && request.headers.get("X-Member") !== "1") return json({ error: "member_tower" }, 403);
       const cur = this.towers.get(name), hq = String(url.searchParams.get("holder") || "");
@@ -837,7 +859,7 @@ export class Hub {
     }
 
     if (m === "POST" && (p === "/api/atc/kick" || p === "/api/atc/unban")) {
-      if (noCred(request)) return json({ error: "atc_credential" }, 403);
+      if (this.noCred(request)) return json({ error: "atc_credential" }, 403);
       const d = await request.json().catch(() => ({}));
       const apt = String(d.airport || "").trim().toUpperCase(), who = String(d.holder || "").slice(0, 40), now = Date.now();
       const a = this.towers.get(apt), member = request.headers.get("X-Member") === "1";
@@ -868,7 +890,7 @@ export class Hub {
       return r ? json(r) : json({ error: "no tower open at that airport" }, 404);
     }
     if ((m === "PUT" || m === "POST") && p === "/api/atc/atis") {
-      if (noCred(request)) return json({ error: "atc_credential" }, 403);
+      if (this.noCred(request)) return json({ error: "atc_credential" }, 403);
       const d = await request.json().catch(() => ({}));
       const name = this.towerKey(String(d.name || "").trim().toUpperCase()), t = name && this.towers.get(name);
       if (!t) return json({ error: "no tower open at that airport" }, 404);
@@ -886,8 +908,29 @@ export class Hub {
       return json(await this.atisFor(t.apt || name));
     }
 
+    if (p === "/api/manager/creds") {
+      if (request.headers.get("X-Mgr") !== "1") return json({ error: "not_manager" }, 403);
+      const q = new URL(request.url).searchParams;
+      if (m === "GET") return json({ creds: [...this.creds].map(([code, v]) => ({ code, name: v.name, at: v.at })).sort((a, b) => b.at - a.at) });
+      if (m === "PUT") {
+        let d = {}; try { d = await request.json(); } catch (e) {}
+        const name = String(d.name || "").trim().slice(0, 40);
+        if (!name) return json({ error: "name_required" }, 400);
+        if (this.creds.size >= 200) return json({ error: "too_many" }, 409);
+        let code = newCred(); while (this.creds.has(code)) code = newCred();
+        const v = { name, at: Date.now() }; this.creds.set(code, v); await this.ctx.storage.put("cred:" + code, v); if (!this.credOn) { this.credOn = true; await this.ctx.storage.put("credon", true); }
+        return json({ success: true, code, name, at: v.at });
+      }
+      if (m === "DELETE") {
+        const code = String(q.get("code") || "").trim();
+        if (!this.creds.has(code)) return json({ error: "not_found" }, 404);
+        this.creds.delete(code); await this.ctx.storage.delete("cred:" + code);
+        return json({ success: true });
+      }
+    }
+
     if (m === "GET" && p === "/api/health")
-      return json({ status: "ok", active_clients: this.clients.size, pilots: [...this.clients.values()].filter(c => c.pos).length, towers: this.towers.size, member: request.headers.get("X-Member") === "1", atc: request.headers.get("X-Atc") === "1", atc_required: request.headers.get("X-Atc") !== "n" });
+      return json({ status: "ok", active_clients: this.clients.size, pilots: [...this.clients.values()].filter(c => c.pos).length, towers: this.towers.size, member: request.headers.get("X-Member") === "1", atc: this.atcState(request) === "1", atc_required: this.atcState(request) !== "n", mgr: request.headers.get("X-Mgr") === "1" });
 
     if (m === "GET" && p === "/api/traffic") {
       const q = url.searchParams;
