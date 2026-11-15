@@ -149,7 +149,7 @@ window.setOwn=function(lat,lon,hdg,gs,alt,callsign,eta,fpm){
   pushTrail('__own',lon,lat);render();followNow();
 };
 window.zoomBy=function(d){map.easeTo({zoom:map.getZoom()+d,duration:200})};
-window.setPip=function(on){document.body.classList.toggle('pip',!!on);render();map.resize()};
+window.setPip=function(on){document.body.classList.toggle('pip',!!on);render();showRoute();map.resize()};
 
 var firstFix=true, failures=0, lastPush=0, paused=false;
 function applyTraffic(d){
@@ -160,6 +160,7 @@ function applyTraffic(d){
     if(a.self){ if(!window.__appOwn){own={lat:a.latitude,lon:a.longitude,hdg:Number(a.heading_true)||0,alt:a.altitude_ft,callsign:a.callsign};pushTrail('__own',a.longitude,a.latitude);followNow()} }
     else pushTrail(id,a.longitude,a.latitude);
   });
+  checkOwnRoute(lastTraffic.filter(function(a){return a.self})[0]);
   if(firstFix&&own){firstFix=false;map.jumpTo({center:[own.lon,own.lat],zoom:13})}
   var nt=lastTraffic.filter(function(a){return a.virtual_tower}).length, n=lastTraffic.length-nt;
   setInfo(n+' aircraft'+' · '+nt+(nt===1?' tower':' towers')+(lastTraffic.some(function(a){return a.member})?' · purple/gold = group':'')+(KEY?'':' · view only'));
@@ -211,13 +212,23 @@ map.on('click','planes',function(e){
   row(box,'Squawk:',a.assigned_squawk||'');
   if(popup)popup.remove();
   popup=new maplibregl.Popup({closeButton:true,maxWidth:'220px',offset:14}).setLngLat(e.lngLat).setDOMContent(box).addTo(map);
-  var pp=popup;pp.on('close',function(){if(popup===pp){popup=null;routeId=null;setRoute(null)}});
-  routeId=null;setRoute(null);
+  var pp=popup;pp.on('close',function(){if(popup===pp){popup=null;routeId=null;tapRoute=null;showRoute()}});
+  routeId=null;tapRoute=null;showRoute();
   if(a.has_route){var id=String(a.icao_address||'');routeId=id;
     fetch(BASE+'/api/route?icao_address='+encodeURIComponent(id),{headers:{'X-API-Key':KEY||'viewer'}})
-      .then(function(r){return r.ok?r.json():null}).then(function(j){if(routeId===id&&j)setRoute(j.points)}).catch(function(){})}
+      .then(function(r){return r.ok?r.json():null}).then(function(j){if(routeId===id&&j){tapRoute=j.points;showRoute()}}).catch(function(){})}
 });
-var routeId=null;
+var routeId=null,ownRoute=null,ownRouteId='',ownRouteAt=0,ownBusy=false;
+function showRoute(){setRoute(routeId&&tapRoute?tapRoute:ownRoute)}
+var tapRoute=null;
+function checkOwnRoute(a){
+  if(!a||!a.has_route){if(ownRoute){ownRoute=null;ownRouteId='';showRoute()}return}
+  var id=String(a.icao_address||'');if(!id||ownBusy)return;
+  if(ownRouteId===id&&Date.now()-ownRouteAt<300000)return;
+  ownBusy=true;
+  fetch(BASE+'/api/route?icao_address='+encodeURIComponent(id),{headers:{'X-API-Key':KEY||'viewer'}})
+    .then(function(r){return r.ok?r.json():null}).then(function(j){ownBusy=false;ownRouteId=id;ownRouteAt=Date.now();if(j&&j.points){ownRoute=j.points;showRoute()}}).catch(function(){ownBusy=false;ownRouteAt=Date.now()-290000})
+}
 function setRoute(p){
   if(!map.getSource('route'))return;
   var compact=document.body.classList.contains('pip');
