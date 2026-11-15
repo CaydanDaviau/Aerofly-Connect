@@ -1,0 +1,98 @@
+// The flight loop: read the sim every 3 s, upload position (+ flight plan and SimBrief route once), keep status for the UI.
+const PERIOD_MS = 3000;
+
+class Flight {
+  // opts: { api, store, makeLink(), onState(state), now() }
+  constructor(o) { Object.assign(this, o); this.stop_ = false; this.s = this.blank(); }
+  blank() { return { running: false, sim: "", server: "", uploads: 0, failed: 0, raw: "", messages: [], crash: null }; }
+  state() { return this.s; }
+  push() { this.onState && this.onState({ ...this.s }); }
+
+  async start() {
+    const cfg = this.store.data;
+    if (cfg.crashUntil > Date.now()) return { error: "crash", left: cfg.crashUntil - Date.now() };
+    this.stop_ = false; this.s = this.blank(); this.s.running = true; this.push();
+    this.link = this.makeLink();
+    if (this.link.start) await this.link.start();
+    this.loop();
+    return {};
+  }
+
+  async stop() {
+    this.stop_ = true; this.s.running = false;
+    try { this.link && (this.link.stop ? this.link.stop() : this.link.close()); } catch (e) {}
+    try { await this.api.http("DELETE", "/api/position"); } catch (e) {}
+    this.api.shutdown(); this.s.sim = ""; this.s.server = ""; this.push();
+  }
+
+  // One turn: returns the position or null. (Exposed for tests.)
+  async readSim() {
+    const l = this.link, src = this.store.data.simSource;
+    if (src === "udp") {
+      const p = l.position();
+      this.s.sim = p ? "connected (UDP 49002)" : (l.error ? "UDP 49002 unavailable (" + l.error + ")" : "waiting for Aerofly on UDP 49002");
+      if (p) this.s.raw = JSON.stringify(p);
+      return p;
+    }
+    try {
+      const raw = await l.readLine(); this.s.raw = raw;
+      const p = require("./sim").toPosition(raw);
+      this.s.sim = (p ? "connected" : "connected, no valid position yet") + " @ " + this.store.data.simIp;
+      return p;
+    } catch (e) { l.close(); this.s.sim = "no sim (" + (e.message || "error") + ") @ " + this.store.data.simIp; return null; }
+  }
+
+  async turn() {
+    const cfg = this.store.data, f = cfg.flight, pos = await this.readSim();
+    if (!pos) return;
+    this.api.ensure();
+    const put = (o, k, v) => { v = String(v || "").trim(); if (v) o[k] = v; };
+    put(pos, "airplane_model", f.model); put(pos, "airplane_livery", f.livery);
+    pos.voice = false;   // no push-to-talk on PC yet
+    pos.lang = cfg.lang || "en";
+    try {
+      if (!this.planSent) {
+        const plan = {};
+        put(plan, "callsign", f.callsign.toUpperCase()); put(plan, "departure_airport", f.dep.toUpperCase()); put(plan, "arrival_airport", f.arr.toUpperCase());
+        put(plan, "departure_runway", f.deprwy.toUpperCase()); put(plan, "arrival_runway", f.arrrwy.toUpperCase());
+        put(plan, "cruise_altitude", f.cruise); put(plan, "flightplan_route", f.route);
+        this.planSent = (await this.api.request("PUT", "/api/flightplan", plan)).code < 400;
+      }
+      if (this.planSent && !this.routeSent) {
+        const sb = cfg.sbRoute;
+        if (!sb || sb.dep !== f.dep.trim().toUpperCase() || sb.arr !== f.arr.trim().toUpperCase() || (sb.points || []).length < 2) this.routeSent = true;
+        else this.routeSent = (await this.api.request("PUT", "/api/flightplan/route", { points: sb.points, route: sb.route || "" })).code < 400;
+      }
+      const r = await this.api.request("PUT", "/api/position", pos);
+      if (r.code === 423) {
+        let j = {}; try { j = JSON.parse(r.body); } catch (e) {}
+        const left = Math.max(0, Number(j.remaining_s) || 300) * 1000;
+        this.store.set({ crashUntil: Date.now() + left });
+        this.s.crash = { until: Date.now() + left, fpm: j.landing_fpm };
+        this.s.server = "crashed"; await this.stop(); return "crash";
+      }
+      if (r.code < 400) { this.s.uploads++; this.s.server = "OK (" + (this.api.live() ? "socket" : "HTTP") + ")"; this.messages(r.body); }
+      else { this.s.failed++; this.s.server = "HTTP " + r.code; }
+    } catch (e) { this.s.failed++; this.s.server = "error: " + (e.message || "?"); }
+  }
+
+  messages(body) {
+    let j; try { j = JSON.parse(body); } catch (e) { return; }
+    for (const m of j.messages || []) { this.s.messages.unshift({ text: m.text, urgent: !!m.urgent, at: Date.now() }); }
+    this.s.messages = this.s.messages.slice(0, 20);
+  }
+
+  async loop() {
+    this.planSent = false; this.routeSent = false;
+    while (!this.stop_) {
+      const t0 = Date.now();
+      let r; try { r = await this.turn(); } catch (e) { this.s.server = "error: " + e.message; }
+      this.push();
+      if (r === "crash") return;
+      const wait = PERIOD_MS - (Date.now() - t0);
+      if (wait > 0) await new Promise(res => setTimeout(res, wait));
+    }
+  }
+}
+
+module.exports = { Flight, PERIOD_MS };

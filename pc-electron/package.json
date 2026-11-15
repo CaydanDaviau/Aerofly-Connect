@@ -1,0 +1,27 @@
+{
+  "name": "aerofly-connect-pc",
+  "version": "2.0.0",
+  "description": "Aerofly Connect for PC",
+  "main": "main.js",
+  "author": "Cayden",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "test": "node test/core.test.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.aeroflyconnect.pc",
+    "productName": "AFConnectPC",
+    "directories": { "output": "dist" },
+    "files": ["main.js", "preload.js", "core/**", "renderer/**", "assets/**"],
+    "win": { "target": "portable", "icon": "assets/icon.png", "artifactName": "AFConnectPC.exe" },
+    "portable": { "artifactName": "AFConnectPC.exe" }
+  }
+}

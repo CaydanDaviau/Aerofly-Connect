@@ -1,0 +1,39 @@
+name: Build PC app (Electron)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'pc-electron/**'
+      - '.github/workflows/pc-electron.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pc-electron-build
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: pc-electron
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install
+      - run: npm test
+      - run: npx electron-builder --win portable --publish never
+      - name: Publish release
+        shell: bash
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view pc2-latest >/dev/null 2>&1 || gh release create pc2-latest --title "Aerofly Connect PC (Electron)" --notes "Rolling build of the Windows app" --target "$GITHUB_SHA"
+          gh release upload pc2-latest pc-electron/dist/AFConnectPC.exe --clobber
