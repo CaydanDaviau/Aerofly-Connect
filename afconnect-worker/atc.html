@@ -50,12 +50,13 @@ input::placeholder{color:var(--dim)}
 .empty{color:var(--dim);padding:10px}
 #rwStatus{font-size:11px}
 #scope{background:#2b2b2b}
-#twList .atis{margin-top:6px;border-top:1px solid var(--faint);padding-top:6px;font-size:12px}
-#twList .atis input{width:100%;box-sizing:border-box;margin-top:4px}
-#twList .atis .ctl{display:flex;gap:6px;margin-top:6px}
-#twList .atis .hd{color:var(--cy);font-weight:700}
-#twList .atis .raw{opacity:.6;word-break:break-all;margin-top:2px}
-#twList .row{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:6px}
+.twmount .atis{margin-top:6px;border-top:1px solid var(--faint);padding-top:6px;font-size:12px}
+.twmount .atis input{width:100%;box-sizing:border-box;margin-top:4px}
+.twmount .atis .ctl{display:flex;gap:6px;margin-top:6px}
+.twmount .atis .hd{color:var(--cy);font-weight:700}
+.twmount .atis .raw{opacity:.6;word-break:break-all;margin-top:2px}
+.twmount{margin-top:6px;border-top:1px solid var(--faint);padding-top:2px}
+.twmount .row{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:6px}
 #rwStatus button{padding:1px 6px;font-size:11px}
 #bgmap{position:absolute;inset:0;z-index:0}
 #radar{z-index:1}
@@ -88,7 +89,7 @@ input::placeholder{color:var(--dim)}
         <div class="ctl"><input id="twIcao" maxlength="8" placeholder="SBBR" autocapitalize="characters" style="width:96px;letter-spacing:.1em">
           <button id="twOpen">Open airport</button></div>
         <div id="talkRow" class="m" style="display:none;margin-top:4px">Talk on <select id="talkOn"></select></div>
-        <div id="twList"></div>
+        <div id="twList" style="display:none"></div>
       </div>
       <div id="list"></div>
     </div>
@@ -392,7 +393,7 @@ function showLogin(msg){$('keyErr').textContent=msg||'';$('keyIn').value='';$('l
 
 /* ---------- strips ---------- */
 function renderStrips(force){
-  var f=document.activeElement;if(!force&&(pttBusy||f&&(f.id==='sqin'||f.id==='msgin'||f.id==='urg')))return;
+  var f=document.activeElement;if(!force&&(pttBusy||f&&(f.id==='sqin'||f.id==='msgin'||f.id==='urg'||f.closest&&f.closest('.twmount'))))return;
   var list=ac.map(function(a){return{a:a,r:rel(a)}}).sort(function(x,y){return x.r.dist-y.r.dist});
   if(!list.length){$('list').innerHTML='<div class="empty">'+L('No traffic.','Sem tráfego.')+'</div>';return}
   $('list').innerHTML=list.map(function(o){var a=o.a,r=o.r,id=a.icao_address,tw=isTwr(a),isSel=id===sel;
@@ -406,19 +407,20 @@ function renderStrips(force){
     var vc=vclips.filter(function(v){return v.icao_address===id&&isHeard(v.freq)}).slice(-1).map(function(v){return'<div class="mlog chat"><b>'+L('PILOT voice','PILOTO voz')+'</b> '+Math.round((v.ms||0)/1000)+' s <button data-act="vplay" data-clip="'+esc(v.id)+'">&#9654;</button></div>'}).join('');
     var ml=vc+msgs.filter(function(m){return m.icao_address===id&&(m.kind!=='chat'||isHeard(m.freq))}).slice(-3).map(function(m){return m.kind==='chat'?'<div class="mlog chat"><b>'+L('PILOT','PILOTO')+':</b> '+esc(m.text)+'</div>':'<div class="mlog">&rsaquo; '+esc(m.text)+' &mdash; <b class="'+esc(m.status)+'">'+esc(m.status.toUpperCase())+'</b></div>'}).join('');
     return'<div class="strip'+(isSel?' sel':'')+(tw?' twr':(asg?'':' nocode'))+(a.no_clnc?' noclnc':'')+(a.emergency?' emerg':'')+(isDim(a)?' dim':'')+'" data-id="'+esc(id)+'">'+
-      '<div class="h"><span class="cs">'+esc(a.callsign||id)+(tw?' &#9650;':'')+(a.emergency?'<span class="mayday">MAYDAY</span>':'')+(a.no_clnc?'<span class="noc">NO CLNC</span>':'')+'</span><span class="m">'+Math.round(r.dist)+' nm / '+p3(r.brg)+'&deg;'+(tw?'':' &middot; '+(a.freq?esc(a.freq)+' ':'')+esc(ctrlOf(a)))+'</span></div>'+
+      '<div class="h"><span class="cs">'+esc(a.callsign||id)+(tw?(isSel||isOwned(a)?' &#9660;':' &#9654;'):'')+(a.emergency?'<span class="mayday">MAYDAY</span>':'')+(a.no_clnc?'<span class="noc">NO CLNC</span>':'')+'</span><span class="m">'+Math.round(r.dist)+' nm / '+p3(r.brg)+'&deg;'+(tw?'':' &middot; '+(a.freq?esc(a.freq)+' ':'')+esc(ctrlOf(a)))+'</span></div>'+
       (tw?'':'<div>'+altStr(a.altitude_ft)+' &middot; '+Math.round(Number(a.ground_speed)||0)+' kt &middot; HDG '+p3(Number(a.heading_mag!=null?a.heading_mag:a.heading_true)||0)+'&deg;'+(a.heading_mag==null?'T':'')+' &middot; '+(Number(a.vertical_speed_ft_min)>100?'&uarr;':Number(a.vertical_speed_ft_min)<-100?'&darr;':'&rarr;')+'</div>')+
       (tw?'':'<div>'+st+'</div>')+
       (!tw&&(a.airplane_model||a.departure_runway||a.arrival_runway)?'<div class="m">'+(a.airplane_model?esc(a.airplane_model):'')+((a.departure_runway||a.arrival_runway)?(a.airplane_model?' &middot; ':'')+'RWY '+esc(a.departure_runway||'--')+' &rarr; '+esc(a.arrival_runway||'--'):'')+'</div>':'')+
       (route||cruise?'<div class="route">'+route+(cruise?' &middot; '+L('cruise ','cruzeiro ')+esc(cruise):'')+'</div>':'')+
-      (a.flightplan_route?'<div class="m">'+esc(a.flightplan_route)+'</div>':'')+ml+ctl+'</div>'}).join('')}
+      (a.flightplan_route?'<div class="m">'+esc(a.flightplan_route)+'</div>':'')+ml+ctl+(tw&&(isSel||isOwned(a))?'<div class="twmount" data-mount="'+esc(String(a.callsign).replace(/^ATC_/,''))+'"></div>':'')+'</div>'}).join('');mountTowers()}
 $('strips').addEventListener('click',function(e){
+  if(e.target.closest('.twmount')){twClick(e);return}
   var btn=e.target.closest('button'),strip=e.target.closest('.strip');if(!strip)return;var id=strip.getAttribute('data-id');
   if(btn){var act=btn.getAttribute('data-act'),v=($('sqin')||{}).value||'';
     if(act==='set'){if(!/^[0-7]{4}$/.test(v)){toast(L('4 digits, each 0-7','4 dígitos, cada um 0-7'));return}assign(id,v)}
     else if(act==='vplay')playClip(btn.getAttribute('data-clip'));else if(act==='msg')sendMsg(id);else if(act==='auto')assign(id,'');else if(act==='clear')clearSq(id);return}
   if(e.target.id==='sqin'||e.target.id==='msgin'||e.target.id==='urg'||e.target.id==='ptt')return;
-  sel=id;draw();renderStrips(true)});
+  sel=(strip.classList.contains('twr')&&sel===id)?null:id;draw();renderStrips(true)});
 var group='';try{var gp=new URLSearchParams(location.search).get('group');group=gp!==null?gp:(localStorage.getItem('afc_group')||'');if(gp!==null){if(group)localStorage.setItem('afc_group',group);else localStorage.removeItem('afc_group')}}catch(e){}
 function api(path,opt){opt=opt||{};opt.headers=Object.assign({'X-API-Key':key},group?{'X-Group':group}:{},opt.headers||{});return fetch(path,opt)}
 function assign(id,sq){var body={icao_address:id};if(sq)body.squawk=sq;
@@ -525,7 +527,7 @@ function atisFill(n){var u=atisUI[n],j=u&&u.data;if(!j)return;
   q('head').textContent='ATIS '+j.letter+' · '+new Date(j.updated).toISOString().slice(11,16)+'Z';
   q('wx').textContent=wxLines(j.weather);q('raw').textContent=j.weather?j.weather.raw:'';q('sug').textContent=bestRwy(n,j.weather);
   if(!u.dirty){q('rwy').value=j.runways;q('frq').value=j.frequencies;q('rem').value=j.remarks}
-  var b=document.querySelector('#twList [data-atis="'+n+'"]');if(b)b.textContent='ATIS '+j.letter}
+  var b=document.querySelector('.twmount [data-atis="'+n+'"]');if(b)b.textContent='ATIS '+j.letter}
 function atisLoad(n){api('/api/atis?name='+encodeURIComponent(n)).then(function(r){return r.json()}).then(function(j){
   if(j&&j.letter&&atisUI[n]){atisUI[n].data=j;atisFill(n)}}).catch(function(){})}
 function atisAct(n,act){var u=atisUI[n];if(!u)return;var body={name:n,holder:holder};
@@ -534,7 +536,7 @@ function atisAct(n,act){var u=atisUI[n];if(!u)return;var body={name:n,holder:hol
     if(!r.ok){errToast(r,j);return}
     u.dirty=false;u.data=j;atisFill(n);toast('ATIS '+j.letter)})}).catch(function(){toast(L('Network error','Erro de rede'))})}
 setInterval(function(){for(var n in atisUI)if(atisUI[n].open)atisLoad(n)},60000);
-$('twList').addEventListener('click',function(e){var b=e.target.closest('button');if(!b)return;
+function twClick(e){var b=e.target.closest('button');if(!b)return;
   var n=b.getAttribute('data-name');if(n){closeTower(n);return}
   n=b.getAttribute('data-claim');if(n){var q=n.split('|');claimRole(q[0],q[1]);return}
   n=b.getAttribute('data-open');if(n){openRole(n);return}
@@ -542,14 +544,17 @@ $('twList').addEventListener('click',function(e){var b=e.target.closest('button'
   n=b.getAttribute('data-kick');if(n){var kq=n.split('|');if(confirm(L('Remove the controller on '+kq[0]+' '+kq[1]+' and block them from this airport?','Remover o controlador de '+kq[0]+' '+kq[1]+' e bloqueá-lo neste aeroporto?')))kickAct('/api/atc/kick',{airport:kq[0],pos:kq[1]},L('Controller removed and blocked','Controlador removido e bloqueado'));return}
   n=b.getAttribute('data-unban');if(n){var uq=n.split('|');kickAct('/api/atc/unban',{airport:uq[0],hid:uq[1]},L('Unblocked','Desbloqueado'));return}
   n=b.getAttribute('data-atis');if(n){var u=atisPanelFor(n);u.open=!u.open;$('twList')._sig=null;renderTowerBox();if(u.open)atisLoad(n);return}
-  var act=b.getAttribute('data-act'),row=b.closest('[data-tower]');if(act&&row)atisAct(row.getAttribute('data-tower'),act)});
+  var act=b.getAttribute('data-act'),row=b.closest('[data-tower]');if(act&&row)atisAct(row.getAttribute('data-tower'),act)}
+var twRows={};
+function mountTowers(){var ms=document.querySelectorAll('.twmount');for(var i=0;i<ms.length;i++){var r=twRows[ms[i].getAttribute('data-mount')];if(r&&r.parentNode!==ms[i]){ms[i].innerHTML='';ms[i].appendChild(r)}}}
+function isOwned(a){var n=String(a.callsign).replace(/^ATC_/,'');return a.owner_hid===myHid||myApts.some(function(x){return x.name===n})}
 function renderTowerBox(){var box=$('twList'),names=ac.filter(function(a){return a.virtual_tower}).map(function(a){return String(a.callsign).replace(/^ATC_/,'')});
   for(var k in atisUI)if(names.indexOf(k)<0)delete atisUI[k];
   var twOf=function(n){return ac.filter(function(x){return x.virtual_tower&&x.callsign==='ATC_'+n})[0]||{}};
   var sig=names.map(function(n){var t=twOf(n);return n+(atisUI[n]&&atisUI[n].open?'+':'')+(t.owner_hid===myHid||isMember?'o':'')+(t.bans||[]).map(function(b){return b.hid+b.pos}).join('')+(t.positions||[]).map(function(p){return p.pos+(p.claimed?'c':'')+(p.freq||'')+(myTowers.some(function(x){return x.name===n+'_'+p.pos})?'m':'')}).join('.')}).join(',')+'|'+myTowers.map(function(x){return x.name}).join('.')+'|'+talkName+'#';
   if(box._sig===sig)return;box._sig=sig;   /* unchanged: leave the DOM alone so typed text is kept */
-  box.innerHTML='';
-  if(!names.length){box.innerHTML='<div class="m" style="margin-top:6px">'+L('No virtual towers open.','Nenhuma torre virtual aberta.')+'</div>';return}
+  twRows={};
+  if(!names.length)return;
   names.forEach(function(n){var row=document.createElement('div'),u=atisUI[n],tw0=twOf(n),pl=tw0.positions||[];row.setAttribute('data-tower',n);
     var h='<div class="row"><span>ATC_'+esc(n)+' <span class="m">'+L('airport','aeroporto')+'</span></span><span><button data-atis="'+esc(n)+'">ATIS'+(u&&u.data?' '+esc(u.data.letter):'')+'</button> <button data-name="'+esc(n)+'">'+L('Close','Fechar')+'</button></span></div>';
     var canMod=tw0.owner_hid===myHid||isMember;
@@ -560,7 +565,7 @@ function renderTowerBox(){var box=$('twList'),names=ac.filter(function(a){return
     if(canMod)(tw0.bans||[]).forEach(function(b){h+='<div class="row" style="margin-top:3px"><span class="m">'+L('blocked ','bloqueado ')+esc(b.pos)+' #'+esc(b.hid)+'</span><span><button data-unban="'+esc(n)+'|'+esc(b.hid)+'">'+L('Unban','Desbloquear')+'</button></span></div>'});
     row.innerHTML=h;
     if(u&&u.open){row.appendChild(u.el);atisFill(n)}
-    box.appendChild(row)})}
+    twRows[n]=row});mountTowers()}
 $('grpBtn').addEventListener('click',function(){var v=prompt(L('Group code (from Discord). Empty = none.','Código do grupo (do Discord). Vazio = nenhum.'),group);if(v===null)return;
   group=v.trim();try{if(group)localStorage.setItem('afc_group',group);else localStorage.removeItem('afc_group')}catch(e){}checkGroup();refreshMyTowers()});
 var grpMsg='';
