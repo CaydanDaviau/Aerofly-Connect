@@ -426,9 +426,9 @@ final class Overlay {
             replayBtn.setOnClickListener(new View.OnClickListener() {
                 @Override public void onClick(View v) { PilotService.replayLastVoice(ctx); }
             });
-            LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(dp(40), dp(40));
-            rp.leftMargin = dp(4);
-            chatRow.addView(replayBtn, rp);
+            LinearLayout.LayoutParams rbp = new LinearLayout.LayoutParams(dp(40), dp(40));
+            rbp.leftMargin = dp(4);
+            chatRow.addView(replayBtn, rbp);
             // send symbol: a paper plane drawn on a canvas (no text, no emoji font dependency)
             sendBtn = new View(ctx) {
                 private final Paint pt = new Paint(Paint.ANTI_ALIAS_FLAG);
