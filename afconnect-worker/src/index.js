@@ -198,6 +198,12 @@ function mgrFlag(request, env, url) {
   const got = String(request.headers.get("X-Manager") || url.searchParams.get("manager") || "").trim();
   return codes.length && got && codes.includes(got) ? "1" : "0";
 }
+function atcName(request, env, url) {
+  const got = String(request.headers.get("X-Atc") || url.searchParams.get("atc") || "").trim();
+  if (!got) return "";
+  for (const e of String(env.ATC_CODES || "").split(",")) { const [c, ...n] = e.split("="); if (c.trim() === got) return n.join("=").trim().slice(0, 40); }
+  return "";
+}
 const atcRaw = (request, url) => String(request.headers.get("X-Atc") || url.searchParams.get("atc") || "").trim().slice(0, 40);
 const CRED_ALPHA = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 function newCred() { const b = crypto.getRandomValues(new Uint8Array(10)); const c = [...b].map(x => CRED_ALPHA[x % 32]).join(""); return "ATC-" + c.slice(0, 5) + "-" + c.slice(5); }
@@ -216,7 +222,7 @@ export default {
       const wk = (url.searchParams.get("key") || "").trim();
       const allowed = (env.ABFLUG_KEYS || "").split(",").map(s => s.trim()).filter(Boolean);
       if (!wk || (allowed.length && !allowed.includes(wk))) return json({ error: "invalid api key" }, 401);
-      const h = new Headers(request.headers); h.set("X-API-Key", wk); const mem = memberFlag(request, env, url); h.set("X-Member", mem ? "1" : "0"); h.set("X-Atc", atcFlag(request, env, url, mem)); h.set("X-Atc-Raw", atcRaw(request, url)); h.set("X-IP", ipTag(request));
+      const h = new Headers(request.headers); h.set("X-API-Key", wk); const mem = memberFlag(request, env, url); h.set("X-Member", mem ? "1" : "0"); h.set("X-Atc", atcFlag(request, env, url, mem)); h.set("X-Atc-Raw", atcRaw(request, url)); h.set("X-Atc-Name", atcName(request, env, url)); h.set("X-IP", ipTag(request));
       return env.HUB.get(env.HUB.idFromName("global")).fetch(request, { headers: h });
     }
     if (!url.pathname.startsWith("/api/")) return json({ name: "abflug-community", ok: true });
@@ -227,7 +233,7 @@ export default {
     }
     if (env.DEBUG) console.log(request.method, url.pathname + url.search, (await request.clone().text()).slice(0, 600));
     const stub = env.HUB.get(env.HUB.idFromName("global"));
-    const hh = new Headers(request.headers); hh.delete("X-Group"); hh.delete("X-Atc"); hh.delete("X-Manager"); hh.set("X-Atc-Raw", atcRaw(request, url)); hh.set("X-Mgr", mgrFlag(request, env, url)); const mem2 = memberFlag(request, env, url); hh.set("X-Member", mem2 ? "1" : "0"); hh.set("X-Atc", atcFlag(request, env, url, mem2)); hh.set("X-IP", ipTag(request));
+    const hh = new Headers(request.headers); hh.delete("X-Group"); hh.delete("X-Atc"); hh.delete("X-Manager"); hh.set("X-Atc-Raw", atcRaw(request, url)); hh.set("X-Atc-Name", atcName(request, env, url)); hh.set("X-Mgr", mgrFlag(request, env, url)); const mem2 = memberFlag(request, env, url); hh.set("X-Member", mem2 ? "1" : "0"); hh.set("X-Atc", atcFlag(request, env, url, mem2)); hh.set("X-IP", ipTag(request));
     return stub.fetch(request, { headers: hh });
   },
 };
@@ -441,7 +447,7 @@ export class Hub {
       const d = haversineMi(lat, lon, base.latitude, base.longitude);
       if (d > rad) continue;
       const e = towerAircraft({ ...base, name: a, pos: "APT", holder: undefined, freq: "" }, d);
-      e.positions = g.roles.map(r => ({ pos: r.pos || "TWR", freq: r.freq || "", claimed: !!r.holder, hid: r.holder ? hid(r.holder) : "" }));
+      e.positions = g.roles.map(r => ({ pos: r.pos || "TWR", freq: r.freq || "", claimed: !!r.holder, hid: r.holder ? hid(r.holder) : "", ctl: r.holder ? (r.ctl || "") : "" }));
       e.owner_hid = g.anchor && g.anchor.owner ? hid(g.anchor.owner) : "";
       e.bans = g.anchor && g.anchor.bans ? Object.values(g.anchor.bans).map(b => ({ hid: b.hid, pos: b.pos })) : [];
       e.claimed = g.roles.some(r => r.holder);
@@ -476,7 +482,7 @@ export class Hub {
     const key = (request.headers.get("X-API-Key") || "").trim();
     const pair = new WebSocketPair();
     this.ctx.acceptWebSocket(pair[1]);
-    pair[1].serializeAttachment({ key, sub: null, member: request.headers.get("X-Member") === "1", atc: request.headers.get("X-Atc") || "n", atcRaw: request.headers.get("X-Atc-Raw") || "", ip: request.headers.get("X-IP") || "" });
+    pair[1].serializeAttachment({ key, sub: null, member: request.headers.get("X-Member") === "1", atc: request.headers.get("X-Atc") || "n", atcRaw: request.headers.get("X-Atc-Raw") || "", atcName: request.headers.get("X-Atc-Name") || "", ip: request.headers.get("X-IP") || "" });
     this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
     this.startPush();
     return new Response(null, { status: 101, webSocket: pair[0] });
@@ -573,7 +579,7 @@ export class Hub {
       try { ws.send(JSON.stringify({ id: d.id, status: 400, body: { error: "bad request" } })); } catch (e) {}
       return;
     }
-    const init = { method, headers: { "X-API-Key": a.key, "Content-Type": "application/json", "X-Via": "ws", "X-Member": a.member ? "1" : "0", "X-Atc": a.atc || "n", "X-Atc-Raw": a.atcRaw || "", "X-IP": a.ip || "" } };
+    const init = { method, headers: { "X-API-Key": a.key, "Content-Type": "application/json", "X-Via": "ws", "X-Member": a.member ? "1" : "0", "X-Atc": a.atc || "n", "X-Atc-Raw": a.atcRaw || "", "X-Atc-Name": a.atcName || "", "X-IP": a.ip || "" } };
     if (method !== "GET" && method !== "DELETE" && d.body !== undefined) init.body = JSON.stringify(d.body);
     let status = 500, body = { error: "server error" };
     try {
@@ -589,6 +595,11 @@ export class Hub {
     const raw = request.headers.get("X-Atc-Raw") || "";
     if (request.headers.get("X-Member") === "1" && raw && this.creds.has(raw)) return "1";
     return f === "n" && (this.credOn || this.creds.size) ? "0" : f;
+  }
+  ctlName(request) {   // name of the credential holder (managed code label or ATC_CODES label), "" if none/invalid
+    if (request.headers.get("X-Member") !== "1" || this.atcState(request) !== "1") return "";
+    const c = this.creds.get(request.headers.get("X-Atc-Raw") || "");
+    return c ? c.name : (request.headers.get("X-Atc-Name") || "");
   }
   noCred(request) { return request.headers.get("X-Member") === "1" && this.atcState(request) === "0"; }
   webSocketClose(ws) { try { ws.close(); } catch (e) {} }
@@ -616,6 +627,7 @@ export class Hub {
     }
 
     if ((m === "PUT" || m === "POST") && p === "/api/atc/squawk") {
+      if (this.noCred(request)) return json({ error: "atc_credential" }, 403);
       const d = await request.json().catch(() => ({}));
       const icao = String(d.icao_address || "").toUpperCase();
       const target = [...this.clients.values()].find(c => c.pos && c.pos.icao_address === icao);
@@ -634,6 +646,7 @@ export class Hub {
       return json({ success: true, squawk: sq });
     }
     if (m === "DELETE" && p === "/api/atc/squawk") {
+      if (this.noCred(request)) return json({ error: "atc_credential" }, 403);
       const icao = String(url.searchParams.get("icao_address") || "").toUpperCase();
       for (const c of this.clients.values()) if (c.pos && c.pos.icao_address === icao) c.assigned = null;
       await this.ctx.storage.delete("sq:" + icao);
@@ -641,6 +654,7 @@ export class Hub {
     }
 
     if ((m === "PUT" || m === "POST") && p === "/api/atc/message") {
+      if (this.noCred(request)) return json({ error: "atc_credential" }, 403);
       const d = await request.json().catch(() => ({}));
       const icao = String(d.icao_address || "").toUpperCase();
       const text = String(d.text || "").trim();
@@ -685,6 +699,7 @@ export class Hub {
       return json({ id: v.id, audio: v.audio, mime: v.mime, ms: v.ms, at: v.at, callsign: v.callsign });
     }
     if ((m === "PUT" || m === "POST") && p === "/api/atc/voice") {   // controller -> pilot
+      if (this.noCred(request)) return json({ error: "atc_credential" }, 403);
       const d = await request.json().catch(() => ({}));
       const icao = String(d.icao_address || "").toUpperCase();
       const target = [...this.clients.values()].find(c => c.pos && c.pos.icao_address === icao);
@@ -828,7 +843,7 @@ export class Hub {
       if (old && old.holder && holder && old.holder !== holder && now - old.at <= POS_TTL_MS) return json({ error: "position_taken", position: pn.pos, airport: pn.apt }, 409);
       if (old && old.holder && !holder && now - old.at <= POS_TTL_MS) return json({ error: "position_taken", position: pn.pos, airport: pn.apt }, 409);
       const atis = old && old.atis;
-      const t = { name, apt: pn.apt, pos: pn.pos, freq, holder: holder || undefined, oip: (old && old.oip) || ipt || undefined, latitude: lat, longitude: lon, altitude_ft: Number(d.altitude_ft) || 0, at: now, member: request.headers.get("X-Member") === "1", atis };
+      const t = { name, apt: pn.apt, pos: pn.pos, freq, holder: holder || undefined, ctl: holder ? (this.ctlName(request) || undefined) : undefined, oip: (old && old.oip) || ipt || undefined, latitude: lat, longitude: lon, altitude_ft: Number(d.altitude_ft) || 0, at: now, member: request.headers.get("X-Member") === "1", atis };
       if (pn.pos === "APT") {   // the creator owns the airport (kept across re-PUTs); bans live on the airport record
         const ow = (old && old.owner) || String(d.owner || "").slice(0, 40);
         if (ow) t.owner = ow;

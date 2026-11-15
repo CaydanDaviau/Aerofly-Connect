@@ -758,3 +758,34 @@ await call("DELETE", "/api/atc/tower?name=SBBR_TWR", null, "ctl");
   T("revoke unknown 404", (await A("DELETE", "/api/manager/creds?code=ZZZ", null, "m1", B)).st === 404);
   T("client X-Mgr can't spoof", (await A("GET", "/api/manager/creds", null, "m1", { "X-Mgr": "1" })).st === 403);
 }
+
+// Credential holder names + restricted controller actions
+{
+  const cenv = { ...env, GROUP_CODE: "tango7", ATC_CODES: "JOHN-1=John", MANAGER_CODES: "B1, B2" };
+  const A = async (method, path, body, key, hdr = {}) => {
+    const r = await worker.fetch(new Request("https://x" + path, { method, body: body && JSON.stringify(body), headers: { "X-API-Key": key, ...hdr } }), cenv);
+    const t = await r.text(); let j; try { j = JSON.parse(t); } catch (e) { j = t; } return { st: r.status, j };
+  };
+  const T = (n, v) => console.log("ctl " + n + ":", v ? "PASS" : "FAIL");
+  const M = { "X-Group": "tango7" };
+  T("second manager code works", (await A("GET", "/api/manager/creds", null, "m", { "X-Manager": "B2" })).st === 200);
+  const g = (await A("PUT", "/api/manager/creds", { name: "Ana" }, "m", { "X-Manager": "B1" })).j.code;
+  await A("PUT", "/api/position", { latitude: 1, longitude: 1, altitude_ft: 3000, heading_true: 90, ground_speed: 120 }, "p1", M);
+  await A("PUT", "/api/flightplan", { callsign: "PIL1" }, "p1", M);
+  const traffic = async (hdr) => (await A("GET", "/api/traffic?lat=1&lon=1&radius_miles=500", null, "v", hdr)).j.aircraft;
+  const icao = (await traffic(M)).find(x => x.callsign === "PIL1").icao_address;
+  T("member no cred: squawk 403", (await A("PUT", "/api/atc/squawk", { icao_address: icao, code: "2101" }, "c1", M)).st === 403);
+  T("member no cred: message 403", (await A("PUT", "/api/atc/message", { icao_address: icao, text: "hi" }, "c1", M)).st === 403);
+  T("member no cred: voice 403", (await A("PUT", "/api/atc/voice", { icao_address: icao, audio: "AAAA", mime: "audio/webm", ms: 500 }, "c1", M)).st === 403);
+  T("member no cred: clear squawk 403", (await A("DELETE", "/api/atc/squawk?icao_address=" + icao, null, "c1", M)).st === 403);
+  T("managed cred: squawk ok", (await A("PUT", "/api/atc/squawk", { icao_address: icao, code: "2101" }, "c1", { ...M, "X-Atc": g })).st === 200);
+  T("managed cred: message ok", (await A("PUT", "/api/atc/message", { icao_address: icao, text: "hi" }, "c1", { ...M, "X-Atc": g })).st === 200);
+  const claim = async (name, hdr, h) => (await A("PUT", "/api/atc/tower", { name, latitude: 1, longitude: 1, holder: h, owner: h }, h, { ...M, ...hdr })).st;
+  T("open airport", (await claim("SBAA", { "X-Atc": "JOHN-1" }, "h1")) === 200);
+  T("claim role (env label)", (await claim("SBAA_TWR", { "X-Atc": "JOHN-1" }, "h1")) === 200);
+  const role = ap => ap.find(x => x.callsign === "ATC_SBAA").positions.find(x => x.pos === "TWR");
+  T("env label shown", role(await traffic({ ...M, "X-Atc": "JOHN-1" })).ctl === "John");
+  T("claim role (managed name)", (await claim("SBAA_GND", { "X-Atc": g }, "h2")) === 200);
+  T("managed name shown", (await traffic(M)).find(x => x.callsign === "ATC_SBAA").positions.find(x => x.pos === "GND").ctl === "Ana");
+  T("public users unaffected", (await A("PUT", "/api/atc/message", { icao_address: icao, text: "x" }, "c2")).st !== 403);
+}
