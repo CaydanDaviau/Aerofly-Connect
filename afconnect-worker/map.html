@@ -71,9 +71,12 @@ function addIcons(){
 var EMPTY={type:'FeatureCollection',features:[]};
 function addLayers(){
   addIcons();
-  ['trails','planes','towers','ownsrc','crashes'].forEach(function(id){ if(!map.getSource(id))map.addSource(id,{type:'geojson',data:EMPTY}) });
+  ['trails','planes','towers','ownsrc','crashes','route','routepts'].forEach(function(id){ if(!map.getSource(id))map.addSource(id,{type:'geojson',data:EMPTY}) });
   var halo={'text-halo-color':'#fff','text-halo-width':1.6};
   if(!map.getLayer('trails'))map.addLayer({id:'trails',type:'line',source:'trails',layout:{'line-cap':'round','line-join':'round'},paint:{'line-color':['get','c'],'line-width':2.5,'line-opacity':.65}});
+  if(!map.getLayer('routeline'))map.addLayer({id:'routeline',type:'line',source:'route',layout:{'line-cap':'round','line-join':'round'},paint:{'line-color':'#d61fb4','line-width':2.5,'line-dasharray':[2,1.5],'line-opacity':.9}},'trails');
+  if(!map.getLayer('routepts'))map.addLayer({id:'routepts',type:'symbol',source:'routepts',layout:{'text-field':['get','label'],'text-font':['Noto Sans Bold'],'text-size':11,'text-anchor':'top','text-offset':[0,.6],'text-optional':true},paint:{'text-color':'#7a0f62','text-halo-color':'#fff','text-halo-width':1.6}});
+  if(!map.getLayer('routedots'))map.addLayer({id:'routedots',type:'circle',source:'routepts',paint:{'circle-radius':3,'circle-color':'#d61fb4','circle-stroke-color':'#fff','circle-stroke-width':1}},'routepts');
   if(!map.getLayer('towers'))map.addLayer({id:'towers',type:'symbol',source:'towers',layout:{'icon-image':'tower','icon-size':.7,'icon-allow-overlap':true,'text-field':['get','label'],'text-font':['Noto Sans Bold'],'text-size':12,'text-offset':[0,1.9],'text-anchor':'top','text-allow-overlap':true},paint:{'icon-color':['case',['==',['get','m'],1],'#d9a400','#c2189a'],'icon-halo-color':'#fff','icon-halo-width':1.2,'text-color':['case',['==',['get','m'],1],'#7a5a00','#7a0f62'],'text-halo-color':'#fff','text-halo-width':1.6}});
   if(!map.getLayer('planes'))map.addLayer({id:'planes',type:'symbol',source:'planes',layout:{'icon-image':'plane','icon-size':.55,'icon-rotate':['get','h'],'icon-rotation-alignment':'map','icon-allow-overlap':true,'icon-ignore-placement':true,'text-field':['get','label'],'text-font':['Noto Sans Bold'],'text-size':12,'text-offset':[1.4,0],'text-anchor':'left','text-optional':true},paint:{'icon-color':['case',['==',['get','m'],1],'#7b3fe4','#e8710a'],'text-color':['case',['==',['get','m'],1],'#3d1b80','#7a3600'],'text-halo-color':'#fff','text-halo-width':1.6}});
   if(!map.getLayer('own'))map.addLayer({id:'own',type:'symbol',source:'ownsrc',layout:{'icon-image':'plane','icon-size':.65,'icon-rotate':['get','h'],'icon-rotation-alignment':'map','icon-allow-overlap':true,'icon-ignore-placement':true,'text-field':['get','label'],'text-font':['Noto Sans Bold'],'text-size':12,'text-offset':[1.6,0],'text-anchor':'left','text-optional':true},paint:{'icon-color':'#1a73e8','text-color':'#0b3d91','text-halo-color':'#fff','text-halo-width':1.6}});
@@ -208,7 +211,21 @@ map.on('click','planes',function(e){
   row(box,'Squawk:',a.assigned_squawk||'');
   if(popup)popup.remove();
   popup=new maplibregl.Popup({closeButton:true,maxWidth:'220px',offset:14}).setLngLat(e.lngLat).setDOMContent(box).addTo(map);
+  var pp=popup;pp.on('close',function(){if(popup===pp){popup=null;routeId=null;setRoute(null)}});
+  routeId=null;setRoute(null);
+  if(a.has_route){var id=String(a.icao_address||'');routeId=id;
+    fetch(BASE+'/api/route?icao_address='+encodeURIComponent(id),{headers:{'X-API-Key':KEY||'viewer'}})
+      .then(function(r){return r.ok?r.json():null}).then(function(j){if(routeId===id&&j)setRoute(j.points)}).catch(function(){})}
 });
+var routeId=null;
+function setRoute(p){
+  if(!map.getSource('route'))return;
+  var compact=document.body.classList.contains('pip');
+  p=p&&p.length>1?p:null;
+  map.getSource('route').setData({type:'FeatureCollection',features:p?[{type:'Feature',geometry:{type:'LineString',coordinates:p.map(function(q){return[q[1],q[0]]})},properties:{}}]:[]});
+  map.getSource('routepts').setData({type:'FeatureCollection',features:p&&!compact?p.filter(function(q){return q[3]}).map(function(q){return pt(q[1],q[0],{label:String(q[3])})}):[]});
+}
+map.on('click',function(e){if(popup&&!map.queryRenderedFeatures(e.point,{layers:['planes']}).length){popup.remove()}});
 map.on('mouseenter','planes',function(){map.getCanvas().style.cursor='pointer'});
 map.on('mouseleave','planes',function(){map.getCanvas().style.cursor=''});
 
