@@ -1,6 +1,10 @@
 :root{--bg:#00414B;--card:rgba(1,44,51,.87);--field:#01242A;--stroke:#1E7480;--acc:#4FE3D0;--txt:#E8F6F5;--dim:#8FBCC0;--red:#E5584D;--green:#5CE0A0;--amber:#FFB020}
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);font:14px/1.4 "Segoe UI",system-ui,sans-serif;user-select:none}
+body[data-screen]{background:var(--bg) center/cover no-repeat fixed}
+body[data-screen=start]{background-image:url("../assets/bg_start.jpg")}
+body[data-screen=pilot]{background-image:url("../assets/bg_pilot.jpg")}
+body[data-screen=settings]{background-image:url("../assets/bg_settings.png")}
 #app{max-width:520px;margin:0 auto;padding:18px 16px 28px}
 .logo{display:block;margin:6px auto 4px;width:120px;height:120px;object-fit:contain}
 h1{margin:0;text-align:center;font-size:22px;color:var(--acc);letter-spacing:.04em}

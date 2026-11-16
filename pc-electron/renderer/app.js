@@ -19,6 +19,7 @@
   const mmss = ms => { const s = Math.ceil(ms / 1000); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
   function clear() { clearInterval(tick); clearInterval(healthT); statusEls = null; root.replaceChildren(); }
   function go(s) { screen = s; render(); }
+  function bg() { document.body.dataset.screen = screen; }
 
   // ---------- Start ----------
   function startScreen() {
@@ -77,7 +78,7 @@
       card(t("Flight", "Voo"), FIELDS.map(x => fld(...x)), sbBtn, sbMsg),
       go_,
       h("div", { style: "height:12px" }),
-      card(t("Status", "Status"), kv("run", "State", "Estado"), kv("sim", "Sim link", "Link do sim"), kv("srv", "Server", "Servidor"), kv("up", "Uploads", "Envios"), kv("key", "Key", "Chave"), kv("raw", "Last sim data", "Último dado do sim")),
+      card(t("Status", "Status"), kv("run", "State", "Estado"), kv("sim", "Sim link", "Link do sim"), kv("srv", "Server", "Servidor"), kv("up", "Uploads", "Envios"), kv("ph", "Phase", "Fase"), kv("eta", "ETA", "ETA"), kv("fpm", "Landing rate", "Razão de pouso"), kv("key", "Key", "Chave"), kv("raw", "Last sim data", "Último dado do sim")),
       card(t("ATC messages", "Mensagens do ATC"), msgs),
       h("button", { class: "wide", onclick: () => window.afc.open("map") }, t("Open map", "Abrir mapa")),
     );
@@ -96,6 +97,10 @@
     rows.run.className = st.running ? "good" : "dim";
     rows.sim.textContent = st.sim || "-"; rows.srv.textContent = st.server || "-";
     rows.up.textContent = (st.uploads || 0) + (st.failed ? " (" + st.failed + " " + t("failed", "falhas") + ")" : "");
+    const PN = { ground: t("On the ground", "No solo"), runway: t("On the runway", "Na pista"), air: t("Airborne", "Voando") };
+    rows.ph.textContent = st.running && st.phase ? PN[st.phase] + ((st.offers || []).length ? " · " + st.offers.join(", ") : "") : "-";
+    rows.eta.textContent = st.running && st.eta >= 0 ? (st.eta >= 60 ? Math.floor(st.eta / 60) + "h" + String(st.eta % 60).padStart(2, "0") : st.eta + " min") : "-";
+    rows.fpm.textContent = st.landFpm != null ? st.landFpm + " ft/min" : "-";
     rows.raw.textContent = st.raw ? String(st.raw).slice(0, 90) : "-";
     msgs.replaceChildren(...((st.messages || []).length ? st.messages.map(m => h("div", { class: "msg" + (m.urgent ? " urgent" : "") }, m.text)) : [h("div", { class: "dim small" }, t("No messages yet.", "Nenhuma mensagem ainda."))]));
     if (st.crash) { cfg.crashUntil = st.crash.until; }
@@ -121,7 +126,7 @@
     );
   }
 
-  function render() { clear(); if (screen === "pilot") pilotScreen(); else if (screen === "settings") settingsScreen(); else startScreen(); }
+  function render() { clear(); bg(); if (screen === "pilot") pilotScreen(); else if (screen === "settings") settingsScreen(); else startScreen(); }
   window.afc.onState(s => { st = s; if (s.crash) cfg.crashUntil = s.crash.until; paint(); });
   render();
 })();

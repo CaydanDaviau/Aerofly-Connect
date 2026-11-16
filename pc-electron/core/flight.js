@@ -1,10 +1,11 @@
 // The flight loop: read the sim every 3 s, upload position (+ flight plan and SimBrief route once), keep status for the UI.
+const { Phase } = require("./phase");
 const PERIOD_MS = 3000;
 
 class Flight {
-  // opts: { api, store, makeLink(), onState(state), now() }
-  constructor(o) { Object.assign(this, o); this.stop_ = false; this.s = this.blank(); }
-  blank() { return { running: false, sim: "", server: "", uploads: 0, failed: 0, raw: "", messages: [], crash: null }; }
+  // opts: { api, store, makeLink(), onState(state), now(), airports (core/airports.js instance, optional) }
+  constructor(o) { Object.assign(this, o); this.stop_ = false; this.phase = new Phase(); this.fqDep = ""; this.fqArr = ""; this.s = this.blank(); }
+  blank() { return { running: false, sim: "", server: "", uploads: 0, failed: 0, raw: "", messages: [], crash: null, phase: "", eta: -1, landFpm: null, offers: [] }; }
   state() { return this.s; }
   push() { this.onState && this.onState({ ...this.s }); }
 
@@ -12,10 +13,24 @@ class Flight {
     const cfg = this.store.data;
     if (cfg.crashUntil > Date.now()) return { error: "crash", left: cfg.crashUntil - Date.now() };
     this.stop_ = false; this.s = this.blank(); this.s.running = true; this.push();
+    this.phase.reset(); this.fqDep = ""; this.fqArr = ""; this.loadAirports();
     this.link = this.makeLink();
     if (this.link.start) await this.link.start();
     this.loop();
     return {};
+  }
+
+  // Background: runway + frequency data for the dep/arr fields (a few seconds on first use, then cached). Offline = no data, rules fall back to speed/altitude.
+  async loadAirports() {
+    const f = this.store.data.flight, ap = this.airports, ph = this.phase;
+    const dep = f.dep.trim().toUpperCase(), arr = f.arr.trim().toUpperCase();
+    ph.setIcao(dep, arr);
+    if (!ap || (!dep && !arr)) return;
+    try {
+      const d = dep ? await ap.load(dep) : null; if (this.stop_) return; ph.setAirports(d, null);
+      const a = arr ? await ap.load(arr) : null; if (this.stop_) return; ph.setAirports(d, a);
+      this.fqDep = dep ? await ap.freqs(dep) : ""; this.fqArr = arr ? await ap.freqs(arr) : "";
+    } catch (e) {}
   }
 
   async stop() {
@@ -50,6 +65,14 @@ class Flight {
     put(pos, "airplane_model", f.model); put(pos, "airplane_livery", f.livery);
     pos.voice = false;   // no push-to-talk on PC yet
     pos.lang = cfg.lang || "en";
+    const now = Date.now();
+    this.phase.update(pos.latitude, pos.longitude, pos.altitude_ft || 0, pos.ground_speed || 0, pos.heading_true || 0, pos.vertical_speed_ft_min || 0, now);
+    Object.assign(pos, this.phase.fields(now));
+    if (this.fqDep) pos.fq_dep = this.fqDep;
+    if (this.fqArr) pos.fq_arr = this.fqArr;
+    const ph = this.phase;
+    this.s.phase = ph.phaseName; this.s.eta = ph.etaMin; this.s.landFpm = ph.landingShown(now) ? ph.landFpm : null;
+    this.s.offers = [ph.clearance && "clearance", ph.taxi && "taxi", ph.takeoff && "takeoff", ph.land && "land"].filter(Boolean);
     try {
       if (!this.planSent) {
         const plan = {};

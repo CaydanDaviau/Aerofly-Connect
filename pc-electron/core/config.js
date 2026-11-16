@@ -4,7 +4,7 @@ const fs = require("fs"), path = require("path"), crypto = require("crypto");
 const DEFAULTS = {
   key: "", group: "", lang: "", simSource: "udp", simIp: "", simbrief: "",
   flight: { callsign: "", dep: "", arr: "", deprwy: "", arrrwy: "", model: "", livery: "", cruise: "", route: "" },
-  sbRoute: null, crashUntil: 0,
+  sbRoute: null, crashUntil: 0, cache: {},
 };
 
 class Store {
@@ -18,6 +18,8 @@ class Store {
   }
   save() { try { fs.mkdirSync(path.dirname(this.file), { recursive: true }); fs.writeFileSync(this.file, JSON.stringify(this.data, null, 1)); } catch (e) {} }
   set(patch) { Object.assign(this.data, patch); this.save(); }
+  cacheGet(k) { return (this.data.cache || {})[k]; }
+  cachePut(k, v) { this.data.cache = this.data.cache || {}; this.data.cache[k] = v; this.save(); }
   setFlight(patch) { Object.assign(this.data.flight, patch); this.save(); }
 }
 

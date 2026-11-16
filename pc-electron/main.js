@@ -4,6 +4,7 @@ const WebSocket = require("ws");
 const { Store, simHostProblem } = require("./core/config");
 const { Api, SERVER } = require("./core/api");
 const { Flight } = require("./core/flight");
+const { Airports } = require("./core/airports");
 const { TcpLink, UdpLink } = require("./core/sim");
 const simbrief = require("./core/simbrief");
 
@@ -39,7 +40,7 @@ app.whenReady().then(() => {
     }
     const api = new Api({ key: c.key, group: c.group, WebSocket });
     flight = new Flight({
-      api, store, onState: s => send("flight:state", s),
+      api, store, airports: new Airports({ fetchFn: async u => { const r = await fetch(u); if (!r.ok) throw new Error("HTTP " + r.status); return r.text(); }, cache: { get: k => store.cacheGet(k), put: (k, v) => store.cachePut(k, v) } }), onState: s => send("flight:state", s),
       makeLink: () => (store.data.simSource === "tcp" ? new TcpLink(store.data.simIp.trim()) : new UdpLink()),
     });
     return flight.start();
