@@ -645,11 +645,21 @@ function renderTowerBox(){var box=$('twList'),names=ac.filter(function(a){return
     row.innerHTML=h;
     if(u&&u.open){row.appendChild(u.el);atisFill(n)}
     twRows[n]=row});mountTowers()}
-$('grpBtn').addEventListener('click',function(){var v=prompt(L('Aerofly Connect ATC Network code (from Discord). Empty = public section.','Código da Aerofly Connect ATC Network (do Discord). Vazio = seção pública.'),group);if(v===null)return;
-  group=v.trim();try{if(group)localStorage.setItem('afc_group',group);else localStorage.removeItem('afc_group')}catch(e){}checkGroup();reopenWs();setTimeout(refreshMyTowers,1500)});
+// prompt() does not exist in the PC app (Electron), so ask in a small in-page box
+function askText(msg,def,cb){
+  var o=document.createElement('div');o.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px';
+  var b=document.createElement('div');b.style.cssText='background:#1b2127;color:#fff;border:1px solid #3a4651;border-radius:12px;padding:14px;max-width:420px;width:100%;font:14px system-ui,sans-serif';
+  var m=document.createElement('div');m.textContent=msg;m.style.marginBottom='10px';
+  var i=document.createElement('input');i.value=def||'';i.autocomplete='off';i.spellcheck=false;i.style.cssText='width:100%;box-sizing:border-box;padding:8px;border-radius:8px;border:1px solid #3a4651;background:#0f1418;color:#fff;font:inherit';
+  var r=document.createElement('div');r.style.cssText='display:flex;gap:8px;justify-content:flex-end;margin-top:10px';
+  function mk(t,ok){var x=document.createElement('button');x.textContent=t;x.style.cssText='padding:7px 14px;border-radius:8px;border:1px solid #3a4651;background:'+(ok?'#1a73e8':'#2a333b')+';color:#fff;font:inherit;cursor:pointer';x.onclick=function(){o.remove();if(ok)cb(i.value)};return x}
+  i.onkeydown=function(e){if(e.key==='Enter'){o.remove();cb(i.value)}else if(e.key==='Escape')o.remove()};
+  r.append(mk(L('Cancel','Cancelar'),false),mk('OK',true));b.append(m,i,r);o.append(b);document.body.append(o);i.focus();i.select()}
+$('grpBtn').addEventListener('click',function(){askText(L('Aerofly Connect ATC Network code (from Discord). Empty = public section.','Código da Aerofly Connect ATC Network (do Discord). Vazio = seção pública.'),group,function(v){
+  group=v.trim();try{if(group)localStorage.setItem('afc_group',group);else localStorage.removeItem('afc_group')}catch(e){}checkGroup();reopenWs();setTimeout(refreshMyTowers,1500)})});
 function reopenWs(){if(ws){var old=ws;ws=null;try{old.close()}catch(x){}}clearTimeout(wsTimer);wsOpen()}
-$('credBtn').addEventListener('click',function(){var v=prompt(L('ATC credential (issued by the network management). Empty = remove.','Credencial ATC (emitida pela administração da rede). Vazio = remover.'),atcCode);if(v===null)return;
-  atcCode=v.trim();try{if(atcCode)localStorage.setItem('afc_atc',atcCode);else localStorage.removeItem('afc_atc')}catch(e){}checkGroup();reopenWs();setTimeout(refreshMyTowers,1500)});
+$('credBtn').addEventListener('click',function(){askText(L('ATC credential (issued by the network management). Empty = remove.','Credencial ATC (emitida pela administração da rede). Vazio = remover.'),atcCode,function(v){
+  atcCode=v.trim();try{if(atcCode)localStorage.setItem('afc_atc',atcCode);else localStorage.removeItem('afc_atc')}catch(e){}checkGroup();reopenWs();setTimeout(refreshMyTowers,1500)})});
 function setCredBtn(){var b=$('credBtn');b.disabled=!(isMember&&credReq);b.style.borderColor=hasCred?'#3dff7a':'';b.style.color=hasCred?'#3dff7a':''}
 var grpMsg='',hasCred=false,credReq=false;
 function checkGroup(){if(!group){grpMsg='';isMember=false;hasCred=false;credReq=false;setCredBtn();return}
