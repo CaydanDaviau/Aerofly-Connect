@@ -724,7 +724,7 @@ function playBuf(buf){lastBuf=buf;$('replayVoiceBtn').disabled=false;var c=ac_()
 $('replayVoiceBtn').onclick=function(){if(lastBuf)playBuf(lastBuf)};
 function pcmB64(f){var a=new Int16Array(f.length);for(var i=0;i<f.length;i++)a[i]=Math.max(-32768,Math.min(32767,Math.round(f[i]*32767)));var u=new Uint8Array(a.buffer),s='';for(var j=0;j<u.length;j++)s+=String.fromCharCode(u[j]);return btoa(s)}
 function pcmFromB64(b){var u=b64buf(b);return new Int16Array(u)}
-function streamPlay(chunks,sr){var total=0;chunks.forEach(function(x){total+=x.length});if(!total)return;var all=new Int16Array(total),off=0;chunks.forEach(function(x){all.set(x,off);off+=x.length});var c=ac_();if(!c)return;var buf=c.createBuffer(1,all.length,sr||16000),d=buf.getChannelData(0);for(var i=0;i<all.length;i++)d[i]=all[i]/32768;lastBuf=buf;$('replayVoiceBtn').disabled=false;playBuf(buf)}
+function streamPlay(chunks,sr){var total=0;chunks.forEach(function(x){total+=x.length});if(!total)return;var all=new Int16Array(total),off=0;chunks.forEach(function(x){all.set(x,off);off+=x.length});var c=ac_();if(!c)return;var buf=c.createBuffer(1,all.length,sr||16000),d=buf.getChannelData(0);for(var i=0;i<all.length;i++)d[i]=all[i]/32768;lastBuf=buf;$("replayVoiceBtn").disabled=false}
 function voiceStreamEvent(j){
  if(!j||!j.id)return;var r=liveRx[j.id];
  if(j.event==='start'||j.event==='replay_start'){var c=ac_();liveRx[j.id]=r={chunks:[],sr:Number(j.meta&&j.meta.sampleRate)||16000,next:c?c.currentTime+.045:0,ctx:c};return}
