@@ -29,7 +29,7 @@ let pass = 0; const T = (n, f) => { try { const r = f(); if (r && r.then) return
   await T("turn uploads plan, route, position", async () => { await f.turn();
     const m = calls.map(c => c.m + " " + c.path); assert.deepStrictEqual(m, ["PUT /api/flightplan", "PUT /api/flightplan/route", "PUT /api/position"]);
     assert.strictEqual(calls[0].body.callsign, "PEDRO1"); assert.strictEqual(calls[0].body.departure_airport, "SBBR");
-    const pos = calls[2].body; assert.strictEqual(pos.airplane_model, "A320"); assert.strictEqual(pos.voice, false); assert.strictEqual(pos.heading_mag, 95);
+    const pos = calls[2].body; assert.strictEqual(pos.airplane_model, "A320"); assert.strictEqual(pos.voice, true); assert.strictEqual(pos.heading_mag, 95);
     assert.strictEqual(calls[2].h["X-Group"], "g"); assert.strictEqual(f.state().uploads, 1); assert.strictEqual(f.state().messages[0].text, "Squawk 4321"); });
   await T("second turn only position", async () => { calls.length = 0; await f.turn(); assert.deepStrictEqual(calls.map(c => c.path), ["/api/position"]); });
   await T("route not sent for other airports", async () => { const f2 = new Flight({ api, store, makeLink: () => link }); f2.link = link; store.setFlight({ arr: "SBGL" }); calls.length = 0; await f2.turn(); assert.ok(!calls.some(c => c.path.endsWith("/route"))); });
