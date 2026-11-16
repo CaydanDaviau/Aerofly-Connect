@@ -123,7 +123,7 @@ final class LiveVoice {
                 JSONObject m = j.optJSONObject("meta");
                 int sr = m == null ? RATE : m.optInt("sampleRate", RATE);
                 if (sr < 8000 || sr > 48000) sr = RATE;
-                if (streams.size() > 4) return;
+                if (streams.size() > 4 || streams.containsKey(id)) return;
                 Rx r = new Rx(c.getApplicationContext(), id, sr);
                 streams.put(id, r);
                 r.start();
@@ -132,6 +132,8 @@ final class LiveVoice {
             Rx r = streams.get(id);
             if (r == null) return;
             if (ev.equals("chunk")) {
+                int seq = j.optInt("seq", -1);
+                if (seq >= 0) { if (seq <= r.lastSeq) return; r.lastSeq = seq; }
                 byte[] b = Base64.decode(j.optString("data"), Base64.DEFAULT);
                 int n = b.length / 2;
                 if (n == 0) return;
@@ -147,6 +149,7 @@ final class LiveVoice {
 
     private static final class Rx implements Runnable {
         final Context ctx; final String id; final int sr;
+        volatile int lastSeq = -1;
         final LinkedBlockingQueue<short[]> q = new LinkedBlockingQueue<>();
         final ArrayList<short[]> kept = new ArrayList<>();
         final AtcVoice.Biquad hp1, hp2, lp1, lp2;

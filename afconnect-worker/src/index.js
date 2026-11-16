@@ -581,7 +581,7 @@ export class Hub {
       if (!oa.key || !!oa.member !== !!meta.member) continue;
       const pilot = this.clients.get(oa.key);
       if (meta.direction === "up") {
-        if (oa.atc === "1" && this.activeAtcHolder(oa.holder)) peers.push(other);
+        if (this.activeAtcHolder(oa.holder) && (!oa.member || oa.atc === "1" || oa.atc === "n" || this.creds.has(oa.atcRaw || ""))) peers.push(other);
         else if (pilot && pilot.pos && pilot.pos.freq === meta.freq && pilot.pos.voice !== false) peers.push(other);
       } else if (pilot && pilot.pos && pilot.pos.icao_address === meta.icao && pilot.pos.voice !== false && tunedTo(pilot.pos.freq, meta.freq)) peers.push(other);
     }
@@ -598,7 +598,7 @@ export class Hub {
       const meta = direction === "up"
         ? { direction, member: !!a.member, freq: pilot.pos.freq, icao: pilot.pos.icao_address, callsign: normCallsign(pilot.plan.callsign ?? pilot.pos.callsign), sender: a.key }
         : { direction, member: !!a.member, freq: normFreq(d.freq), icao: String(d.icao_address).toUpperCase(), holder, callsign: this.ctlName({ headers: new Headers({ "X-Member": a.member ? "1" : "0", "X-Atc": a.atc || "n", "X-Atc-Raw": a.atcRaw || "", "X-Atc-Name": a.atcName || "" }) }), sender: a.key };
-      const peers = this.voicePeers(ws, meta);
+      const peers = [...new Map(this.voicePeers(ws, meta).map(x => [(x.deserializeAttachment() || {}).key, x])).values()];
       const id = String(d.id || ("s" + Date.now().toString(36) + (++this.msgSeq).toString(36))).slice(0, 80);
       const stream = { id, meta, peers: peers.map(x => (x.deserializeAttachment() || {}).key).filter(Boolean), chunks: [], bytes: 0, at: Date.now(), ended: false };
       this.voiceStreams.set(id, stream);
@@ -614,13 +614,13 @@ export class Hub {
       if (!chunk || chunk.length > 12000 || stream.bytes + chunk.length > 1_500_000 || stream.ended) return;
       stream.chunks.push(chunk); stream.bytes += chunk.length; stream.at = Date.now();
       const event = JSON.stringify({ push: "voice_stream", event: "chunk", id, data: chunk, seq: stream.chunks.length - 1 });
-      for (const peer of this.ctx.getWebSockets()) { const pa = peer.deserializeAttachment() || {}; if (stream.peers.includes(pa.key)) { try { peer.send(event); } catch (e) {} } }
+      { const done = new Set(); for (const peer of this.ctx.getWebSockets().reverse()) { const pa = peer.deserializeAttachment() || {}; if (stream.peers.includes(pa.key) && !done.has(pa.key)) { done.add(pa.key); try { peer.send(event); } catch (e) {} } } }
       return;
     }
     if (action === "end") {
       stream.ended = true; stream.at = Date.now();
       const event = JSON.stringify({ push: "voice_stream", event: "end", id, chunks: stream.chunks.length, at: stream.at });
-      for (const peer of this.ctx.getWebSockets()) { const pa = peer.deserializeAttachment() || {}; if (stream.peers.includes(pa.key)) { try { peer.send(event); } catch (e) {} } }
+      { const done = new Set(); for (const peer of this.ctx.getWebSockets().reverse()) { const pa = peer.deserializeAttachment() || {}; if (stream.peers.includes(pa.key) && !done.has(pa.key)) { done.add(pa.key); try { peer.send(event); } catch (e) {} } } }
       this.latestVoiceByPeer.set(a.key, id);
       for (const peerKey of stream.peers) this.latestVoiceByPeer.set(peerKey, id);
       return;
