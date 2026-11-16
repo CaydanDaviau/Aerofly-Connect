@@ -87,6 +87,17 @@ final class AtcVoice {
         });
     }
 
+    /** Plays raw PCM (a stored live transmission) through the same radio effect; used by Replay. */
+    void playPcm(final short[] pcm, final int rate, final Runnable onStart) {
+        ex.execute(new Runnable() {
+            @Override public void run() {
+                started = false;
+                try { if (pcm != null && pcm.length > 0) play(radio(pcm, rate), rate, onStart); } catch (Throwable ignored) { }
+                fireStart(onStart);
+            }
+        });
+    }
+
     private boolean started;
     private void fireStart(Runnable r) {
         if (started) return;
@@ -212,7 +223,7 @@ final class AtcVoice {
     }
 
     // ---------- radio effect ----------
-    private static final class Biquad {
+    static final class Biquad {
         final double b0, b1, b2, a1, a2;
         double x1, x2, y1, y2;
         Biquad(boolean high, double fs, double f0, double q) {

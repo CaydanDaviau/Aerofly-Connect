@@ -309,7 +309,7 @@ public class PilotService extends Service {
             }
             for (int i = 0; i < arr.length(); i++) {
                 byte[] data = android.util.Base64.decode(arr.getJSONObject(i).optString("audio"), android.util.Base64.DEFAULT);
-                if (data.length > 0) { lastVoiceReplay = data.clone(); voice.playClip(data, new Runnable() { @Override public void run() { Overlay.poke(); } }); }
+                if (data.length > 0) { lastVoiceReplay = data.clone(); LiveVoice.clear(); voice.playClip(data, new Runnable() { @Override public void run() { Overlay.poke(); } }); }
             }
         } catch (Exception ignored) {
         }
@@ -317,8 +317,21 @@ public class PilotService extends Service {
 
     /** Replays the most recent voice clip locally; it does not transmit anything. */
     static void replayLastVoice(Context c) {
+        final LiveVoice.Clip live = LiveVoice.last();
         final byte[] data = lastVoiceReplay;
         final PilotService service = inst;
+        if (live != null && service != null) {   // newest transmission was a live one (sent or heard)
+            synchronized (service) {
+                String lang = Api.voiceLang(service);
+                if (service.voice == null || !lang.equals(service.voiceLang)) {
+                    if (service.voice != null) service.voice.shutdown();
+                    service.voice = new AtcVoice(service, lang);
+                    service.voiceLang = lang;
+                }
+                service.voice.playPcm(live.pcm.clone(), live.rate, null);
+            }
+            return;
+        }
         if (data == null || data.length == 0 || service == null) return;
         synchronized (service) {
             String lang = Api.voiceLang(service);
@@ -335,6 +348,7 @@ public class PilotService extends Service {
     static void voiceSend(final Context c, final byte[] data, final long ms, final ReqCb cb) {
         final Context app = c.getApplicationContext();
         lastVoiceReplay = data == null ? null : data.clone();
+        LiveVoice.clear();
         new Thread(new Runnable() {
             @Override public void run() {
                 String fb;
@@ -345,6 +359,7 @@ public class PilotService extends Service {
                     o.put("ms", ms);
                     Api.Resp r = Api.request("PUT", "/api/voice/clip", o.toString(), Api.key(app));
                     if (r.code < 400) fb = Api.t(app, "Voice sent to ATC", "Voz enviada ao ATC");
+                    else if (r.code == 409 && r.body.contains("frequency_required")) fb = Api.t(app, "Tune a frequency to talk", "Sintonize uma frequência para falar");
                     else if (r.code == 409 && r.body.contains("no_listener")) fb = Api.t(app, "No controller can listen to voice, use text", "Nenhum controlador pode ouvir voz, use texto");
                     else if (r.code == 409) fb = Api.t(app, "Voice is off in Settings", "A voz está desligada nas Configurações");
                     else if (r.code == 429) fb = Api.t(app, "Wait a moment", "Aguarde um momento");
@@ -478,7 +493,8 @@ public class PilotService extends Service {
                         boolean tower = "controller".equals(new JSONObject(r.body).optString("mode"));
                         fb = tower ? Api.t(app, "Request sent to the tower", "Pedido enviado à torre")
                                 : Api.t(app, "Request sent", "Pedido enviado");
-                    } else if (r.code == 429) fb = Api.t(app, "Wait a moment", "Aguarde um momento");
+                    } else if (r.code == 409 && r.body.contains("frequency_required")) fb = Api.t(app, "Tune a frequency first", "Sintonize uma frequência primeiro");
+                    else if (r.code == 429) fb = Api.t(app, "Wait a moment", "Aguarde um momento");
                     else if (r.code == 404) fb = Api.t(app, "Not flying yet", "Voo ainda não iniciado");
                     else fb = Api.t(app, "Request failed", "Falha no pedido");
                 } catch (Exception e) {
@@ -503,7 +519,8 @@ public class PilotService extends Service {
                         boolean tower = "controller".equals(new JSONObject(r.body).optString("mode"));
                         fb = tower ? Api.t(app, "Sent to ATC", "Enviado ao ATC")
                                 : Api.t(app, "Sent, but no controller is online", "Enviado, mas não há controlador online");
-                    } else if (r.code == 429) fb = Api.t(app, "Wait a moment", "Aguarde um momento");
+                    } else if (r.code == 409 && r.body.contains("frequency_required")) fb = Api.t(app, "Tune a frequency first", "Sintonize uma frequência primeiro");
+                    else if (r.code == 429) fb = Api.t(app, "Wait a moment", "Aguarde um momento");
                     else if (r.code == 404) fb = Api.t(app, "Not flying yet", "Voo ainda não iniciado");
                     else fb = Api.t(app, "Not sent", "Não enviado");
                 } catch (Exception e) {

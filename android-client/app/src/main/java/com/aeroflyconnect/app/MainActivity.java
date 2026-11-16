@@ -190,6 +190,7 @@ public class MainActivity extends Activity {
     private TextView menuOnline, menuCrash;
     private Runnable menuTick;
     private int menuTicks;
+    private String menuGroup = "";
 
     private void startMenuTick() {
         stopMenuTick();
@@ -202,6 +203,11 @@ public class MainActivity extends Activity {
                     menuCrash.setText(Api.t(MainActivity.this, "Crash timeout - you can fly again in ", "Tempo de espera após o acidente - você poderá voar em ") + Api.mmss(left));
                     menuCrash.setVisibility(View.VISIBLE);
                 } else menuCrash.setVisibility(View.GONE);
+                // the online count goes through the WebSocket (one connection instead of a request every 15 s); during a flight the service owns the socket
+                if (!PilotService.running) {
+                    if (!menuGroup.equals(Api.group)) { menuGroup = Api.group; WsLink.close(); }
+                    WsLink.ensure(Api.key(MainActivity.this), false, 0, 0, System.currentTimeMillis());
+                }
                 if (menuTicks++ % 15 == 0) fetchOnline();   // right away, then every 15 s
                 ui.postDelayed(this, 1000);
             }
@@ -212,6 +218,7 @@ public class MainActivity extends Activity {
     private void stopMenuTick() {
         if (menuTick != null) ui.removeCallbacks(menuTick);
         menuTick = null;
+        if (!PilotService.running) WsLink.close();
     }
 
     private void fetchOnline() {

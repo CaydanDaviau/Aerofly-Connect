@@ -18,4 +18,4 @@ new_sqlite_classes = ["Hub"]
 # ABFLUG_KEYS = "key1,key2"
 
 [observability]
-enabled = true
+enabled = false   # no Worker logs

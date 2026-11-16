@@ -47,6 +47,9 @@ final class WsLink {
 
     static boolean live() { return open && sock != null; }
 
+    /** Sends a raw text frame (live voice). False when the socket is not usable. */
+    static boolean send(String text) { WebSocket w = sock; return open && w != null && w.send(text); }
+
     /** Called every loop turn: (re)connects with backoff, keeps the traffic subscription in step with the map. */
     static void ensure(String key, boolean wantTraffic, double lat, double lon, long now) {
         if (!key.equals(curKey)) { close(); curKey = key; }
@@ -115,6 +118,11 @@ final class WsLink {
         try {
             if (text.startsWith("{\"push\":\"traffic\"")) {
                 if (PilotService.mapShown) { PilotService.trafficJson = text; PilotService.trafficAt = System.currentTimeMillis(); }
+                return;
+            }
+            if (text.startsWith("{\"push\":\"voice_stream\"")) {
+                PilotService s = PilotService.inst;
+                if (s != null) LiveVoice.onEvent(s, new JSONObject(text));
                 return;
             }
             JSONObject j = new JSONObject(text);

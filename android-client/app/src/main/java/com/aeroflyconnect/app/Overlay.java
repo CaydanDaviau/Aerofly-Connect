@@ -86,7 +86,7 @@ final class Overlay {
     private TextView atisText;
     private boolean atisOpen, atisBusy, atisArr, atisPicked;
     private String atisShownLetter = "", atisShownIcao = "";
-    private boolean micRec;
+    private boolean micRec, micLive;
     private View sendBtn;
     private boolean typing, chatBusy;
     private int savedY;
@@ -129,7 +129,7 @@ final class Overlay {
                 h.removeCallbacksAndMessages(null);
                 typing = false;
                 atisOpen = false;
-                if (micRec) { micRec = false; Mic.stop(); }
+                if (micRec) { micRec = false; if (micLive) LiveVoice.stopTx(); else Mic.stop(); }
                 try { ctx.unregisterComponentCallbacks(cfgCb); } catch (Exception ignored) { }
                 if (root != null) { try { wm.removeView(root); } catch (Exception ignored) { } root = null; }
                 if (inst == Overlay.this) { inst = null; PipReply.overlayHook = null; }
@@ -737,12 +737,15 @@ final class Overlay {
 
     private void micDown() {
         if (micRec) return;
-        String err = Mic.start(ctx);
+        if (PilotService.freq.isEmpty()) { setStatus(Api.t(ctx, "Tune a frequency to talk", "Sintonize uma frequência para falar"), 4000); return; }
+        // live over the socket when it is up; otherwise the old record-then-send clip
+        micLive = WsLink.live();
+        String err = micLive ? LiveVoice.startTx(ctx) : Mic.start(ctx);
         if (err != null) { setStatus(err, 5000); return; }
         micRec = true;
         micBtn.setBackground(Ui.ripple(ctx, Ui.RED, Ui.RED, 10));
-        setStatus(Api.t(ctx, "Recording... release to send", "Gravando... solte para enviar"), 0);
-        h.postDelayed(micAuto, Mic.MAX_MS);
+        setStatus(micLive ? Api.t(ctx, "LIVE... release to stop", "AO VIVO... solte para parar") : Api.t(ctx, "Recording... release to send", "Gravando... solte para enviar"), 0);
+        h.postDelayed(micAuto, micLive ? LiveVoice.MAX_MS : Mic.MAX_MS);
     }
 
     private void micUp() {
@@ -750,6 +753,11 @@ final class Overlay {
         micRec = false;
         h.removeCallbacks(micAuto);
         micBtn.setBackground(Ui.ripple(ctx, Ui.CYAN, Ui.CYAN, 10));
+        if (micLive) {
+            final long lms = LiveVoice.stopTx();
+            setStatus(lms < 300 ? Api.t(ctx, "Too short", "Muito curto") : Api.t(ctx, "Sent live", "Enviado ao vivo"), 3000);
+            return;
+        }
         final long ms = Mic.elapsed();
         final byte[] data = Mic.stop();
         if (data == null || ms < 500) { setStatus(Api.t(ctx, "Too short", "Muito curto"), 3000); return; }
