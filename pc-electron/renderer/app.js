@@ -75,7 +75,7 @@
     statusEls = { go_, inputs, rows, msgs, sbBtn, locked };
     root.append(
       h("button", { class: "back", onclick: () => go("start") }, "← " + t("Back", "Voltar")),
-      card(t("Flight", "Voo"), FIELDS.map(x => fld(...x)), sbBtn, sbMsg),
+      card(t("Flight", "Voo"), FIELDS.flatMap(x => fld(...x)), sbBtn, sbMsg),
       go_,
       h("div", { style: "height:12px" }),
       card(t("Status", "Status"), kv("run", "State", "Estado"), kv("sim", "Sim link", "Link do sim"), kv("srv", "Server", "Servidor"), kv("up", "Uploads", "Envios"), kv("ph", "Phase", "Fase"), kv("eta", "ETA", "ETA"), kv("fpm", "Landing rate", "Razão de pouso"), kv("key", "Key", "Chave"), kv("raw", "Last sim data", "Último dado do sim")),
