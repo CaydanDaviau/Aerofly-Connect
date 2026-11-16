@@ -1,19 +1,23 @@
 // The flight loop: read the sim every 3 s, upload position (+ flight plan and SimBrief route once), keep status for the UI.
 const { Phase } = require("./phase");
+const { AtcPanel } = require("./atc");
 const PERIOD_MS = 3000;
 
 class Flight {
   // opts: { api, store, makeLink(), onState(state), now(), airports (core/airports.js instance, optional) }
-  constructor(o) { Object.assign(this, o); this.stop_ = false; this.phase = new Phase(); this.fqDep = ""; this.fqArr = ""; this.s = this.blank(); }
-  blank() { return { running: false, sim: "", server: "", uploads: 0, failed: 0, raw: "", messages: [], crash: null, phase: "", eta: -1, landFpm: null, offers: [] }; }
+  constructor(o) { Object.assign(this, o); this.stop_ = false; this.phase = new Phase(); this.fqDep = ""; this.fqArr = "";
+    this.atc = new AtcPanel({ api: o.api, phase: this.phase, lang: () => (this.store.data.lang || "en"), onChange: () => this.push() }); this.s = this.blank(); }
+  blank() { return { running: false, sim: "", server: "", uploads: 0, failed: 0, raw: "", messages: [], atc: null, crash: null, phase: "", eta: -1, landFpm: null, offers: [] }; }
   state() { return this.s; }
-  push() { this.onState && this.onState({ ...this.s }); }
+  fq() { return this.phase.phaseName === "air" ? (this.fqArr || this.fqDep) : (this.fqDep || this.fqArr); }
+  push() {
+    if (this.s.running) { const f = this.store.data.flight; this.s.atc = { ...this.atc.view(this.s.offers, this.fq()), dep: f.dep.trim().toUpperCase(), arr: f.arr.trim().toUpperCase(), air: this.phase.phaseName === "air" }; } else this.s.atc = null; this.onState && this.onState({ ...this.s }); }
 
   async start() {
     const cfg = this.store.data;
     if (cfg.crashUntil > Date.now()) return { error: "crash", left: cfg.crashUntil - Date.now() };
     this.stop_ = false; this.s = this.blank(); this.s.running = true; this.push();
-    this.phase.reset(); this.fqDep = ""; this.fqArr = ""; this.loadAirports();
+    this.phase.reset(); this.atc.reset(); this.fqDep = ""; this.fqArr = ""; this.loadAirports();
     this.link = this.makeLink();
     if (this.link.start) await this.link.start();
     this.loop();
@@ -65,6 +69,7 @@ class Flight {
     put(pos, "airplane_model", f.model); put(pos, "airplane_livery", f.livery);
     pos.voice = false;   // no push-to-talk on PC yet
     pos.lang = cfg.lang || "en";
+    if (this.atc.freq) pos.freq = this.atc.freq;
     const now = Date.now();
     this.phase.update(pos.latitude, pos.longitude, pos.altitude_ft || 0, pos.ground_speed || 0, pos.heading_true || 0, pos.vertical_speed_ft_min || 0, now);
     Object.assign(pos, this.phase.fields(now));
@@ -72,6 +77,7 @@ class Flight {
     if (this.fqArr) pos.fq_arr = this.fqArr;
     const ph = this.phase;
     this.s.phase = ph.phaseName; this.s.eta = ph.etaMin; this.s.landFpm = ph.landingShown(now) ? ph.landFpm : null;
+    this.atc.onPhase(ph.phaseName);
     this.s.offers = [ph.clearance && "clearance", ph.taxi && "taxi", ph.takeoff && "takeoff", ph.land && "land"].filter(Boolean);
     try {
       if (!this.planSent) {
@@ -94,7 +100,7 @@ class Flight {
         this.s.crash = { until: Date.now() + left, fpm: j.landing_fpm };
         this.s.server = "crashed"; await this.stop(); return "crash";
       }
-      if (r.code < 400) { this.s.uploads++; this.s.server = "OK (" + (this.api.live() ? "socket" : "HTTP") + ")"; this.messages(r.body); }
+      if (r.code < 400) { this.s.uploads++; this.s.server = "OK (" + (this.api.live() ? "socket" : "HTTP") + ")"; this.messages(r.body); this.atc.ingest(r.body); }
       else { this.s.failed++; this.s.server = "HTTP " + r.code; }
     } catch (e) { this.s.failed++; this.s.server = "error: " + (e.message || "?"); }
   }

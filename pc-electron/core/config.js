@@ -4,7 +4,7 @@ const fs = require("fs"), path = require("path"), crypto = require("crypto");
 const DEFAULTS = {
   key: "", group: "", lang: "", simSource: "udp", simIp: "", simbrief: "",
   flight: { callsign: "", dep: "", arr: "", deprwy: "", arrrwy: "", model: "", livery: "", cruise: "", route: "" },
-  sbRoute: null, crashUntil: 0, cache: {},
+  sbRoute: null, crashUntil: 0, cache: {}, overlay: true, ov: null,
 };
 
 class Store {

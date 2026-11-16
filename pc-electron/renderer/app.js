@@ -122,6 +122,7 @@
         simNote, ipBox),
       card("Aerofly Connect ATC Network", grp, h("div", { class: "note" }, t("Posted in the Discord server. Members only see each other. Leave empty for the public section.", "Publicado no servidor do Discord. Membros só veem uns aos outros. Deixe vazio para a seção pública."))),
       card(t("Language", "Idioma"), seg(lang, [["en", "English"], ["pt", "Português (BR)"]], v => { lang = v; cfg.lang = v; window.afc.set({ lang: v }); render(); })),
+      card(t("ATC overlay", "Overlay do ATC"), h("div", { class: "sw" }, h("span", {}, t("Show the ATC window over the sim while flying", "Mostrar a janela do ATC sobre o simulador durante o voo")), h("input", { type: "checkbox", checked: cfg.overlay !== false, onchange: e => { cfg.overlay = e.target.checked; window.afc.set({ overlay: cfg.overlay }); } })), h("div", { class: "note" }, t("Takes effect at the next Start. Works over windowed or borderless sims.", "Vale a partir do próximo Início. Funciona sobre simuladores em janela ou sem borda."))),
       card("SimBrief", sb, h("div", { class: "note" }, t("Used by the Import button on the Pilot screen.", "Usado pelo botão Importar na tela Piloto."))),
     );
   }

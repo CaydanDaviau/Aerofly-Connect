@@ -1,17 +1,37 @@
-const { app, BrowserWindow, ipcMain, shell } = require("electron");
+const { app, BrowserWindow, ipcMain, shell, screen } = require("electron");
 const path = require("path");
 const WebSocket = require("ws");
 const { Store, simHostProblem } = require("./core/config");
 const { Api, SERVER } = require("./core/api");
 const { Flight } = require("./core/flight");
 const { Airports } = require("./core/airports");
+const { stepFreq } = require("./core/atc");
 const { TcpLink, UdpLink } = require("./core/sim");
 const simbrief = require("./core/simbrief");
 
 if (!app.requestSingleInstanceLock()) app.quit();
-let win, store, flight;
+let win, store, flight, ov = null, ovDrag = null, ovTyping = false;
 
 function send(ch, data) { if (win && !win.isDestroyed()) win.webContents.send(ch, data); }
+
+// ---- always-on-top ATC overlay (bubble / panel), created while flying if enabled in Settings ----
+function ovArea() { return screen.getDisplayMatching(ov ? ov.getBounds() : screen.getPrimaryDisplay().bounds).workArea; }
+function ovClamp(x, y, w, h) { const a = ovArea(); return [Math.min(Math.max(x, a.x), a.x + a.width - w), Math.min(Math.max(y, a.y), a.y + a.height - h)]; }
+function createOverlay() {
+  if (ov || store.data.overlay === false) return;
+  const a = screen.getPrimaryDisplay().workArea, p = store.data.ov || {};
+  ov = new BrowserWindow({ width: 56, height: 56, x: p.x != null ? p.x : a.x + a.width - 90, y: p.y != null ? p.y : a.y + 120, frame: false, transparent: true, resizable: false, alwaysOnTop: true, skipTaskbar: true, focusable: false, hasShadow: false, show: false, webPreferences: { preload: path.join(__dirname, "overlay-preload.js"), contextIsolation: true, nodeIntegration: false } });
+  ov.setAlwaysOnTop(true, "screen-saver");
+  ov.loadFile(path.join(__dirname, "renderer", "overlay.html"));
+  ov.once("ready-to-show", () => { if (ov) ov.showInactive(); });
+  ov.on("closed", () => { ov = null; });
+}
+function closeOverlay() { if (ov && !ov.isDestroyed()) ov.destroy(); ov = null; ovTyping = false; }
+function sendOv(s) { if (ov && !ov.isDestroyed()) ov.webContents.send("overlay:state", s ? s.atc : null); }
+function onFlightState(s) {
+  send("flight:state", s);
+  if (s.running) { createOverlay(); sendOv(s); } else closeOverlay();
+}
 
 function createWindow() {
   win = new BrowserWindow({
@@ -40,13 +60,36 @@ app.whenReady().then(() => {
     }
     const api = new Api({ key: c.key, group: c.group, WebSocket });
     flight = new Flight({
-      api, store, airports: new Airports({ fetchFn: async u => { const r = await fetch(u); if (!r.ok) throw new Error("HTTP " + r.status); return r.text(); }, cache: { get: k => store.cacheGet(k), put: (k, v) => store.cachePut(k, v) } }), onState: s => send("flight:state", s),
+      api, store, airports: new Airports({ fetchFn: async u => { const r = await fetch(u); if (!r.ok) throw new Error("HTTP " + r.status); return r.text(); }, cache: { get: k => store.cacheGet(k), put: (k, v) => store.cachePut(k, v) } }), onState: onFlightState,
       makeLink: () => (store.data.simSource === "tcp" ? new TcpLink(store.data.simIp.trim()) : new UdpLink()),
     });
     return flight.start();
   });
   ipcMain.handle("flight:stop", async () => { if (flight) await flight.stop(); return true; });
   ipcMain.handle("flight:state", () => (flight ? flight.state() : null));
+
+  // overlay: window mechanics
+  ipcMain.on("overlay:ready", () => { if (flight) sendOv(flight.state()); });
+  ipcMain.on("overlay:size", (e, { w, h }) => {
+    if (!ov || ov.isDestroyed() || !(w > 20) || !(h > 20)) return;
+    const b = ov.getBounds(), [x, y] = ovClamp(b.x, b.y, w, h); ov.setBounds({ x, y, width: w, height: h });
+  });
+  ipcMain.on("overlay:drag", (e, d) => {
+    if (!ov || ov.isDestroyed()) return;
+    if (d.t === "start") ovDrag = { sx: d.sx, sy: d.sy, b: ov.getBounds() };
+    else if (d.t === "move" && ovDrag) { const [x, y] = ovClamp(ovDrag.b.x + d.sx - ovDrag.sx, ovDrag.b.y + d.sy - ovDrag.sy, ovDrag.b.width, ovDrag.b.height); ov.setPosition(x, y); }
+    else if (d.t === "end") { if (ovDrag) { const b = ov.getBounds(); store.set({ ov: { x: b.x, y: b.y } }); } ovDrag = null; }
+  });
+  // the overlay never takes focus from the sim except while a text field is being edited
+  ipcMain.on("overlay:typing", (e, on) => { if (!ov || ov.isDestroyed()) return; ovTyping = on; ov.setFocusable(on); if (on) ov.focus(); else ov.blur(); });
+  // overlay: ATC actions
+  const A = () => (flight && flight.state().running ? flight.atc : null);
+  ipcMain.handle("atc:reply", (e, id, which) => A() ? A().reply(id, which) : false);
+  ipcMain.handle("atc:request", (e, type) => A() ? A().request(type) : null);
+  ipcMain.handle("atc:emergency", () => A() ? A().emergencyTap() : null);
+  ipcMain.handle("atc:chat", (e, text) => A() ? A().chat(text) : null);
+  ipcMain.handle("atc:atis", (e, icao) => A() ? A().fetchAtis(icao) : null);
+  ipcMain.handle("atc:freq", (e, mode, v) => { const a = A(); if (!a) return ""; return a.setFreq(mode === "step" ? stepFreq(a.freq, v.dir, v.khz) : v); });
 
   ipcMain.handle("health", async () => {
     try {

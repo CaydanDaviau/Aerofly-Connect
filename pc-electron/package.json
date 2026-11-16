@@ -7,7 +7,7 @@
   "license": "MIT",
   "scripts": {
     "start": "electron .",
-    "test": "node test/core.test.js && node test/phase.test.js"
+    "test": "node test/core.test.js && node test/phase.test.js && node test/atc.test.js"
   },
   "dependencies": {
     "ws": "^8.18.0"
@@ -20,7 +20,7 @@
     "appId": "com.aeroflyconnect.pc",
     "productName": "AFConnectPC",
     "directories": { "output": "dist" },
-    "files": ["main.js", "preload.js", "core/**", "renderer/**", "assets/**"],
+    "files": ["main.js", "preload.js", "overlay-preload.js", "core/**", "renderer/**", "assets/**"],
     "win": { "target": "portable", "icon": "assets/icon.png", "artifactName": "AFConnectPC.exe" },
     "portable": { "artifactName": "AFConnectPC.exe" }
   }
