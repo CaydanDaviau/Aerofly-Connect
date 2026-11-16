@@ -22,9 +22,9 @@ T("upgrade accepted", r.wsStatus === 101 && ws && ws.att.key === "pil" && autoRe
 
 // position via socket = same handler as HTTP (key comes from the socket)
 await msg(ws, { id: 0, method: "PUT", path: "/api/flightplan", body: { callsign: "WS1" } });
-let a = await msg(ws, { id: 1, method: "PUT", path: "/api/position", body: { latitude: 10, longitude: 20, altitude_ft: 3000, callsign: "WS1" } });
+let a = await msg(ws, { id: 1, method: "PUT", path: "/api/position", body: { latitude: 10, longitude: 20, altitude_ft: 3000, callsign: "WS1", freq: "118.000" } });
 T("position over ws", a.id === 1 && a.status === 200 && a.body.success === true && Array.isArray(a.body.messages));
-a = await msg(ws, { id: 2, method: "PUT", path: "/api/position?traffic=1", body: { latitude: 10, longitude: 20 } });
+a = await msg(ws, { id: 2, method: "PUT", path: "/api/position?traffic=1", body: { latitude: 10, longitude: 20, freq: "118.000" } });
 T("traffic=1 over ws", a.status === 200 && a.body.aircraft.length === 1);
 a = await msg(ws, { id: 3, method: "GET", path: "/api/health" });
 T("health over ws", a.status === 200 && a.body.pilots === 1);
@@ -33,7 +33,7 @@ T("debug refused", a.status === 400);
 a = await msg(ws, { id: 5, method: "PUT", path: "/etc/passwd" });
 T("non-api path refused", a.status === 400);
 a = await msg(ws, { id: 6, method: "PUT", path: "/api/atc/message", body: { icao_address: "ZZZ", text: "hi" } });
-T("error status passed on", a.status === 404 && a.body.error === "aircraft not found");
+T("ATC message blocked without active division", a.status === 409 && a.body.error === "division_required");
 
 // radar socket: subscribe + push
 await up("radar"); const rd = socks[1];
@@ -45,8 +45,8 @@ await hub.pushAll();
 T("push to subscriber", rd.sent.length === before + 1 && JSON.parse(rd.sent.at(-1)).push === "traffic");
 T("no push without sub", ws.sent.length === pb);
 // a new plane shows up in the next push, no poll needed
-await hub.webSocketMessage(socks[0], JSON.stringify({ id: 7, method: "PUT", path: "/api/position", body: { latitude: 11, longitude: 21 } }));
-await worker.fetch(new Request("https://x/api/position", { method: "PUT", body: JSON.stringify({ latitude: 12, longitude: 22, callsign: "HTTP1" }), headers: { "X-API-Key": "other" } }), env);
+await hub.webSocketMessage(socks[0], JSON.stringify({ id: 7, method: "PUT", path: "/api/position", body: { latitude: 11, longitude: 21, freq: "118.000" } }));
+await worker.fetch(new Request("https://x/api/position", { method: "PUT", body: JSON.stringify({ latitude: 12, longitude: 22, callsign: "HTTP1", freq: "118.000" }), headers: { "X-API-Key": "other" } }), env);
 await hub.pushAll();
 T("push sees HTTP client too", JSON.parse(rd.sent.at(-1)).aircraft.length === 2);
 // sub.max caps the pushed list (the app asks for 100)
@@ -57,13 +57,13 @@ await msg(rd, { sub: { lat: 0, lon: 0, radius_miles: 13000 } });
 const icao = JSON.parse(rd.sent.at(-1)).aircraft.find(x => x.callsign === "WS1").icao_address;
 a = await msg(rd, { id: 8, method: "PUT", path: "/api/atc/squawk", body: { icao_address: icao, squawk: "2314" } });
 T("squawk over ws", a.status === 200 && a.body.squawk === "2314");
-a = await msg(ws, { id: 9, method: "PUT", path: "/api/position", body: { latitude: 10, longitude: 20 } });
+a = await msg(ws, { id: 9, method: "PUT", path: "/api/position", body: { latitude: 10, longitude: 20, freq: "118.000" } });
 T("pilot gets message in position reply", a.body.messages.some(m => /Squawk 2314/.test(m.text)));
 // unsubscribe, bad json, closed socket in push
 await msg(rd, { sub: null }); const n = rd.sent.length; await hub.pushAll();
 T("unsub stops push", rd.sent.length === n);
 await hub.webSocketMessage(ws, "not json"); T("bad json ignored", true);
-socks.splice(0, socks.length); await hub.pushAll(); T("timer stops with no sockets", hub.pushTimer === null);
+await hub.pushAll(); T("timer remains with live sockets", hub.pushTimer !== null);
 // HTTP still intact
 const h = await worker.fetch(new Request("https://x/api/traffic?lat=0&lon=0&radius_miles=13000", { headers: { "X-API-Key": "k" } }), env);
 const hj = await h.json(); T("HTTP /api/traffic unchanged", h.status === 200 && hj.aircraft.length >= 2 && "crashes" in hj && "atc_messages" in hj);
@@ -74,5 +74,18 @@ const hj = await h.json(); T("HTTP /api/traffic unchanged", h.status === 200 && 
   T("stats: WS requests listed separately", (j.counts["WS PUT /api/position"] || 0) > 0 && !("PUT /api/position" in j.counts && j.counts["PUT /api/position"] > j.counts["WS PUT /api/position"] + 5));
   j = await st("?reset=1");
   T("stats: reset empties counters", Object.keys(j.counts).length === 0 && j.seconds_since_start <= 2);
+  // Real-time voice chunks are relayed to pilots on the same active frequency;
+  // completed audio can be replayed locally by either authorized peer.
+  await up("peer"); const peer = socks[socks.length - 1];
+  await msg(peer, { id: 20, method: "PUT", path: "/api/position", body: { latitude: 10, longitude: 20, altitude_ft: 3000, callsign: "WS2", freq: "118.000" } });
+  await hub.webSocketMessage(ws, JSON.stringify({ voice_stream: "start", id: "stream-test", direction: "up", sampleRate: 16000 }));
+  T("PTT stream start reaches same-frequency peer", peer.sent.some(x => JSON.parse(x).event === "start" && JSON.parse(x).id === "stream-test"));
+  await hub.webSocketMessage(ws, JSON.stringify({ voice_stream: "chunk", id: "stream-test", data: "AQIDBA==" }));
+  T("PTT PCM chunk relayed live", peer.sent.some(x => JSON.parse(x).event === "chunk" && JSON.parse(x).data === "AQIDBA=="));
+  await hub.webSocketMessage(ws, JSON.stringify({ voice_stream: "end", id: "stream-test" }));
+  T("PTT end reaches peer", peer.sent.some(x => JSON.parse(x).event === "end" && JSON.parse(x).id === "stream-test"));
+  await hub.webSocketMessage(peer, JSON.stringify({ voice_stream: "replay", id: "stream-test" }));
+  T("synchronized replay returns original PCM chunks", peer.sent.some(x => JSON.parse(x).event === "replay_start") && peer.sent.some(x => JSON.parse(x).event === "replay_end") && peer.sent.filter(x => JSON.parse(x).event === "chunk" && JSON.parse(x).id === "stream-test").length >= 1);
+  socks.splice(0, socks.length); await hub.pushAll(); T("timer stops with no sockets", hub.pushTimer === null);
 }
 process.exit(fails ? 1 : 0);

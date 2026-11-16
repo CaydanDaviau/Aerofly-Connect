@@ -241,12 +241,14 @@ export default {
 export class Hub {
   constructor(ctx) {
     this.towers = new Map(); this.creds = new Map(); this.credOn = false; this.wx = new Map(); this.crashes = new Map(); this.ta = new Map();
+    this.voiceStreams = new Map(); this.latestVoiceByPeer = new Map();
+    this.clients = new Map(); this.msgs = new Map(); this.rwy = new Map(); this.rwyQ = new Map(); this.violations = []; this.clips = new Map(); this.listeners = new Map(); this.msgSeq = 0; this.since = Date.now(); this.counts = {};
     ctx.blockConcurrencyWhile(async () => {
       for (const [k, v] of await ctx.storage.list({ prefix: "tower:" })) this.towers.set(k.slice(6), v);
       for (const [k, v] of await ctx.storage.list({ prefix: "cred:" })) this.creds.set(k.slice(5), v);
       this.credOn = !!(await ctx.storage.get("credon")) || this.creds.size > 0;
       for (const [k, v] of await ctx.storage.list({ prefix: "crash:" })) this.crashes.set(k.slice(6), v);
-    }); this.ctx = ctx; this.clients = new Map(); this.msgs = new Map(); this.rwy = new Map(); this.rwyQ = new Map(); this.violations = []; this.clips = new Map(); this.listeners = new Map(); this.msgSeq = 0; this.since = Date.now(); this.counts = {}; }
+    }); this.ctx = ctx; }
 
   purge() {
     const now = Date.now();
@@ -255,10 +257,17 @@ export class Hub {
     for (const [k, l] of this.rwy) if (now > l.until) this.rwy.delete(k);
     for (const [k, v] of this.clips) if (now - v.at > VOICE_TTL_MS) this.clips.delete(k);
     for (const [k, v] of this.listeners) if (now - v.at > VOICE_LISTEN_MS) this.listeners.delete(k);
+    for (const [k, v] of this.voiceStreams) if (now - v.at > 90_000) this.voiceStreams.delete(k);
     for (const [k, q] of this.rwyQ) { const f = q.filter(x => this.clients.has(x)); if (f.length) this.rwyQ.set(k, f); else this.rwyQ.delete(k); }
     for (const [k, t] of this.ta) if (now - t > 120_000) this.ta.delete(k);
     for (const [k, cr] of this.crashes) if (now - cr.at > CRASH_SHOW_MS) { this.crashes.delete(k); this.ctx.storage.delete("crash:" + k); }
     for (const [k, t] of this.towers) if (now - t.at > (t.holder ? POS_TTL_MS : TOWER_TTL_MS)) { this.towers.delete(k); this.ctx.storage.delete("tower:" + k); }
+  }
+
+  activeAtcHolder(holder) {
+    if (!holder) return false;
+    const now = Date.now();
+    return [...this.towers.values()].some(t => t.holder === holder && POS_NAMES.includes(t.pos) && now - t.at <= POS_TTL_MS);
   }
 
   addMsg(target, text, kind, extra) {
@@ -480,9 +489,10 @@ export class Hub {
   // {sub:{lat,lon,radius_miles}} subscribes the socket to pushed traffic ({push:"traffic", ...} = body of GET /api/traffic).
   acceptSocket(request) {
     const key = (request.headers.get("X-API-Key") || "").trim();
+    const holder = String(new URL(request.url).searchParams.get("holder") || "").slice(0, 80);
     const pair = new WebSocketPair();
     this.ctx.acceptWebSocket(pair[1]);
-    pair[1].serializeAttachment({ key, sub: null, member: request.headers.get("X-Member") === "1", atc: request.headers.get("X-Atc") || "n", atcRaw: request.headers.get("X-Atc-Raw") || "", atcName: request.headers.get("X-Atc-Name") || "", ip: request.headers.get("X-IP") || "" });
+    pair[1].serializeAttachment({ key, holder, sub: null, member: request.headers.get("X-Member") === "1", atc: request.headers.get("X-Atc") || "n", atcRaw: request.headers.get("X-Atc-Raw") || "", atcName: request.headers.get("X-Atc-Name") || "", ip: request.headers.get("X-IP") || "" });
     this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
     this.startPush();
     return new Response(null, { status: 101, webSocket: pair[0] });
@@ -562,11 +572,78 @@ export class Hub {
     while (this.clips.size > VOICE_MAX_CLIPS) this.clips.delete(this.clips.keys().next().value);
     return id;
   }
+
+  voicePeers(sender, meta) {
+    const peers = [];
+    for (const other of this.ctx.getWebSockets()) {
+      if (other === sender) continue;
+      const oa = other.deserializeAttachment() || {};
+      if (!oa.key || !!oa.member !== !!meta.member) continue;
+      const pilot = this.clients.get(oa.key);
+      if (meta.direction === "up") {
+        if (oa.atc === "1" && this.activeAtcHolder(oa.holder)) peers.push(other);
+        else if (pilot && pilot.pos && pilot.pos.freq === meta.freq && pilot.pos.voice !== false) peers.push(other);
+      } else if (pilot && pilot.pos && pilot.pos.icao_address === meta.icao && pilot.pos.voice !== false && tunedTo(pilot.pos.freq, meta.freq)) peers.push(other);
+    }
+    return peers;
+  }
+  async handleVoiceStream(ws, a, d) {
+    const action = d.voice_stream;
+    if (action === "start") {
+      const pilot = this.clients.get(a.key);
+      const direction = d.direction === "down" ? "down" : "up";
+      const holder = String(d.holder || "");
+      if (direction === "up" && (!pilot || !pilot.pos || !pilot.pos.freq)) return;
+      if (direction === "down" && (!this.activeAtcHolder(holder) || !d.icao_address)) return;
+      const meta = direction === "up"
+        ? { direction, member: !!a.member, freq: pilot.pos.freq, icao: pilot.pos.icao_address, callsign: normCallsign(pilot.plan.callsign ?? pilot.pos.callsign), sender: a.key }
+        : { direction, member: !!a.member, freq: normFreq(d.freq), icao: String(d.icao_address).toUpperCase(), holder, callsign: this.ctlName({ headers: new Headers({ "X-Member": a.member ? "1" : "0", "X-Atc": a.atc || "n", "X-Atc-Raw": a.atcRaw || "", "X-Atc-Name": a.atcName || "" }) }), sender: a.key };
+      const peers = this.voicePeers(ws, meta);
+      const id = String(d.id || ("s" + Date.now().toString(36) + (++this.msgSeq).toString(36))).slice(0, 80);
+      const stream = { id, meta, peers: peers.map(x => (x.deserializeAttachment() || {}).key).filter(Boolean), chunks: [], bytes: 0, at: Date.now(), ended: false };
+      this.voiceStreams.set(id, stream);
+      const event = JSON.stringify({ push: "voice_stream", event: "start", id, meta: { direction, freq: meta.freq, icao: meta.icao, callsign: meta.callsign, sampleRate: Number(d.sampleRate) || 16000 } });
+      for (const peer of peers) { try { peer.send(event); } catch (e) {} }
+      return;
+    }
+    const id = String(d.id || "");
+    const stream = this.voiceStreams.get(id);
+    if (!stream || (action !== "replay" && stream.meta.sender !== a.key)) return;
+    if (action === "chunk") {
+      const chunk = String(d.data || "");
+      if (!chunk || chunk.length > 12000 || stream.bytes + chunk.length > 1_500_000 || stream.ended) return;
+      stream.chunks.push(chunk); stream.bytes += chunk.length; stream.at = Date.now();
+      const event = JSON.stringify({ push: "voice_stream", event: "chunk", id, data: chunk, seq: stream.chunks.length - 1 });
+      for (const peer of this.ctx.getWebSockets()) { const pa = peer.deserializeAttachment() || {}; if (stream.peers.includes(pa.key)) { try { peer.send(event); } catch (e) {} } }
+      return;
+    }
+    if (action === "end") {
+      stream.ended = true; stream.at = Date.now();
+      const event = JSON.stringify({ push: "voice_stream", event: "end", id, chunks: stream.chunks.length, at: stream.at });
+      for (const peer of this.ctx.getWebSockets()) { const pa = peer.deserializeAttachment() || {}; if (stream.peers.includes(pa.key)) { try { peer.send(event); } catch (e) {} } }
+      this.latestVoiceByPeer.set(a.key, id);
+      for (const peerKey of stream.peers) this.latestVoiceByPeer.set(peerKey, id);
+      return;
+    }
+    if (action === "replay") {
+      if (!stream.ended || (a.key !== stream.meta.sender && !stream.peers.includes(a.key))) return;
+      try { ws.send(JSON.stringify({ push: "voice_stream", event: "replay_start", id, meta: stream.meta })); } catch (e) {}
+      for (let i = 0; i < stream.chunks.length; i++) { try { ws.send(JSON.stringify({ push: "voice_stream", event: "chunk", id, data: stream.chunks[i], seq: i })); } catch (e) {} }
+      try { ws.send(JSON.stringify({ push: "voice_stream", event: "replay_end", id, chunks: stream.chunks.length })); } catch (e) {}
+    }
+  }
   async webSocketMessage(ws, raw) {
     this.startPush();
     const a = ws.deserializeAttachment() || {};
     let d; try { d = JSON.parse(typeof raw === "string" ? raw : new TextDecoder().decode(raw)); } catch (e) { return; }
     if (!d || typeof d !== "object") return;
+    // Low-latency PTT transport: clients send short independently playable PCM16 chunks.
+    // Events are relayed only to the sender's authorized radio peers; completed streams
+    // remain briefly available for synchronized replay by those same peers.
+    if (typeof d.voice_stream === "string") {
+      await this.handleVoiceStream(ws, a, d);
+      return;
+    }
     if (d.sub !== undefined) {
       const s = d.sub, lat = Number(s && s.lat) || 0, lon = Number(s && s.lon) || 0, rad = Number(s && s.radius_miles) || 250;
       const max = Math.max(1, Math.min(MAX_TRAFFIC, Number(s && s.max) || MAX_TRAFFIC));
@@ -656,6 +733,7 @@ export class Hub {
     if ((m === "PUT" || m === "POST") && p === "/api/atc/message") {
       if (this.noCred(request)) return json({ error: "atc_credential" }, 403);
       const d = await request.json().catch(() => ({}));
+      if (!this.activeAtcHolder(String(d.holder || ""))) return json({ error: "division_required" }, 409);
       const icao = String(d.icao_address || "").toUpperCase();
       const text = String(d.text || "").trim();
       const target = [...this.clients.values()].find(c => c.pos && c.pos.icao_address === icao);
@@ -684,6 +762,7 @@ export class Hub {
       const d = await request.json().catch(() => ({}));
       const c = this.clients.get(key);
       if (!c || !c.pos) return json({ error: "start flying first" }, 404);
+      if (!c.pos.freq) return json({ error: "frequency_required" }, 409);
       if (c.pos.voice === false) return json({ error: "voice_off" }, 409);
       if (!d.audio || typeof d.audio !== "string" || d.audio.length > VOICE_MAX_B64) return json({ error: "bad audio" }, 400);
       const now = Date.now();
@@ -701,6 +780,7 @@ export class Hub {
     if ((m === "PUT" || m === "POST") && p === "/api/atc/voice") {   // controller -> pilot
       if (this.noCred(request)) return json({ error: "atc_credential" }, 403);
       const d = await request.json().catch(() => ({}));
+      if (!this.activeAtcHolder(String(d.holder || ""))) return json({ error: "division_required" }, 409);
       const icao = String(d.icao_address || "").toUpperCase();
       const target = [...this.clients.values()].find(c => c.pos && c.pos.icao_address === icao);
       if (!target) return json({ error: "aircraft not found" }, 404);
@@ -716,7 +796,10 @@ export class Hub {
       const text = String(d.text || "").trim().slice(0, 200);
       const c = this.clients.get(key);
       if (!c || !c.pos) return json({ error: "start flying first" }, 404);
+      // Validate the payload before radio eligibility so malformed messages
+      // consistently return 400; valid transmissions still require a tuned frequency.
       if (!text) return json({ error: "empty message" }, 400);
+      if (!c.pos.freq) return json({ error: "frequency_required" }, 409);
       const now = Date.now();
       if (c.lastChat && now - c.lastChat < 2000) return json({ error: "too many messages" }, 429);
       c.lastChat = now;
@@ -731,6 +814,7 @@ export class Hub {
       if (!REQ_TYPES.includes(type)) return json({ error: "type must be clearance, taxi, takeoff, land, mayday or mayday_cancel" }, 400);
       const c = this.clients.get(key);
       if (!c || !c.pos) return json({ error: "start flying first" }, 404);
+      if (!c.pos.freq) return json({ error: "frequency_required" }, 409);
       const now = Date.now();
       if (c.lastReq && now - c.lastReq < 2000) return json({ error: "too many requests" }, 429);
       c.lastReq = now;
