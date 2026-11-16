@@ -43,6 +43,9 @@ function openWeb(what) {
   w.setTitle(what === "map" ? "Aerofly Connect - Map" : "Aerofly Connect - Radar");
   w.on("page-title-updated", e => e.preventDefault());
   w.webContents.setWindowOpenHandler(({ url }) => { if (/^https:\/\//.test(url)) shell.openExternal(url); return { action: "deny" }; });
+  // seen on a real PC: the page's <head> (title, CSS, JS) was drawn as text over the map; keep head content hidden
+  w.webContents.on("dom-ready", () => { w.webContents.insertCSS("head,head *{display:none!important}").catch(() => {}); });
+  w.webContents.on("did-fail-load", (e, code, desc, url, main) => { if (main && code !== -3) w.loadURL("data:text/html," + encodeURIComponent("<body style='font:15px system-ui;background:#222;color:#eee;padding:24px'>Could not load the page (" + desc + "). Check your connection, or turn on 'Open in the browser' in Settings.</body>")); });
   w.loadURL(webUrl(what));
   if (what === "map") {
     mapWin = w;
