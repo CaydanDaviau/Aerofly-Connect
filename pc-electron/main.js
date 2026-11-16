@@ -20,7 +20,7 @@ function ovClamp(x, y, w, h) { const a = ovArea(); return [Math.min(Math.max(x, 
 function createOverlay() {
   if (ov || store.data.overlay === false) return;
   const a = screen.getPrimaryDisplay().workArea, p = store.data.ov || {};
-  ov = new BrowserWindow({ width: 56, height: 56, x: p.x != null ? p.x : a.x + a.width - 90, y: p.y != null ? p.y : a.y + 120, frame: false, transparent: true, resizable: false, alwaysOnTop: true, skipTaskbar: true, focusable: false, hasShadow: false, show: false, webPreferences: { preload: path.join(__dirname, "overlay-preload.js"), contextIsolation: true, nodeIntegration: false } });
+  ov = new BrowserWindow({ width: 56, height: 56, x: p.x != null ? p.x : a.x + a.width - 90, y: p.y != null ? p.y : a.y + 120, frame: false, transparent: true, resizable: false, alwaysOnTop: true, skipTaskbar: true, focusable: false, hasShadow: false, show: false, webPreferences: { preload: path.join(__dirname, "overlay-preload.js"), contextIsolation: true, nodeIntegration: false, autoplayPolicy: "no-user-gesture-required" } });
   ov.setAlwaysOnTop(true, "screen-saver");
   ov.loadFile(path.join(__dirname, "renderer", "overlay.html"));
   ov.once("ready-to-show", () => { if (ov) ov.showInactive(); });
@@ -97,6 +97,7 @@ app.whenReady().then(() => {
       api, store, airports: new Airports({ fetchFn: async u => { const r = await fetch(u); if (!r.ok) throw new Error("HTTP " + r.status); return r.text(); }, cache: { get: k => store.cacheGet(k), put: (k, v) => store.cachePut(k, v) } }), onState: onFlightState,
       makeLink: () => (store.data.simSource === "tcp" ? new TcpLink(store.data.simIp.trim()) : new UdpLink()),
     });
+    api.onVoice(j => { if (ov && !ov.isDestroyed()) ov.webContents.send("overlay:voice", j); });
     return flight.start();
   });
   ipcMain.handle("flight:stop", async () => { if (flight) await flight.stop(); return true; });
@@ -144,7 +145,12 @@ app.whenReady().then(() => {
     else { const b = mapWin.getBounds(); mapBig = { width: Math.max(500, b.width), height: Math.max(400, b.height) }; mapWin.setSize(380, 300); }
   });
   // controller radar: hold-to-talk needs the microphone, only for our own server
-  require("electron").session.defaultSession.setPermissionRequestHandler((wc, perm, cb) => cb(perm === "media" && wc.getURL().startsWith(SERVER)));
+  const mediaOk = wc => { const u = wc ? wc.getURL() : ""; return u.startsWith(SERVER) || u.startsWith("file://"); };   // radar page and our own overlay
+  const ses = require("electron").session.defaultSession;
+  ses.setPermissionRequestHandler((wc, perm, cb) => cb(perm === "media" && mediaOk(wc)));
+  ses.setPermissionCheckHandler((wc, perm) => perm === "media" && mediaOk(wc));
+  // live PTT: the overlay sends start/chunk/end over the flight's WebSocket
+  ipcMain.handle("voice:tx", (e, action, payload) => (flight && flight.state().running ? flight.api.sendVoiceStream(String(action), payload || {}) : false));
 });
 
 app.on("window-all-closed", async () => { try { if (flight) await flight.stop(); } catch (e) {} app.quit(); });

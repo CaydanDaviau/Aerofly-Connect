@@ -814,7 +814,7 @@ export class Hub {
       if (!REQ_TYPES.includes(type)) return json({ error: "type must be clearance, taxi, takeoff, land, mayday or mayday_cancel" }, 400);
       const c = this.clients.get(key);
       if (!c || !c.pos) return json({ error: "start flying first" }, 404);
-      if (!c.pos.freq) return json({ error: "frequency_required" }, 409);
+      if (!c.pos.freq && !type.startsWith("mayday")) return json({ error: "frequency_required" }, 409);   // an emergency never waits for the radio
       const now = Date.now();
       if (c.lastReq && now - c.lastReq < 2000) return json({ error: "too many requests" }, 429);
       c.lastReq = now;

@@ -67,7 +67,7 @@ class Flight {
     this.api.ensure();
     const put = (o, k, v) => { v = String(v || "").trim(); if (v) o[k] = v; };
     put(pos, "airplane_model", f.model); put(pos, "airplane_livery", f.livery);
-    pos.voice = false;   // no push-to-talk on PC yet
+    pos.voice = true;   // live PTT: the overlay plays incoming radio and can transmit
     pos.lang = cfg.lang || "en";
     if (this.atc.freq) pos.freq = this.atc.freq;
     const now = Date.now();

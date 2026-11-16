@@ -4,7 +4,7 @@ const SERVER = "https://aeroflytest.caydanphoenix14.workers.dev";
 class Api {
   constructor({ key, group, WebSocket, fetchFn }) {
     this.key = key; this.group = group || ""; this.WS = WebSocket; this.fetch = fetchFn || fetch;
-    this.ws = null; this.open = false; this.pending = new Map(); this.seq = 0; this.backoff = 2000; this.nextTry = 0; this.pingT = null; this.want = false;
+    this.ws = null; this.open = false; this.pending = new Map(); this.seq = 0; this.voiceListeners = new Set(); this.backoff = 2000; this.nextTry = 0; this.pingT = null; this.want = false;
   }
   setGroup(g) { this.group = g || ""; if (this.ws) this.closeWs(); }
   live() { return this.open; }
@@ -37,6 +37,14 @@ class Api {
     });
   }
 
+
+  onVoice(fn) { this.voiceListeners.add(fn); return () => this.voiceListeners.delete(fn); }
+  sendVoiceStream(action, payload = {}) {
+    if (!this.open || !this.ws) return false;
+    try { return this.ws.send(JSON.stringify({ voice_stream: action, ...payload }), err => {}), true; } catch (e) { return false; }
+  }
+  replayVoice(id) { return this.sendVoiceStream("replay", { id }); }
+
   // Called every loop turn: (re)connects with backoff 2-30 s.
   ensure(now = Date.now()) {
     this.want = true;
@@ -48,6 +56,7 @@ class Api {
     ws.on("open", () => { if (this.ws !== ws) return; this.open = true; this.backoff = 2000; this.pingT = setInterval(() => { try { ws.ping(); } catch (e) {} }, 25000); });
     ws.on("message", d => {
       let j; try { j = JSON.parse(d.toString()); } catch (e) { return; }
+      if (j && j.push === "voice_stream") { for (const fn of this.voiceListeners) { try { fn(j); } catch (e) {} } return; }
       if (j && j.id !== undefined && this.pending.has(String(j.id))) {
         const p = this.pending.get(String(j.id)); this.pending.delete(String(j.id));
         p.res({ code: j.status, body: typeof j.body === "string" ? j.body : JSON.stringify(j.body === undefined ? {} : j.body) });

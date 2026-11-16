@@ -24,3 +24,5 @@ input:focus{border-color:var(--acc)}.fr{text-align:center;font-weight:700;letter
 .st{color:var(--dim);font-size:11px;min-height:15px}.st.f{color:var(--acc)}
 .sec{color:var(--dim);font-size:10px;margin:2px 0 3px;letter-spacing:.06em}
 .tt{align-self:center}
+button.ptt{font-weight:800;padding:9px 8px;background:var(--field)}button.ptt.live{background:var(--red);color:#fff;border:0}button.ptt.off{opacity:.55}
+button.fix2{flex:0 0 auto;padding:6px 10px}

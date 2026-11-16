@@ -7,7 +7,7 @@
   "license": "MIT",
   "scripts": {
     "start": "electron .",
-    "test": "node test/core.test.js && node test/phase.test.js && node test/atc.test.js"
+    "test": "node test/core.test.js && node test/phase.test.js && node test/atc.test.js && node test/voice.test.js"
   },
   "dependencies": {
     "ws": "^8.18.0"

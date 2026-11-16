@@ -65,6 +65,7 @@ class AtcPanel {
     this.armUntil = 0; this.status = null; this.atis = { icao: "", letter: "", text: "" }; this.cleared = false;
   }
   t(en, pt) { return this.lang() === "pt" ? pt : en; }
+  noFreq() { return this.t("Tune a frequency first", "Sintonize uma frequência primeiro"); }
   say(text) { this.status = { text, until: this.now() + STATUS_MS }; this.onChange(); }
   setFreq(f) { this.freq = normFreq(f); this.onChange(); return this.freq; }
 
@@ -118,6 +119,7 @@ class AtcPanel {
         fb = mode === "controller" ? this.t("Request sent to the tower", "Pedido enviado à torre") : this.t("Request sent", "Pedido enviado");
       } else if (r.code === 429) fb = this.t("Wait a moment", "Aguarde um momento");
       else if (r.code === 404) fb = this.t("Not flying yet", "Voo ainda não iniciado");
+      else if (r.code === 409 && /frequency_required/.test(r.body)) fb = this.noFreq();
       else fb = this.t("Request failed", "Falha no pedido");
     } catch (e) { fb = this.t("No connection", "Sem conexão"); }
     this.say(fb); return fb;
@@ -140,6 +142,7 @@ class AtcPanel {
       if (r.code < 400) { let mode = ""; try { mode = JSON.parse(r.body).mode; } catch (e) {} fb = mode === "controller" ? this.t("Sent to ATC", "Enviado ao ATC") : this.t("Sent, but no controller is online", "Enviado, mas não há controlador online"); }
       else if (r.code === 429) fb = this.t("Wait a moment", "Aguarde um momento");
       else if (r.code === 404) fb = this.t("Not flying yet", "Voo ainda não iniciado");
+      else if (r.code === 409 && /frequency_required/.test(r.body)) fb = this.noFreq();
       else fb = this.t("Not sent", "Não enviado");
     } catch (e) { fb = this.t("No connection", "Sem conexão"); }
     this.say(fb); return fb;
