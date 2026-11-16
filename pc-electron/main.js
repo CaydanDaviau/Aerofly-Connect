@@ -10,7 +10,7 @@ const { TcpLink, UdpLink } = require("./core/sim");
 const simbrief = require("./core/simbrief");
 
 if (!app.requestSingleInstanceLock()) app.quit();
-let win, store, flight, ov = null, ovDrag = null, ovTyping = false;
+let win, store, flight, mapWin = null, ctlWin = null, mapBig = { width: 900, height: 700 }, ov = null, ovDrag = null, ovTyping = false;
 
 function send(ch, data) { if (win && !win.isDestroyed()) win.webContents.send(ch, data); }
 
@@ -28,8 +28,39 @@ function createOverlay() {
 }
 function closeOverlay() { if (ov && !ov.isDestroyed()) ov.destroy(); ov = null; ovTyping = false; }
 function sendOv(s) { if (ov && !ov.isDestroyed()) ov.webContents.send("overlay:state", s ? s.atc : null); }
+// ---- map and controller radar in their own windows (or the browser, Settings switch) ----
+function webUrl(what) {
+  const c = store.data;
+  return SERVER + (what === "map" ? "/map" : "/atc") + "?key=" + encodeURIComponent(c.key) + (c.group ? "&group=" + encodeURIComponent(c.group) : "") + (c.lang ? "&lang=" + c.lang : "");
+}
+const isSmall = w => { const b = w.getBounds(); return b.width < 420 && b.height < 420; };
+function openWeb(what) {
+  if (store.data.browser) { shell.openExternal(webUrl(what)); return; }
+  const cur = what === "map" ? mapWin : ctlWin;
+  if (cur && !cur.isDestroyed()) { if (cur.isMinimized()) cur.restore(); cur.show(); cur.focus(); return; }
+  const w = new BrowserWindow({ width: what === "map" ? 900 : 1100, height: what === "map" ? 700 : 760, minWidth: 220, minHeight: 160, backgroundColor: "#1a1a1a", autoHideMenuBar: true, icon: path.join(__dirname, "assets", "icon.png"),
+    webPreferences: { preload: path.join(__dirname, "web-preload.js"), contextIsolation: true, nodeIntegration: false, autoplayPolicy: "no-user-gesture-required" } });
+  w.setTitle(what === "map" ? "Aerofly Connect - Map" : "Aerofly Connect - Radar");
+  w.on("page-title-updated", e => e.preventDefault());
+  w.webContents.setWindowOpenHandler(({ url }) => { if (/^https:\/\//.test(url)) shell.openExternal(url); return { action: "deny" }; });
+  w.loadURL(webUrl(what));
+  if (what === "map") {
+    mapWin = w;
+    // small window = PiP look (the page switches by size) and stays on top of the sim; big = normal window
+    const sync = () => { if (!w.isDestroyed()) w.setAlwaysOnTop(isSmall(w), "screen-saver"); };
+    w.on("resize", sync);
+    w.webContents.on("did-finish-load", () => { if (flight) pushOwn(flight.state()); });
+    w.on("closed", () => { mapWin = null; });
+  } else { ctlWin = w; w.on("closed", () => { ctlWin = null; }); }
+}
+function pushOwn(s) {
+  if (!mapWin || mapWin.isDestroyed() || !s || !s.running || !s.own) return;
+  const o = s.own, n = v => (Number.isFinite(Number(v)) ? Number(v) : null), j = JSON.stringify;
+  mapWin.webContents.executeJavaScript("window.__appOwn=true;window.setOwn&&window.setOwn(" + [n(o.lat), n(o.lon), n(o.hdg), n(o.gs), n(o.alt), j(o.callsign || ""), n(o.eta), n(o.fpm)].join(",") + ")").catch(() => {});
+}
+
 function onFlightState(s) {
-  send("flight:state", s);
+  send("flight:state", s); pushOwn(s);
   if (s.running) { createOverlay(); sendOv(s); } else closeOverlay();
 }
 
@@ -103,10 +134,14 @@ app.whenReady().then(() => {
     if (!p.error) store.set({ simbrief: u, sbRoute: { dep: p.dep, arr: p.arr, points: p.points, route: p.route } });
     return p;
   });
-  ipcMain.handle("open", (e, what) => {
-    const c = store.data, q = "?key=" + encodeURIComponent(c.key) + (c.group ? "&group=" + encodeURIComponent(c.group) : "") + (c.lang ? "&lang=" + c.lang : "");
-    shell.openExternal(SERVER + (what === "map" ? "/map" : "/atc") + q);
+  ipcMain.handle("open", (e, what) => { openWeb(what); return true; });
+  ipcMain.on("map:pip", () => {
+    if (!mapWin || mapWin.isDestroyed()) return;
+    if (isSmall(mapWin)) mapWin.setSize(mapBig.width, mapBig.height);
+    else { const b = mapWin.getBounds(); mapBig = { width: Math.max(500, b.width), height: Math.max(400, b.height) }; mapWin.setSize(380, 300); }
   });
+  // controller radar: hold-to-talk needs the microphone, only for our own server
+  require("electron").session.defaultSession.setPermissionRequestHandler((wc, perm, cb) => cb(perm === "media" && wc.getURL().startsWith(SERVER)));
 });
 
 app.on("window-all-closed", async () => { try { if (flight) await flight.stop(); } catch (e) {} app.quit(); });
