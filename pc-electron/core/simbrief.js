@@ -21,7 +21,7 @@ function parse(j) {
     p.callsign = String(a.callsign || "").toUpperCase();
     if (!p.callsign) p.callsign = (String(g.icao_airline || "") + String(g.flight_number || "")).toUpperCase();
     p.cruise = String(g.initial_altitude || ""); p.route = String(g.route || "");
-    p.model = String(ac.icaocode || "").toUpperCase();
+    p.model = String(ac.icaocode || "").toUpperCase(); p.reg = String(ac.reg || "").toUpperCase();
     if (!p.dep || !p.arr) { p.error = "noplan"; return p; }
     let fx = j.navlog && j.navlog.fix; if (fx && !Array.isArray(fx)) fx = [fx];
     const all = [];

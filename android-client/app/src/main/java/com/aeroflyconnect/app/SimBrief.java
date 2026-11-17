@@ -23,7 +23,7 @@ final class SimBrief {
     /** Parsed plan. error != null means nothing usable (see ERR_* codes). */
     static final class Plan {
         String error;
-        String callsign = "", dep = "", arr = "", depRwy = "", arrRwy = "", model = "", cruise = "", route = "";
+        String callsign = "", dep = "", arr = "", depRwy = "", arrRwy = "", model = "", reg = "", cruise = "", route = "";
         JSONArray points = new JSONArray();   // [[lat, lon, alt_ft, ident], ...]
     }
 
@@ -90,7 +90,7 @@ final class SimBrief {
                 p.cruise = gen.optString("initial_altitude", "");
                 p.route = gen.optString("route", "");
             }
-            if (ac != null) p.model = ac.optString("icaocode", "").toUpperCase();
+            if (ac != null) { p.model = ac.optString("icaocode", "").toUpperCase(); p.reg = ac.optString("reg", "").toUpperCase(); }
             if (p.dep.isEmpty() || p.arr.isEmpty()) { p.error = ERR_NOPLAN; return p; }
 
             JSONObject nav = o.optJSONObject("navlog");

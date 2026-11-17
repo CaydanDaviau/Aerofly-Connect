@@ -339,8 +339,8 @@ public class MainActivity extends Activity {
                         if (on && !Mic.permitted(MainActivity.this)) requestPermissions(new String[] { android.Manifest.permission.RECORD_AUDIO }, 4);
                     }
                 }));
-        TextView vcHint = dim(Api.t(this, "Needs the microphone permission (asked when you switch on). Takes effect at the next Start. Max 10 s per clip; with Voice off, controllers see that you cannot listen.",
-                "Precisa da permissão do microfone (pedida ao ligar). Vale a partir do próximo Iniciar. Máx. 10 s por áudio; com a voz desligada, os controladores veem que você não pode ouvir."), 13);
+        TextView vcHint = dim(Api.t(this, "Needs the microphone permission (asked when you switch on). Takes effect at the next Start. with Voice off, controllers see that you cannot listen.",
+                "Precisa da permissão do microfone (pedida ao ligar). Vale a partir do próximo Iniciar. com a voz desligada, os controladores veem que você não pode ouvir."), 13);
         vcHint.setPadding(0, pad / 4, 0, 0);
         vc.addView(vcHint);
 
@@ -703,7 +703,7 @@ public class MainActivity extends Activity {
         EditText arrrwy = addField(rw, Api.t(this, "Arr runway (e.g. 11R)", "Pista de chegada (ex. 11R)"), Api.field(this, "arrrwy"), true, false);
         LinearLayout r2 = fieldRow(card);
         EditText model = addField(r2, Api.t(this, "Aircraft model", "Modelo da aeronave"), Api.field(this, "model"), true, false);
-        EditText livery = addField(r2, Api.t(this, "Airline / livery", "Companhia / pintura"), Api.field(this, "livery"), false, false);
+        EditText livery = addField(r2, Api.t(this, "Registration (e.g. N899SB)", "Matrícula (ex. PR-ABC)"), Api.field(this, "livery"), false, false);
         EditText cruise = addField(card, Api.t(this, "Cruise alt (ft)", "Altitude de cruzeiro (ft)"), Api.field(this, "cruise"), false, true);
         EditText route = addField(card, Api.t(this, "Route (optional)", "Rota (opcional)"), Api.field(this, "route"), true, false);
         extra = new EditText[]{dep, arr, deprwy, arrrwy, model, livery, cruise, route};   // same order as EXTRA_KEYS
@@ -772,7 +772,7 @@ public class MainActivity extends Activity {
                         }
                         if (PilotService.running || callsignBox == null || extra == null) return;
                         if (!p.callsign.isEmpty()) callsignBox.setText(p.callsign);
-                        String[] v = {p.dep, p.arr, p.depRwy, p.arrRwy, p.model, null, p.cruise, p.route};   // same order as EXTRA_KEYS (livery untouched)
+                        String[] v = {p.dep, p.arr, p.depRwy, p.arrRwy, p.model, p.reg, p.cruise, p.route};   // same order as EXTRA_KEYS (livery field = registration)
                         for (int i = 0; i < v.length; i++) if (v[i] != null && !v[i].isEmpty()) extra[i].setText(v[i]);
                         SimBrief.store(MainActivity.this, p);
                         Toast.makeText(MainActivity.this, Api.t(MainActivity.this, "Imported ", "Importado ") + p.dep + " \u2192 " + p.arr

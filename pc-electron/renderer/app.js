@@ -45,7 +45,7 @@
   // ---------- Pilot ----------
   const FIELDS = [["callsign", "Callsign", "Indicativo"], ["dep", "Departure (ICAO)", "Partida (ICAO)"], ["arr", "Arrival (ICAO)", "Chegada (ICAO)"],
     ["deprwy", "Dep runway", "Pista de partida"], ["arrrwy", "Arr runway", "Pista de chegada"], ["model", "Aircraft model", "Modelo da aeronave"],
-    ["livery", "Livery", "Pintura"], ["cruise", "Cruise altitude", "Altitude de cruzeiro"], ["route", "Route", "Rota"]];
+    ["livery", "Registration (e.g. N899SB)", "Matrícula (ex. PR-ABC)"], ["cruise", "Cruise altitude", "Altitude de cruzeiro"], ["route", "Route", "Rota"]];
 
   function pilotScreen() {
     const f = cfg.flight, inputs = {};
@@ -56,7 +56,7 @@
       if (!cfg.simbrief) { sbMsg.textContent = t("Enter your SimBrief username or ID in Settings first.", "Digite seu usuário ou ID do SimBrief em Configurações primeiro."); return; }
       sbMsg.textContent = "…"; const p = await window.afc.simbrief(cfg.simbrief);
       if (p.error) { sbMsg.textContent = { net: t("No connection to SimBrief.", "Sem conexão com o SimBrief."), user: t("SimBrief user not found.", "Usuário do SimBrief não encontrado."), noplan: t("No flight plan found.", "Nenhum plano de voo encontrado."), bad: t("Unreadable answer.", "Resposta ilegível.") }[p.error]; return; }
-      const set = { callsign: p.callsign, dep: p.dep, arr: p.arr, deprwy: p.depRwy, arrrwy: p.arrRwy, model: p.model, cruise: p.cruise, route: p.route };
+      const set = { callsign: p.callsign, dep: p.dep, arr: p.arr, deprwy: p.depRwy, arrrwy: p.arrRwy, model: p.model, livery: p.reg || undefined, cruise: p.cruise, route: p.route };
       for (const k in set) { if (set[k]) { f[k] = set[k]; inputs[k].value = set[k]; } }
       window.afc.setFlight(f); cfg.sbRoute = { dep: p.dep }; sbMsg.textContent = t("Imported ", "Importado ") + p.dep + " → " + p.arr + " (" + p.points.length + " " + t("waypoints", "pontos") + ")";
     } }, t("Import from SimBrief", "Importar do SimBrief"));
