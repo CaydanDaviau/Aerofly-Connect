@@ -739,7 +739,7 @@ final class Overlay {
         if (micRec) return;
         if (PilotService.freq.isEmpty()) { setStatus(Api.t(ctx, "Tune a frequency to talk", "Sintonize uma frequência para falar"), 4000); return; }
         // live over the socket when it is up; otherwise the old record-then-send clip
-        micLive = WsLink.live();
+        micLive = false;   // pilot -> ATC goes as a clip (autoplays + history on /atc); ATC -> pilot stays live
         String err = micLive ? LiveVoice.startTx(ctx) : Mic.start(ctx);
         if (err != null) { setStatus(err, 5000); return; }
         micRec = true;
