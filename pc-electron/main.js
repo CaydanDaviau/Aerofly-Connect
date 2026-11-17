@@ -132,11 +132,13 @@ app.whenReady().then(() => {
   ipcMain.handle("atc:atis", (e, icao) => A() ? A().fetchAtis(icao) : null);
   ipcMain.handle("atc:freq", (e, mode, v) => { const a = A(); if (!a) return ""; return a.setFreq(mode === "step" ? stepFreq(a.freq, v.dir, v.khz) : v); });
 
+  let latestPc = "";
+  ipcMain.handle("latest", () => latestPc);
   ipcMain.handle("health", async () => {
     try {
       const h = { "X-API-Key": store.data.key }; if (store.data.group) h["X-Group"] = store.data.group;
       const r = await fetch(SERVER + "/api/health", { headers: h });
-      const j = await r.json(); return j.pilots !== undefined ? j.pilots : j.active_clients;
+      const j = await r.json(); latestPc = j.latest_pc || ""; return j.pilots !== undefined ? j.pilots : j.active_clients;
     } catch (e) { return null; }
   });
   ipcMain.handle("simbrief", async (e, u) => {
@@ -144,7 +146,7 @@ app.whenReady().then(() => {
     if (!p.error) store.set({ simbrief: u, sbRoute: { dep: p.dep, arr: p.arr, points: p.points, route: p.route } });
     return p;
   });
-  ipcMain.handle("open", (e, what) => { openWeb(what); return true; });
+  ipcMain.handle("open", (e, what) => { if (what === "update") shell.openExternal("https://github.com/CaydanDaviau/Aerofly-Connect/releases/tag/pc2-latest"); else openWeb(what); return true; });
   ipcMain.on("map:pip", () => {
     if (!mapWin || mapWin.isDestroyed()) return;
     if (isSmall(mapWin)) mapWin.setSize(mapBig.width, mapBig.height);

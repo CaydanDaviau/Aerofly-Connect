@@ -156,6 +156,14 @@ public class MainActivity extends Activity {
         menuOnline.setGravity(Gravity.CENTER);
         menuOnline.setVisibility(View.GONE);
         root.addView(menuOnline, Ui.lp(this, 10));
+        menuUpd = text("", 14, true);
+        menuUpd.setGravity(Gravity.CENTER);
+        menuUpd.setTextColor(0xFFFFC107);
+        menuUpd.setVisibility(View.GONE);
+        menuUpd.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/CaydanDaviau/Aerofly-Connect/releases/tag/android-latest")));
+        } });
+        root.addView(menuUpd, Ui.lp(this, 10));
         menuCrash = text("", 15, true);
         menuCrash.setGravity(Gravity.CENTER);
         menuCrash.setTextColor(Ui.RED);
@@ -193,7 +201,7 @@ public class MainActivity extends Activity {
     }
 
     // ---------- Start screen: online count + crash timeout ----------
-    private TextView menuOnline, menuCrash;
+    private TextView menuOnline, menuCrash, menuUpd;
     private Runnable menuTick;
     private int menuTicks;
     private String menuGroup = "";
@@ -227,21 +235,40 @@ public class MainActivity extends Activity {
         if (!PilotService.running) WsLink.close();
     }
 
+    /** True when version a ("1.1.3") is newer than b. */
+    private static boolean newer(String a, String b) {
+        if (a == null || a.isEmpty()) return false;
+        String[] x = a.split("\\."), y = b.split("\\.");
+        for (int i = 0; i < Math.max(x.length, y.length); i++) {
+            int p, q;
+            try { p = i < x.length ? Integer.parseInt(x[i].replaceAll("\\D", "")) : 0; q = i < y.length ? Integer.parseInt(y[i].replaceAll("\\D", "")) : 0; } catch (Exception e) { return false; }
+            if (p != q) return p > q;
+        }
+        return false;
+    }
+
     private void fetchOnline() {
         final String key = Api.key(this);
         new Thread(new Runnable() {
             @Override public void run() {
-                int n = -1;
+                int n = -1; String latest = "";
                 try {
                     Api.Resp r = Api.request("GET", "/api/health", null, key);
                     if (r.code < 400) {
                         org.json.JSONObject j = new org.json.JSONObject(r.body);
                         n = j.has("pilots") ? j.optInt("pilots", -1) : j.optInt("active_clients", -1);
+                        latest = j.optString("latest_android", "");
                     }
                 } catch (Exception ignored) { }
-                final int fn = n;
+                final int fn = n; final String fl = latest;
                 ui.post(new Runnable() {
                     @Override public void run() {
+                        TextView u = menuUpd;
+                        if (u != null) {
+                            boolean old = newer(fl, BuildConfig.VERSION_NAME);
+                            u.setVisibility(old ? View.VISIBLE : View.GONE);
+                            if (old) u.setText(Api.t(MainActivity.this, "Update available: v" + fl + " (tap to download)", "Atualização disponível: v" + fl + " (toque para baixar)"));
+                        }
                         TextView v = menuOnline;
                         if (v == null) return;
                         if (fn < 0) { v.setVisibility(View.GONE); return; }

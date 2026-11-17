@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld("afc", {
   stop: () => ipcRenderer.invoke("flight:stop"),
   state: () => ipcRenderer.invoke("flight:state"),
   health: () => ipcRenderer.invoke("health"),
+  latest: () => ipcRenderer.invoke("latest"),
   simbrief: u => ipcRenderer.invoke("simbrief", u),
   open: w => ipcRenderer.invoke("open", w),
   onState: cb => ipcRenderer.on("flight:state", (e, s) => cb(s)),

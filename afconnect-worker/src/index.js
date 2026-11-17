@@ -1,4 +1,5 @@
 import { parseMetar, wxSig, nextLetter } from "./atis.js";
+import { distSeg } from "./taxi.js";
 import { fetchGraph, nearest, holdNode, route as taxiRoute, legs as taxiLegs, spokenName, dist as gDist } from "./taxi.js";
 // Community backend for the Abflug Android client (v1.5.0) on Cloudflare Workers.
 // All state lives in one Durable Object (in memory, TTL-based).
@@ -112,6 +113,8 @@ function computeTA(a, b) {
 }
 
 // ---- Auto-ATC (basic clearances for pilots when no human controller covers the airport) ----
+// Newest released app versions: bump when a new APK / PC build is published; clients older than this show an update notice.
+const LATEST = { android: "1.1.3", pc: "2.1.0" };
 const REQ_TYPES = ["clearance", "pushback", "taxi", "takeoff", "land", "mayday", "mayday_cancel"];
 const MAYDAY_MS = 30 * 60_000, MAYDAY_NEAR_MI = 30;
 const REQ_LOCK_MS = { takeoff: 90_000, land: 120_000 };
@@ -126,6 +129,7 @@ const PHRASE = {
     clearance: (dest, r, sq) => `Cleared ${dest ? "to " + dest + " " : ""}as filed${r ? ", departure runway " + r : ""}, squawk ${sq}`,
     taxi: r => r ? `Taxi to runway ${r}, hold short` : "Taxi to the runway, hold short",
     pushback: r => `Pushback approved${r ? ", expect runway " + r : ""}`,
+    direct: f => `Proceed direct ${f}`, offRoute: f => `You appear off route, say intentions${f ? " or proceed direct " + f : ""}`, expectRwy: r => `Expect runway ${r}`,
     gTaxiOut: (r, via) => `Taxi to runway ${r}${via ? " via " + via : ""}, hold short runway ${r}`,
     gTaxiGate: (g, via) => `Taxi to ${g ? "gate " + g : "the gate"}${via ? " via " + via : ""}`,
     gHold: (via, r) => `Taxi${via ? " via " + via : ""}, hold short of runway ${r}`,
@@ -150,6 +154,7 @@ const PHRASE = {
     clearance: (dest, r, sq) => `Autorizado${dest ? " para " + dest : ""} conforme o plano${r ? ", pista de saída " + r : ""}, código ${sq}`,
     taxi: r => r ? `Táxi para a pista ${r}, aguarde antes da pista` : "Táxi para a pista, aguarde antes da pista",
     pushback: r => `Pushback autorizado${r ? ", espere a pista " + r : ""}`,
+    direct: f => `Proceda direto a ${f}`, offRoute: f => `Você parece fora da rota, informe intenções${f ? " ou proceda direto a " + f : ""}`, expectRwy: r => `Espere a pista ${r}`,
     gTaxiOut: (r, via) => `Táxi para a pista ${r}${via ? " via " + via : ""}, aguarde antes da pista ${r}`,
     gTaxiGate: (g, via) => `Táxi para ${g ? "o portão " + g : "o portão"}${via ? " via " + via : ""}`,
     gHold: (via, r) => `Táxi${via ? " via " + via : ""}, aguarde antes da pista ${r}`,
@@ -281,6 +286,32 @@ export class Hub {
     for (const [k, t] of this.towers) if (now - t.at > (t.holder ? POS_TTL_MS : TOWER_TTL_MS)) { this.towers.delete(k); this.ctx.storage.delete("tower:" + k); }
   }
 
+
+
+  // ---- waypoint tracking on the pilot's own route (SimBrief / route upload): next fix, direct-to, off-route
+  wpTrack(c, st, p, now, say, ph, cur, an) {
+    const pts = c.route && c.route.points;
+    if (!pts || pts.length < 2) { st.wp = null; return; }
+    const la = p.latitude, lo = p.longitude;
+    const nm = (a, b) => haversineMi(la, lo, a, b) * 0.868976;
+    const w = st.wp && st.wp.at === c.route.at ? st.wp : (st.wp = { at: c.route.at, i: 0, off: 0, said: 0 });
+    const id = i => String(pts[i][3] || "").trim();
+    const named = i => /^[A-Z0-9]{2,7}$/.test(id(i)) && !/^[A-Z]{4}$/.test(id(i));   // skip airport idents / blanks
+    // advance: first fix not yet reached (within 4 nm or already passed along the leg)
+    while (w.i < pts.length - 1 && nm(pts[w.i][0], pts[w.i][1]) < 4) w.i++;
+    if (cur !== "air") { w.i = 0; w.off = 0; return; }
+    let n = w.i; while (n < pts.length - 1 && !named(n)) n++;
+    const fix = named(n) ? id(n) : "";
+    // first call after departure: direct to the first named fix
+    if (!st.calls.direct && fix && st.calls.dep) { st.calls.direct = true; say(ph.direct(fix), false); }
+    // off route: more than 10 nm from the active leg for 60 s (not near either airport's terminal area)
+    const a = w.i > 0 ? pts[w.i - 1] : null, b = pts[w.i];
+    const from = a ? { lat: a[0], lon: a[1] } : null, to = { lat: b[0], lon: b[1] };
+    const xt = from ? distSeg(la, lo, from, to) / 1852 : nm(to.lat, to.lon);
+    const term = (Number.isFinite(an) && an < 25) || haversineMi(la, lo, pts[0][0], pts[0][1]) < 15;
+    if (!term && xt > 10) { if (!w.off) w.off = now; } else w.off = 0;
+    if (w.off && now - w.off > 60_000 && now - w.said > 5 * 60_000) { w.said = now; say(ph.offRoute(fix), false); }
+  }
 
   // ---- ground routing (taxiway names from OSM/Overpass; cached per airport 24 h, failures retried after 2 min)
   graphFor(apt, lat, lon) {
@@ -481,12 +512,14 @@ export class Hub {
       if (Number(p.arr_nm) > 6) st.calls.ga = false;
       // arrival handoffs: approach, then tower (once each per approach; reset when far away again)
       const an = Number(p.arr_nm);
+      this.wpTrack(c, st, p, now, say, ph, cur, an);
       if (arr && Number.isFinite(an) && p.arr_nm !== null && p.arr_nm !== undefined) {
         if (an > 45) { st.calls.app = false; st.calls.twr = false; }
         else if (an <= 12 && !st.calls.twr) {
           st.calls.twr = true; st.calls.app = true; const f = this.pf(p.fq_arr, arr, ["TWR"]); say(ph.tower(f), false, "Tower" + (f ? " " + f : ""));
         } else if (an <= 35 && an > 12 && !st.calls.app) {
           st.calls.app = true; const f = this.pf(p.fq_arr, arr, ["APP", "DEP"]); say(ph.approach(f), false, "Approach" + (f ? " " + f : ""));
+          const er = cleanRunway(plan.arrival_runway); if (er) say(ph.expectRwy(er), false);
         }
       }
     } else {
@@ -1154,7 +1187,7 @@ export class Hub {
     }
 
     if (m === "GET" && p === "/api/health")
-      return json({ status: "ok", active_clients: this.clients.size, pilots: [...this.clients.values()].filter(c => c.pos).length, towers: this.towers.size, member: request.headers.get("X-Member") === "1", atc: this.atcState(request) === "1", atc_required: this.atcState(request) !== "n", mgr: request.headers.get("X-Mgr") === "1" });
+      return json({ status: "ok", latest_android: LATEST.android, latest_pc: LATEST.pc, active_clients: this.clients.size, pilots: [...this.clients.values()].filter(c => c.pos).length, towers: this.towers.size, member: request.headers.get("X-Member") === "1", atc: this.atcState(request) === "1", atc_required: this.atcState(request) !== "n", mgr: request.headers.get("X-Mgr") === "1" });
 
     if (m === "GET" && p === "/api/traffic") {
       const q = url.searchParams;

@@ -68,3 +68,36 @@ await new Promise(r => setTimeout(r, 80));
 r = await pos("t1", { latitude: N.R1.lat, longitude: N.R1.lon + .0005, phase: "runway", ground_speed: 15 });
 T("gate route after landing", r.messages.some(m => /^Táxi para o portão G1 via Charlie/.test(m.text)));
 globalThis.fetch = realFetch;
+
+// ---- waypoint tracking
+{
+  const store2 = new Map();
+  const ctx2 = { storage: { get: async k => store2.get(k), put: async (k, v) => store2.set(k, v), delete: async k => store2.delete(k), list: async () => new Map() }, blockConcurrencyWhile: async f => f() };
+  const h2 = new Hub(ctx2);
+  const env2 = { HUB: { idFromName: () => 1, get: () => ({ fetch: (r, init) => h2.fetch(init && init.headers ? new Request(r, { headers: init.headers }) : r) }) } };
+  const c2 = async (m, p, b, k) => { const r = await worker.fetch(new Request("https://x" + p, { method: m, body: b && JSON.stringify(b), headers: { "X-API-Key": k } }), env2); return JSON.parse((await r.text()) || "{}"); };
+  const W = (n, v) => console.log("wp " + n + ":", v ? "PASS" : "FAIL");
+  await c2("PUT", "/api/flightplan", { callsign: "WP1", departure_airport: "SBBR", arrival_airport: "SBGR", arrival_runway: "09R" }, "w1");
+  const pos2 = o => c2("PUT", "/api/position", { latitude: -15.87, longitude: -47.92, altitude_ft: 3500, ground_speed: 0, freq: "118.000", phase: "ground", ...o }, "w1");
+  await pos2({});
+  await c2("PUT", "/api/flightplan/route", { points: [[-15.87, -47.92, 0, "SBBR"], [-16.5, -47.5, 20000, "ABCDE"], [-20, -46, 30000, "FGHIJ"], [-23.4, -46.4, 0, "SBGR"]], route: "x" }, "w1");
+  await pos2({ phase: "runway", rwy_on: "11R/29L", on_rwy: "29L", rwy_apt: "SBBR", ground_speed: 80 });
+  hub2: { const cl = h2.clients.get("w1"); cl.st.gr.takeoff = Date.now() + 60000; cl.st.grace = 0; }
+  let rr = await pos2({ phase: "air", altitude_ft: 4500, ground_speed: 150, latitude: -15.9, longitude: -47.9 });
+  W("direct to first fix after departure", rr.messages.some(m => m.text === "Proceed direct ABCDE"));
+  rr = await pos2({ phase: "air", altitude_ft: 8000, ground_speed: 200, latitude: -15.95, longitude: -47.85 });
+  W("direct said once", !rr.messages.some(m => /direct ABCDE/.test(m.text)));
+  // way off the leg for over a minute
+  const cl = h2.clients.get("w1");
+  rr = await pos2({ phase: "air", altitude_ft: 20000, ground_speed: 300, latitude: -17, longitude: -43 });
+  cl.st.wp.off = Date.now() - 61000;
+  rr = await pos2({ phase: "air", altitude_ft: 20000, ground_speed: 300, latitude: -17, longitude: -43 });
+  W("off-route call", rr.messages.some(m => /off route, say intentions/.test(m.text)));
+  rr = await pos2({ phase: "air", altitude_ft: 20000, ground_speed: 300, latitude: -17, longitude: -43 });
+  W("off-route not repeated", !rr.messages.some(m => /off route/.test(m.text)));
+  // approach call also gives expected runway
+  rr = await pos2({ phase: "air", altitude_ft: 9000, ground_speed: 250, latitude: -23, longitude: -46.5, arr_nm: 30 });
+  W("approach + expect runway", rr.messages.some(m => /Contact approach/.test(m.text)) && rr.messages.some(m => m.text === "Expect runway 09R"));
+  const hl = await worker.fetch(new Request("https://x/api/health"), env2); const hj = await hl.json();
+  W("health carries latest versions", typeof hj.latest_android === "string" && typeof hj.latest_pc === "string");
+}

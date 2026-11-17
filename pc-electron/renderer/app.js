@@ -25,9 +25,13 @@
   function startScreen() {
     const count = h("div", { class: "count" }, "● …");
     const banner = h("div", { class: "banner", style: "display:none" });
+    const updBar = h("div", { class: "banner", style: "display:none;cursor:pointer;background:#FFC107;color:#000", onclick: () => window.afc.open("update") });
+    const newer = (a, b) => { const x = String(a).split("."), y = String(b).split("."); for (let i = 0; i < Math.max(x.length, y.length); i++) { const p = parseInt(x[i]) || 0, q = parseInt(y[i]) || 0; if (p !== q) return p > q; } return false; };
     const upd = async () => {
       const n = await window.afc.health();
       count.textContent = n == null ? "" : "● " + n + t(n === 1 ? " pilot flying" : " pilots flying", n === 1 ? " piloto voando" : " pilotos voando");
+      const lv = await window.afc.latest();
+      if (lv && newer(lv, cfg.version)) { updBar.style.display = ""; updBar.textContent = t("Update available: v" + lv + " (click to download)", "Atualização disponível: v" + lv + " (clique para baixar)"); } else updBar.style.display = "none";
       const left = (cfg.crashUntil || 0) - Date.now();
       banner.style.display = left > 0 ? "" : "none";
       if (left > 0) banner.textContent = t("Crash timeout - you can fly again in ", "Castigo por queda - você pode voar de novo em ") + mmss(left);
@@ -35,7 +39,7 @@
     upd(); healthT = setInterval(upd, 15000); tick = setInterval(() => { const left = (cfg.crashUntil || 0) - Date.now(); banner.style.display = left > 0 ? "" : "none"; if (left > 0) banner.textContent = t("Crash timeout - you can fly again in ", "Castigo por queda - você pode voar de novo em ") + mmss(left); }, 1000);
     root.append(
       h("img", { class: "logo", src: "../assets/logo.png" }), h("h1", {}, "Aerofly Connect"),
-      h("div", { class: "ver" }, "v" + cfg.version + " PC"), count, banner,
+      h("div", { class: "ver" }, "v" + cfg.version + " PC"), count, updBar, banner,
       h("div", { class: "card click", onclick: () => go("pilot") }, h("h2", {}, "Pilot"), h("p", {}, t("Share your flight with other pilots and ATC", "Compartilhe seu voo com outros pilotos e o ATC"))),
       h("div", { class: "card click", onclick: () => window.afc.open("atc") }, h("h2", {}, t("Controller", "Controlador")), h("p", {}, t("See the radar and message pilots (opens in your browser)", "Veja o radar e envie mensagens aos pilotos (abre no navegador)"))),
       h("button", { class: "wide", onclick: () => go("settings") }, t("Settings", "Configurações")),
