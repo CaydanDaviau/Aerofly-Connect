@@ -173,6 +173,12 @@ public class MainActivity extends Activity {
                     @Override public void onClick(View v) { startActivity(new Intent(MainActivity.this, ControllerActivity.class)); }
                 }), Ui.lp(this, 12));
 
+        Button prof = Ui.button(this, Api.t(this, "Profile", "Perfil"), Ui.SECONDARY);
+        prof.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { showProfile(); }
+        });
+        root.addView(prof, Ui.lp(this, 12));
+
         Button set = Ui.button(this, Api.t(this, "Settings", "Configurações"), Ui.SECONDARY);
         set.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { showSettings(); }
@@ -258,6 +264,76 @@ public class MainActivity extends Activity {
         super.onResume();
         // Back from the system permission screen: redraw Settings with the new state.
         if (awaitingOverlay) { awaitingOverlay = false; if (inSettings) showSettings(); }
+    }
+
+    // ---------- Profile: nickname (server) + flight time + ATC time ----------
+    private void showProfile() {
+        stopTicker();
+        status = null;
+        inSettings = true;   // Back returns to the start screen
+        LinearLayout root = column();
+        root.addView(text(Api.t(this, "Profile", "Perfil"), 24, true));
+        LinearLayout card = section(root, Api.t(this, "Pilot / controller", "Piloto / controlador"));
+        final EditText nick = addField(card, Api.t(this, "Nickname", "Apelido"), "", false, false);
+        nick.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(20)});
+        final TextView flight = text("", 18, true), atc = text("", 18, true);
+        card.addView(dim(Api.t(this, "Flight time (in the air)", "Tempo de voo (no ar)"), 13));
+        card.addView(flight);
+        card.addView(dim(Api.t(this, "ATC time (holding a division)", "Tempo de ATC (com uma divisão)"), 13));
+        card.addView(atc);
+        flight.setText("--"); atc.setText("--");
+        final Button save = Ui.button(this, Api.t(this, "Save nickname", "Salvar apelido"), Ui.PRIMARY);
+        root.addView(save, Ui.lp(this, 12));
+        final String key = Api.key(this);
+        final boolean[] loaded = {false};
+        final Runnable[] done = new Runnable[1];
+        new Thread(new Runnable() {
+            @Override public void run() {
+                try {
+                    Api.Resp r = Api.request("GET", "/api/profile", null, key);
+                    if (r.code < 400) {
+                        final org.json.JSONObject j = new org.json.JSONObject(r.body);
+                        ui.post(new Runnable() {
+                            @Override public void run() {
+                                if (!inSettings) return;
+                                loaded[0] = true;
+                                nick.setText(j.optString("nick", ""));
+                                flight.setText(hm(j.optLong("flight_s", 0)));
+                                atc.setText(hm(j.optLong("atc_s", 0)));
+                            }
+                        });
+                    }
+                } catch (Exception ignored) { }
+            }
+        }).start();
+        save.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                final String n = nick.getText().toString().trim();
+                new Thread(new Runnable() {
+                    @Override public void run() {
+                        boolean ok = false;
+                        try {
+                            Api.Resp r = Api.request("PUT", "/api/profile", new org.json.JSONObject().put("nick", n).toString(), key);
+                            ok = r.code < 400;
+                        } catch (Exception ignored) { }
+                        final boolean fok = ok;
+                        ui.post(new Runnable() {
+                            @Override public void run() {
+                                Toast.makeText(MainActivity.this, fok ? Api.t(MainActivity.this, "Saved", "Salvo") : Api.t(MainActivity.this, "No connection", "Sem conexão"), Toast.LENGTH_SHORT).show();
+                            }
+                        });
+                    }
+                }).start();
+            }
+        });
+        ScrollView sv = new ScrollView(this);
+        sv.addView(root);
+        setContentView(Ui.withBackground(this, sv, R.drawable.bg_settings));
+    }
+
+    private static String hm(long s) {
+        long m = s / 60;
+        return (m / 60) + " h " + String.format(java.util.Locale.US, "%02d", m % 60) + " min";
     }
 
     private void showSettings() {

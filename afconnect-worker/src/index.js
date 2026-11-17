@@ -11,6 +11,7 @@ const TOWER_TTL_MS = 120_000;   // an airport expires this long after its owner'
 const MAX_TOWERS = 50;
 // Positions of one airport: key = ICAO (TWR, kept for old towers) or ICAO_DEL / _GND / _APP / _DEP.
 // A claimed position (the page sends a `holder` id + heartbeat) is freed POS_TTL_MS after the last heartbeat.
+const ROLE_COOLDOWN_MS = 120_000;
 const POS_TTL_MS = 120_000;
 const POS_NAMES = ["DEL", "GND", "TWR", "APP", "DEP"];
 // Which positions can answer each request when staffed (next one up covers the one below it).
@@ -242,12 +243,13 @@ export class Hub {
   constructor(ctx) {
     this.towers = new Map(); this.creds = new Map(); this.credOn = false; this.wx = new Map(); this.crashes = new Map(); this.ta = new Map();
     this.voiceStreams = new Map(); this.latestVoiceByPeer = new Map();
-    this.clients = new Map(); this.msgs = new Map(); this.rwy = new Map(); this.rwyQ = new Map(); this.violations = []; this.clips = new Map(); this.listeners = new Map(); this.msgSeq = 0; this.since = Date.now(); this.counts = {};
+    this.prof = new Map(); this.lastClaim = new Map(); this.clients = new Map(); this.msgs = new Map(); this.rwy = new Map(); this.rwyQ = new Map(); this.violations = []; this.clips = new Map(); this.listeners = new Map(); this.msgSeq = 0; this.since = Date.now(); this.counts = {};
     ctx.blockConcurrencyWhile(async () => {
       for (const [k, v] of await ctx.storage.list({ prefix: "tower:" })) this.towers.set(k.slice(6), v);
       for (const [k, v] of await ctx.storage.list({ prefix: "cred:" })) this.creds.set(k.slice(5), v);
       this.credOn = !!(await ctx.storage.get("credon")) || this.creds.size > 0;
       for (const [k, v] of await ctx.storage.list({ prefix: "crash:" })) this.crashes.set(k.slice(6), v);
+      for (const [k, v] of await ctx.storage.list({ prefix: "prof:" })) this.prof.set(k.slice(5), v);
     }); this.ctx = ctx; }
 
   purge() {
@@ -264,6 +266,13 @@ export class Hub {
     for (const [k, t] of this.towers) if (now - t.at > (t.holder ? POS_TTL_MS : TOWER_TTL_MS)) { this.towers.delete(k); this.ctx.storage.delete("tower:" + k); }
   }
 
+  // Profile: nickname + flight time (airborne) + ATC time (holding a role), per app key. Saved at most once a minute.
+  profGet(key) { let p = this.prof.get(key); if (!p) { p = { nick: "", flight_s: 0, atc_s: 0, saved: 0 }; this.prof.set(key, p); } return p; }
+  profAdd(key, field, secs, now) {
+    if (!key || !(secs > 0)) return;
+    const p = this.profGet(key); p[field] += secs;
+    if (now - p.saved > 60_000) { p.saved = now; this.ctx.storage.put("prof:" + key, p); }
+  }
   activeAtcHolder(holder) {
     if (!holder) return false;
     const now = Date.now();
@@ -926,6 +935,14 @@ export class Hub {
       // one controller per position: a live claim by someone else blocks (heartbeats keep it alive)
       if (old && old.holder && holder && old.holder !== holder && now - old.at <= POS_TTL_MS) return json({ error: "position_taken", position: pn.pos, airport: pn.apt }, 409);
       if (old && old.holder && !holder && now - old.at <= POS_TTL_MS) return json({ error: "position_taken", position: pn.pos, airport: pn.apt }, 409);
+      if (holder && pn.pos !== "APT") {
+        if (old && old.holder === holder) this.profAdd(key, "atc_s", Math.min(now - old.at, 60_000) / 1000, now);
+        else {   // taking a NEW role: 2 minutes after the last one taken before another can be taken
+          const lc = this.lastClaim.get(holder);
+          if (lc && lc.name !== name && now - lc.at < ROLE_COOLDOWN_MS) return json({ error: "role_cooldown", remaining_s: Math.ceil((ROLE_COOLDOWN_MS - (now - lc.at)) / 1000) }, 409);
+          this.lastClaim.set(holder, { name, at: now });
+        }
+      }
       const atis = old && old.atis;
       const t = { name, apt: pn.apt, pos: pn.pos, freq, holder: holder || undefined, ctl: holder ? (this.ctlName(request) || undefined) : undefined, oip: (old && old.oip) || ipt || undefined, latitude: lat, longitude: lon, altitude_ft: Number(d.altitude_ft) || 0, at: now, member: request.headers.get("X-Member") === "1", atis };
       if (pn.pos === "APT") {   // the creator owns the airport (kept across re-PUTs); bans live on the airport record
@@ -936,6 +953,15 @@ export class Hub {
       this.towers.set(name, t);
       await this.ctx.storage.put("tower:" + name, t);
       return json({ success: true, callsign: "ATC_" + name, position: pn.pos, airport: pn.apt });
+    }
+    if (p === "/api/profile") {
+      const pr = this.profGet(key);
+      if (m === "PUT" || m === "POST") {
+        const d = await request.json().catch(() => ({}));
+        pr.nick = String(d.nick ?? "").replace(/[\u0000-\u001f<>]/g, "").trim().slice(0, 20); pr.saved = Date.now();
+        this.ctx.storage.put("prof:" + key, pr);
+      }
+      if (m === "GET" || m === "PUT" || m === "POST") return json({ nick: pr.nick, flight_s: Math.round(pr.flight_s), atc_s: Math.round(pr.atc_s) });
     }
     if (m === "DELETE" && p === "/api/atc/tower") {
       if (this.noCred(request)) return json({ error: "atc_credential" }, 403);
@@ -1076,6 +1102,7 @@ export class Hub {
         c = { plan: (await this.ctx.storage.get("plan:" + key)) || {}, route: (await this.ctx.storage.get("route:" + key)) || null,
               assigned: rec && Date.now() - rec.at < ASSIGN_TTL_MS ? rec : null };
       }
+      if (pos.phase === "air" && c.seen) this.profAdd(key, "flight_s", Math.min(Date.now() - c.seen, 10_000) / 1000, Date.now());
       c.pos = pos; c.seen = Date.now(); c.member = request.headers.get("X-Member") === "1";
       const lg = pick(d, "lang"); if (lg === "pt" || lg === "en") c.lang = lg;
       const lf = Number(pos.landing_fpm);
