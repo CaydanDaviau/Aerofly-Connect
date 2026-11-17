@@ -110,9 +110,9 @@ function render(){
   var pl=[],tw=[],tr=[],compact=document.body.classList.contains('pip');
   lastTraffic.forEach(function(a){
     var id=a.icao_address||a.callsign;
-    if(a.virtual_tower){tw.push(pt(a.longitude,a.latitude,{label:a.callsign||'TWR',m:a.member?1:0}));return}
+    if(a.virtual_tower){var cn=(a.positions||[]).filter(function(q){return q.claimed&&q.nick}).map(function(q){return q.pos+' '+q.nick});tw.push(pt(a.longitude,a.latitude,{label:(a.callsign||'TWR')+(cn.length?'\n'+cn.join(', '):''),m:a.member?1:0}));return}
     if(a.self)return;
-    pl.push(pt(a.longitude,a.latitude,{label:a.callsign||id,h:Number(a.heading_true)||0,id:String(id),m:a.member?1:0}));
+    pl.push(pt(a.longitude,a.latitude,{label:(a.callsign||id)+(a.nick?' ('+a.nick+')':''),h:Number(a.heading_true)||0,id:String(id),m:a.member?1:0}));
     var sg=segs(id);if(sg.length)tr.push({type:'Feature',geometry:{type:'MultiLineString',coordinates:sg},properties:{c:a.member?'#7b3fe4':'#e8710a'}});
   });
   map.getSource('planes').setData({type:'FeatureCollection',features:pl});
@@ -212,7 +212,7 @@ map.on('click','planes',function(e){
   var f=e.features&&e.features[0];if(!f)return;
   var a=lastTraffic.filter(function(x){return String(x.icao_address||x.callsign)===f.properties.id})[0];if(!a)return;
   var box=document.createElement('div');box.style.cssText='font:12px system-ui,sans-serif;color:#111;line-height:1.45';
-  var t=document.createElement('div');t.style.cssText='font:700 14px system-ui,sans-serif';t.textContent=a.callsign||a.icao_address;box.appendChild(t);
+  var t=document.createElement('div');t.style.cssText='font:700 14px system-ui,sans-serif';t.textContent=(a.callsign||a.icao_address)+(a.nick?' \u00b7 '+a.nick:'');box.appendChild(t);
   row(box,'Aircraft:',a.airplane_model||'');
   row(box,'Route:',[a.departure_airport,a.arrival_airport].filter(Boolean).join(' → '));
   row(box,'ALT:',altStr(a.altitude_ft));

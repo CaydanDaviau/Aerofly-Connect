@@ -406,7 +406,7 @@ function draw(){
       var gs=Number(a.ground_speed)||0,hd=(Number(a.heading_true)||0)*Math.PI/180;
       if(gs>3){var len=Math.min(60,(gs/60)/nmpp);g.beginPath();g.moveTo(x,y);g.lineTo(x+Math.sin(hd)*len,y-Math.cos(hd)*len);g.stroke()}}
     g.fillStyle=col;g.font='11px ui-monospace,monospace';g.textBaseline='top';
-    g.fillText((a.callsign||id),x+(tw?15:9),y-12);
+    g.fillText((a.callsign||id)+(!tw&&a.nick?' ('+a.nick+')':''),x+(tw?15:9),y-12);
     if(!tw&&a.airplane_model){g.textAlign='center';g.fillText(String(a.airplane_model).slice(0,12),x,y-25);g.textAlign='left'}
     if(!tw)g.fillText(altStr(a.altitude_ft)+' '+Math.round(Number(a.ground_speed)||0)+'kt'+(asg?'  '+asg:''),x+9,y-1);
     if(!tw)g.fillText((a.freq||'')+' '+ctrlOf(a),x+9,y+10);
@@ -472,7 +472,7 @@ function renderStrips(force){
     var vc=vclips.filter(function(v){return v.icao_address===id&&isHeard(v.freq)}).slice(-3).map(function(v){return'<div class="mlog chat"><b>'+L('PILOT voice','PILOTO voz')+'</b> '+Math.round((v.ms||0)/1000)+' s <button data-act="vplay" data-clip="'+esc(v.id)+'">&#9654;</button></div>'}).join('');
     var ml=vc+msgs.filter(function(m){return m.icao_address===id&&(m.kind!=='chat'||isHeard(m.freq))}).slice(-3).map(function(m){return m.kind==='chat'?'<div class="mlog chat"><b>'+L('PILOT','PILOTO')+':</b> '+esc(m.text)+'</div>':'<div class="mlog">&rsaquo; '+esc(m.text)+' &mdash; <b class="'+esc(m.status)+'">'+esc(m.status.toUpperCase())+'</b></div>'}).join('');
     return'<div class="strip'+(isSel?' sel':'')+(tw?' twr':(asg?'':' nocode'))+(a.no_clnc?' noclnc':'')+(a.emergency?' emerg':'')+(isDim(a)?' dim':'')+'" data-id="'+esc(id)+'">'+
-      '<div class="h"><span class="cs">'+esc(a.callsign||id)+(tw?(isSel||isOwned(a)?' &#9660;':' &#9654;'):'')+(a.emergency?'<span class="mayday">MAYDAY</span>':'')+(a.no_clnc?'<span class="noc">NO CLNC</span>':'')+'</span><span class="m">'+Math.round(r.dist)+' nm / '+p3(r.brg)+'&deg;'+(tw?'':' &middot; '+(a.freq?esc(a.freq)+' ':'')+esc(ctrlOf(a)))+'</span></div>'+
+      '<div class="h"><span class="cs">'+esc(a.callsign||id)+(!tw&&a.nick?' <span class="m">'+esc(a.nick)+'</span>':'')+(tw?(isSel||isOwned(a)?' &#9660;':' &#9654;'):'')+(a.emergency?'<span class="mayday">MAYDAY</span>':'')+(a.no_clnc?'<span class="noc">NO CLNC</span>':'')+'</span><span class="m">'+Math.round(r.dist)+' nm / '+p3(r.brg)+'&deg;'+(tw?'':' &middot; '+(a.freq?esc(a.freq)+' ':'')+esc(ctrlOf(a)))+'</span></div>'+
       (tw?'':'<div>'+altStr(a.altitude_ft)+' &middot; '+Math.round(Number(a.ground_speed)||0)+' kt &middot; HDG '+p3(Number(a.heading_mag!=null?a.heading_mag:a.heading_true)||0)+'&deg;'+(a.heading_mag==null?'T':'')+' &middot; '+(Number(a.vertical_speed_ft_min)>100?'&uarr;':Number(a.vertical_speed_ft_min)<-100?'&darr;':'&rarr;')+'</div>')+
       (tw?'':'<div>'+st+'</div>')+
       (!tw&&(a.airplane_model||a.departure_runway||a.arrival_runway)?'<div class="m">'+(a.airplane_model?esc(a.airplane_model):'')+((a.departure_runway||a.arrival_runway)?(a.airplane_model?' &middot; ':'')+'RWY '+esc(a.departure_runway||'--')+' &rarr; '+esc(a.arrival_runway||'--'):'')+'</div>':'')+
@@ -532,7 +532,7 @@ var myHid=hidOf(holder),isMember=false,dimOn=false;try{dimOn=localStorage.getIte
 /* who controls an aircraft: the live human role on its frequency, AUTO when none, ALL when untuned */
 function ctrlOf(a){if(!a.freq)return'ALL';
   for(var i=0;i<ac.length;i++){var t=ac[i];if(!t.virtual_tower)continue;var ps=t.positions||[];
-    for(var k=0;k<ps.length;k++)if(ps[k].claimed&&ps[k].freq===a.freq)return String(t.callsign).replace(/^ATC_/,'')+'_'+ps[k].pos+(ps[k].ctl?' ('+ps[k].ctl+')':'')}
+    for(var k=0;k<ps.length;k++)if(ps[k].claimed&&ps[k].freq===a.freq)return String(t.callsign).replace(/^ATC_/,'')+'_'+ps[k].pos+((ps[k].ctl||ps[k].nick)?' ('+(ps[k].ctl||ps[k].nick)+')':'')}
   return'AUTO'}
 /* dimmed = tuned to a frequency none of my roles use (never an emergency, tower, or when I talk on All) */
 function isDim(a){return dimOn&&!a.virtual_tower&&!a.emergency&&!!a.freq&&!isHeard(a.freq)}
@@ -630,7 +630,7 @@ function isOwned(a){var n=String(a.callsign).replace(/^ATC_/,'');return a.owner_
 function renderTowerBox(){var box=$('twList'),names=ac.filter(function(a){return a.virtual_tower}).map(function(a){return String(a.callsign).replace(/^ATC_/,'')});
   for(var k in atisUI)if(names.indexOf(k)<0)delete atisUI[k];
   var twOf=function(n){return ac.filter(function(x){return x.virtual_tower&&x.callsign==='ATC_'+n})[0]||{}};
-  var sig=names.map(function(n){var t=twOf(n);return n+(atisUI[n]&&atisUI[n].open?'+':'')+(t.owner_hid===myHid||isMember?'o':'')+(t.bans||[]).map(function(b){return b.hid+b.pos}).join('')+(t.positions||[]).map(function(p){return p.pos+(p.claimed?'c':'')+(p.freq||'')+(p.ctl||'')+(myTowers.some(function(x){return x.name===n+'_'+p.pos})?'m':'')}).join('.')}).join(',')+'|'+myTowers.map(function(x){return x.name}).join('.')+'|'+talkName+'#';
+  var sig=names.map(function(n){var t=twOf(n);return n+(atisUI[n]&&atisUI[n].open?'+':'')+(t.owner_hid===myHid||isMember?'o':'')+(t.bans||[]).map(function(b){return b.hid+b.pos}).join('')+(t.positions||[]).map(function(p){return p.pos+(p.claimed?'c':'')+(p.freq||'')+(p.ctl||p.nick||'')+(myTowers.some(function(x){return x.name===n+'_'+p.pos})?'m':'')}).join('.')}).join(',')+'|'+myTowers.map(function(x){return x.name}).join('.')+'|'+talkName+'#';
   if(box._sig===sig)return;box._sig=sig;   /* unchanged: leave the DOM alone so typed text is kept */
   twRows={};
   if(!names.length)return;
@@ -638,7 +638,7 @@ function renderTowerBox(){var box=$('twList'),names=ac.filter(function(a){return
     var h='<div class="row"><span>ATC_'+esc(n)+' <span class="m">'+L('airport','aeroporto')+'</span></span><span><button data-atis="'+esc(n)+'">ATIS'+(u&&u.data?' '+esc(u.data.letter):'')+'</button> <button data-name="'+esc(n)+'">'+L('Close','Fechar')+'</button></span></div>';
     var canMod=tw0.owner_hid===myHid||isMember;
     ['DEL','GND','TWR','APP','DEP'].forEach(function(r){var nm=n+'_'+r,p=pl.filter(function(x){return x.pos===r})[0],mine=myTowers.some(function(x){return x.name===nm}),taken=p&&p.claimed&&!mine,act=mine&&talkName===nm;
-      h+='<div class="row" style="margin-top:3px"><span><b>'+r+'</b> <span class="m">'+(mine?L('you','você'):taken?L('taken','ocupada'):L('free','livre'))+(p&&p.freq?' '+esc(p.freq):'')+(p&&p.claimed&&p.ctl?' &middot; '+esc(p.ctl):'')+'</span></span><span>'
+      h+='<div class="row" style="margin-top:3px"><span><b>'+r+'</b> <span class="m">'+(mine?L('you','você'):taken?L('taken','ocupada'):L('free','livre'))+(p&&p.freq?' '+esc(p.freq):'')+(p&&p.claimed&&(p.ctl||p.nick)?' &middot; '+esc(p.ctl||p.nick):'')+'</span></span><span>'
         +(mine?'<button data-open="'+esc(nm)+'"'+(act?' style="border-color:#4FE3D0;color:#4FE3D0"':'')+'>'+(act?L('Open ✓','Aberta ✓'):L('Open','Abrir'))+'</button> <button data-rel="'+esc(nm)+'">'+L('Release','Liberar')+'</button>'
         :taken?(canMod?'<button data-kick="'+esc(n)+'|'+r+'">'+L('Kick','Expulsar')+'</button>':''):'<input data-f="'+esc(nm)+'" maxlength="7" placeholder="121.900" inputmode="decimal" style="width:70px"> <button data-claim="'+esc(n)+'|'+r+'">'+L('Claim','Assumir')+'</button>')+'</span></div>'});
     if(canMod)(tw0.bans||[]).forEach(function(b){h+='<div class="row" style="margin-top:3px"><span class="m">'+L('blocked ','bloqueado ')+esc(b.pos)+' #'+esc(b.hid)+'</span><span><button data-unban="'+esc(n)+'|'+esc(b.hid)+'">'+L('Unban','Desbloquear')+'</button></span></div>'});

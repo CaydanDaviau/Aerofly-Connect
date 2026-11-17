@@ -1,6 +1,6 @@
 import { parseMetar, wxSig, nextLetter } from "./atis.js";
 import { distSeg } from "./taxi.js";
-import { fetchGraph, nearest, holdNode, route as taxiRoute, legs as taxiLegs, spokenName, dist as gDist } from "./taxi.js";
+import { fetchGraph, diag as taxiDiag, nearest, holdNode, route as taxiRoute, legs as taxiLegs, spokenName, dist as gDist } from "./taxi.js";
 // Community backend for the Abflug Android client (v1.5.0) on Cloudflare Workers.
 // All state lives in one Durable Object (in memory, TTL-based).
 import ATC_HTML from "./atc.js";
@@ -313,13 +313,13 @@ export class Hub {
     if (w.off && now - w.off > 60_000 && now - w.said > 5 * 60_000) { w.said = now; say(ph.offRoute(fix), false); }
   }
 
-  // ---- ground routing (taxiway names from OSM/Overpass; cached per airport 24 h, failures retried after 2 min)
+  // ---- ground routing (taxiway names from OpenFreeMap vector tiles, Overpass as fallback; cached per airport 24 h, failures retried after 2 min)
   graphFor(apt, lat, lon) {
     const now = Date.now(), v = this.gfx.get(apt);
     if (v && v.g && gDist(lat, lon, v.g.center.lat, v.g.center.lon) < 3500) return Promise.resolve(v.g);
     if (v && v.p) return v.p;
     if (v && !v.g && now - v.at < 120_000) return Promise.resolve(null);
-    const p = fetchGraph(lat, lon).then(g => { this.gfx.set(apt, { at: Date.now(), g }); return g; }, () => { this.gfx.set(apt, { at: Date.now(), g: null }); return null; });
+    const p = fetchGraph(lat, lon).then(g => { this.gfx.set(apt, { at: Date.now(), g, err: g ? "" : "tiles: " + (taxiDiag.tiles || "-") + " | overpass: " + (taxiDiag.overpass || "-") }); return g; }, e => { this.gfx.set(apt, { at: Date.now(), g: null, err: String(e && e.message || e) }); return null; });
     this.gfx.set(apt, { at: now, g: v ? v.g : null, p });
     return p;
   }
@@ -574,7 +574,7 @@ export class Hub {
       const d = haversineMi(lat, lon, pos.latitude, pos.longitude);
       if (d <= rad) {
         const callsign = normCallsign(c.plan.callsign ?? pos.callsign);
-        out.push({ ...pos, ...c.plan, callsign, ...towerFields(callsign), member: !!c.member, has_route: !!c.route, freq: c.pos.freq || "", assigned_squawk: c.assigned ? c.assigned.squawk : null, emergency: !!(c.emerg && Date.now() < c.emerg.until), no_clnc: !!(c.viol && Date.now() - c.viol.at < VIOL_SHOW_MS), ...(ck === key ? { self: true } : {}), distance_miles: Math.round(d * 10) / 10 });
+        out.push({ ...pos, ...c.plan, callsign, ...towerFields(callsign), member: !!c.member, ...(!c.member && this.prof.get(ck)?.nick ? { nick: this.prof.get(ck).nick } : {}), has_route: !!c.route, freq: c.pos.freq || "", assigned_squawk: c.assigned ? c.assigned.squawk : null, emergency: !!(c.emerg && Date.now() < c.emerg.until), no_clnc: !!(c.viol && Date.now() - c.viol.at < VIOL_SHOW_MS), ...(ck === key ? { self: true } : {}), distance_miles: Math.round(d * 10) / 10 });
       }
     }
     // one symbol per airport; its staffed roles are listed in `positions`
@@ -590,7 +590,7 @@ export class Hub {
       const d = haversineMi(lat, lon, base.latitude, base.longitude);
       if (d > rad) continue;
       const e = towerAircraft({ ...base, name: a, pos: "APT", holder: undefined, freq: "" }, d);
-      e.positions = g.roles.map(r => ({ pos: r.pos || "TWR", freq: r.freq || "", claimed: !!r.holder, hid: r.holder ? hid(r.holder) : "", ctl: r.holder ? (r.ctl || "") : "" }));
+      e.positions = g.roles.map(r => ({ pos: r.pos || "TWR", freq: r.freq || "", claimed: !!r.holder, hid: r.holder ? hid(r.holder) : "", ctl: r.holder ? (r.ctl || "") : "", nick: r.holder && !r.member ? (r.nick || "") : "" }));
       e.owner_hid = g.anchor && g.anchor.owner ? hid(g.anchor.owner) : "";
       e.bans = g.anchor && g.anchor.bans ? Object.values(g.anchor.bans).map(b => ({ hid: b.hid, pos: b.pos })) : [];
       e.claimed = g.roles.some(r => r.holder);
@@ -826,7 +826,7 @@ export class Hub {
     if (m === "GET" && p === "/api/debug") {
       const now = Date.now();
       const mask = k => k.slice(0, 2) + "***" + k.slice(-1);
-      return json({ towers: [...this.towers.values()], players: [...this.clients].map(([k, c]) => ({ key: mask(k), age_s: Math.round((now - c.seen) / 1000), position: c.pos || null, plan: c.plan || {} })) });
+      return json({ ground: [...this.gfx].map(([apt, v]) => ({ apt, age_s: Math.round((now - v.at) / 1000), src: v.g ? v.g.src || "" : "", nodes: v.g ? v.g.nodes.size : 0, edges: v.g ? v.g.edges.length : 0, stands: v.g ? v.g.stands.length : 0, runways: v.g ? v.g.runways.map(r => r.refs.join("/")) : [], error: v.g ? "" : v.err || "" })), taxi_diag: taxiDiag, towers: [...this.towers.values()], players: [...this.clients].map(([k, c]) => ({ key: mask(k), age_s: Math.round((now - c.seen) / 1000), position: c.pos || null, plan: c.plan || {} })) });
     }
     if (p !== "/api/stats" && p !== "/api/debug") { const k = (request.headers.get("X-Via") === "ws" ? "WS " : "") + m + " " + p; this.counts[k] = (this.counts[k] || 0) + 1; }
     if (m === "GET" && p === "/api/stats") {
@@ -1076,7 +1076,7 @@ export class Hub {
         }
       }
       const atis = old && old.atis;
-      const t = { name, apt: pn.apt, pos: pn.pos, freq, holder: holder || undefined, ctl: holder ? (this.ctlName(request) || undefined) : undefined, oip: (old && old.oip) || ipt || undefined, latitude: lat, longitude: lon, altitude_ft: Number(d.altitude_ft) || 0, at: now, member: request.headers.get("X-Member") === "1", atis };
+      const t = { name, apt: pn.apt, pos: pn.pos, freq, holder: holder || undefined, ctl: holder ? (this.ctlName(request) || undefined) : undefined, nick: holder && request.headers.get("X-Member") !== "1" ? (this.prof.get(key)?.nick || undefined) : undefined, oip: (old && old.oip) || ipt || undefined, latitude: lat, longitude: lon, altitude_ft: Number(d.altitude_ft) || 0, at: now, member: request.headers.get("X-Member") === "1", atis };
       if (pn.pos === "APT") {   // the creator owns the airport (kept across re-PUTs); bans live on the airport record
         const ow = (old && old.owner) || String(d.owner || "").slice(0, 40);
         if (ow) t.owner = ow;
