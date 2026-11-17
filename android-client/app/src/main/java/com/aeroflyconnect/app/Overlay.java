@@ -72,7 +72,7 @@ final class Overlay {
     private String alertText = "";
     private ScrollView msgScroll;
     private LinearLayout panel, msgRow, reqGrid;
-    private Button bWilco, bUnable, bClr, bTaxi, bTakeoff, bLand, bEmerg;
+    private Button bWilco, bUnable, bClr, bPush, bTaxi, bTakeoff, bLand, bEmerg;
     private EditText chatIn;
     // frequency row
     private EditText freqIn, typingField;
@@ -254,17 +254,19 @@ final class Overlay {
             reqGrid = new LinearLayout(ctx);
             reqGrid.setOrientation(LinearLayout.VERTICAL);
             bClr = small(Api.t(ctx, "Clearance", "Autorização"), Ui.SECONDARY);
+            bPush = small(Api.t(ctx, "Pushback", "Pushback"), Ui.SECONDARY);
             bTaxi = small(Api.t(ctx, "Taxi", "Táxi"), Ui.SECONDARY);
             bTakeoff = small(Api.t(ctx, "Take off", "Decolar"), Ui.SECONDARY);
             bLand = small(Api.t(ctx, "Landing", "Pouso"), Ui.SECONDARY);
             bClr.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { request("clearance"); } });
+            bPush.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { request("pushback"); } });
             bTaxi.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { request("taxi"); } });
             bTakeoff.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { request("takeoff"); } });
             bLand.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { request("land"); } });
             LinearLayout r1 = new LinearLayout(ctx), r2 = new LinearLayout(ctx);
             r1.setOrientation(LinearLayout.HORIZONTAL); r2.setOrientation(LinearLayout.HORIZONTAL);
-            r1.addView(bClr, weight()); r1.addView(bTaxi, weight());
-            r2.addView(bTakeoff, weight()); r2.addView(bLand, weight());
+            r1.addView(bClr, weight()); r1.addView(bPush, weight());
+            r2.addView(bTaxi, weight()); r2.addView(bTakeoff, weight()); r2.addView(bLand, weight());
             reqGrid.addView(r1);
             LinearLayout.LayoutParams r2p = new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
@@ -597,7 +599,7 @@ final class Overlay {
         reqGrid.setVisibility(atisOpen ? View.GONE : View.VISIBLE);
         atisBox.setVisibility(atisOpen ? View.VISIBLE : View.GONE);
         bAtis.setText(atisOpen ? Api.t(ctx, "Back", "Voltar") : (atisShownLetter.isEmpty() ? "ATIS" : "ATIS " + atisShownLetter));
-        dim(bClr, Phase.clearance); dim(bTaxi, Phase.taxi); dim(bTakeoff, Phase.takeoff); dim(bLand, Phase.land);
+        dim(bClr, Phase.clearance); dim(bPush, Phase.pushback); dim(bTaxi, Phase.taxi); dim(bTakeoff, Phase.takeoff); dim(bLand, Phase.land);
         bWilco.setEnabled(!replyBusy); bUnable.setEnabled(!replyBusy);
         bEmerg.setEnabled(!reqBusy);
         bEmerg.setText(PilotService.emergency ? Api.t(ctx, "Cancel Mayday", "Cancelar Mayday")

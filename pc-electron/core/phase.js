@@ -14,8 +14,8 @@ function distToSegM(pla, plo, ala, alo, bla, blo) {
 class Phase {
   constructor() { this.depIcao = ""; this.arrIcao = ""; this.dep = null; this.arr = null; this.reset(); }
   reset() {
-    this.init = false; this.airborne = false; this.cleared = false; this.slowSince = 0;
-    this.clearance = this.taxi = this.takeoff = this.land = this.terminal = false;
+    this.init = false; this.airborne = false; this.cleared = false; this.moved = false; this.pushedAsked = false; this.slowSince = 0;
+    this.pushback = this.clearance = this.taxi = this.takeoff = this.land = this.terminal = false;
     this.etaMin = -1; this.landFpm = 0; this.landUntil = 0; this.candAt = 0; this.candFpm = 0;
     this.phaseName = "ground"; this.rwyOn = ""; this.onRwy = ""; this.rwyApt = ""; this.arrNm = -1;
     this.groundAlt = 0; this.lat = 0; this.lon = 0; this.hdg = 0;
@@ -23,6 +23,7 @@ class Phase {
   setIcao(d, a) { this.depIcao = String(d || "").trim().toUpperCase(); this.arrIcao = String(a || "").trim().toUpperCase(); }
   setAirports(d, a) { this.dep = d || null; this.arr = a || null; }
   markCleared() { this.cleared = true; this.clearance = false; }
+  markPushed() { this.pushedAsked = true; this.pushback = false; }
   landingShown(now) { return now < this.landUntil; }
 
   localGround(la, lo) {
@@ -42,12 +43,14 @@ class Phase {
       if (now - this.slowSince > 20000 && low) { this.airborne = false; this.groundAlt = altFt; }
     } else this.slowSince = 0;
     if (!this.airborne && gsKt >= 60 && altFt - this.groundAlt > 250) this.airborne = true;
-    if (this.airborne) this.cleared = false;
+    if (this.airborne) { this.cleared = false; this.moved = false; this.pushedAsked = false; }
+    if (!this.airborne && gsKt >= 4) this.moved = true;
 
     const nearDep = !dep || distNm(la, lo, dep.lat, dep.lon) <= 5;
     const lined = !!dep && nearDep && this.linedUp() !== null;
     const cl = !this.airborne && !this.cleared && gsKt < 40 && nearDep && !lined;
     const t = !this.airborne && gsKt < 40 && nearDep && !lined;
+    const pb = !this.airborne && gsKt < 2 && nearDep && !lined && !this.moved && !this.pushedAsked && (!dep || this.holdShort() === null);
     // Take off is offered lined up AND holding short (near a runway, slow), so the clearance can be asked before entering it.
     const o = !this.airborne && gsKt < 60 && nearDep && (!dep || lined || (gsKt < 40 && this.holdShort() !== null));
     const l = this.airborne && (!arr || distNm(la, lo, arr.lat, arr.lon) <= 30);
@@ -83,8 +86,8 @@ class Phase {
     this.rwyOn = pair; this.onRwy = lined2; this.rwyApt = apt;
     this.phaseName = this.airborne ? "air" : (pair ? "runway" : "ground");
     this.terminal = (!!dep && distNm(la, lo, dep.lat, dep.lon) <= 6) || (!!arr && distNm(la, lo, arr.lat, arr.lon) <= 8);
-    const changed = cl !== this.clearance || t !== this.taxi || o !== this.takeoff || l !== this.land;
-    this.clearance = cl; this.taxi = t; this.takeoff = o; this.land = l;
+    const changed = pb !== this.pushback || cl !== this.clearance || t !== this.taxi || o !== this.takeoff || l !== this.land;
+    this.clearance = cl; this.pushback = pb; this.taxi = t; this.takeoff = o; this.land = l;
     return changed;
   }
 

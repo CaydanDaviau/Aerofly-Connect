@@ -37,6 +37,7 @@ public class RequestReceiver extends BroadcastReceiver {
                     .setAutoCancel(true);
             int n = 0;
             if (Phase.clearance) { b.addAction(action(ctx, 20, "clearance", Api.t(ctx, "Clearance", "Autorização"))); n++; }
+            if (Phase.pushback) { b.addAction(action(ctx, 24, "pushback", Api.t(ctx, "Pushback", "Pushback"))); n++; }
             if (Phase.taxi) { b.addAction(action(ctx, 21, "taxi", Api.t(ctx, "Taxi", "Táxi"))); n++; }
             if (Phase.takeoff) { b.addAction(action(ctx, 22, "takeoff", Api.t(ctx, "Take off", "Decolar"))); n++; }
             if (Phase.land) { b.addAction(action(ctx, 23, "land", Api.t(ctx, "Landing", "Pouso"))); n++; }

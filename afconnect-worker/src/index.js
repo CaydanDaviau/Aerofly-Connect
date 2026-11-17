@@ -1,4 +1,5 @@
 import { parseMetar, wxSig, nextLetter } from "./atis.js";
+import { fetchGraph, nearest, holdNode, route as taxiRoute, legs as taxiLegs, spokenName, dist as gDist } from "./taxi.js";
 // Community backend for the Abflug Android client (v1.5.0) on Cloudflare Workers.
 // All state lives in one Durable Object (in memory, TTL-based).
 import ATC_HTML from "./atc.js";
@@ -15,7 +16,7 @@ const ROLE_COOLDOWN_MS = 120_000;
 const POS_TTL_MS = 120_000;
 const POS_NAMES = ["DEL", "GND", "TWR", "APP", "DEP"];
 // Which positions can answer each request when staffed (next one up covers the one below it).
-const COVER = { clearance: ["DEL", "GND", "TWR"], taxi: ["GND", "TWR"], takeoff: ["TWR"], land: ["TWR"] };
+const COVER = { clearance: ["DEL", "GND", "TWR"], pushback: ["GND", "TWR"], taxi: ["GND", "TWR"], takeoff: ["TWR"], land: ["TWR"] };
 const parseTowerName = s => {
   const m = /^([A-Z0-9]{2,8}?)(?:_(DEL|GND|TWR|APP|DEP))?$/.exec(String(s || "").trim().toUpperCase());
   if (!m) return null;
@@ -111,7 +112,7 @@ function computeTA(a, b) {
 }
 
 // ---- Auto-ATC (basic clearances for pilots when no human controller covers the airport) ----
-const REQ_TYPES = ["clearance", "taxi", "takeoff", "land", "mayday", "mayday_cancel"];
+const REQ_TYPES = ["clearance", "pushback", "taxi", "takeoff", "land", "mayday", "mayday_cancel"];
 const MAYDAY_MS = 30 * 60_000, MAYDAY_NEAR_MI = 30;
 const REQ_LOCK_MS = { takeoff: 90_000, land: 120_000 };
 const TOWER_COVER_MI = 8;   // a human tower this close to the aircraft (or named like its airport) takes the request
@@ -124,6 +125,11 @@ const PHRASE = {
   en: {
     clearance: (dest, r, sq) => `Cleared ${dest ? "to " + dest + " " : ""}as filed${r ? ", departure runway " + r : ""}, squawk ${sq}`,
     taxi: r => r ? `Taxi to runway ${r}, hold short` : "Taxi to the runway, hold short",
+    pushback: r => `Pushback approved${r ? ", expect runway " + r : ""}`,
+    gTaxiOut: (r, via) => `Taxi to runway ${r}${via ? " via " + via : ""}, hold short runway ${r}`,
+    gTaxiGate: (g, via) => `Taxi to ${g ? "gate " + g : "the gate"}${via ? " via " + via : ""}`,
+    gHold: (via, r) => `Taxi${via ? " via " + via : ""}, hold short of runway ${r}`,
+    gCross: r => `cross runway ${r}`, gGive: cs => `give way to ${cs}`, gWord: "Runway", gVacate: "vacate via",
     takeoff: r => r ? `Runway ${r}, cleared for takeoff` : "Cleared for takeoff",
     land: r => r ? `Runway ${r}, cleared to land` : "Cleared to land",
     busyTakeoff: (r, n) => `Hold position, runway ${r} occupied, number ${n}`,
@@ -134,7 +140,7 @@ const PHRASE = {
     departure: f => `Contact departure${f ? " " + f : ""}`,
     approach: f => `Contact approach${f ? " " + f : ""}`,
     tower: f => `Contact tower${f ? " " + f : ""}`,
-    welcome: (a, f) => `Welcome to ${a}${f ? ", contact ground " + f : ""}, taxi to the gate`,
+    welcome: (a, f) => `Welcome to ${a}${f ? ", contact ground " + f : ""}`,
     goAround: r => `Go around, runway ${r} occupied`,
     vTaxi: "Stop, hold position, you are not cleared to taxi",
     vRunway: "Hold position, you are not cleared on the runway, vacate",
@@ -143,6 +149,11 @@ const PHRASE = {
   pt: {
     clearance: (dest, r, sq) => `Autorizado${dest ? " para " + dest : ""} conforme o plano${r ? ", pista de saída " + r : ""}, código ${sq}`,
     taxi: r => r ? `Táxi para a pista ${r}, aguarde antes da pista` : "Táxi para a pista, aguarde antes da pista",
+    pushback: r => `Pushback autorizado${r ? ", espere a pista " + r : ""}`,
+    gTaxiOut: (r, via) => `Táxi para a pista ${r}${via ? " via " + via : ""}, aguarde antes da pista ${r}`,
+    gTaxiGate: (g, via) => `Táxi para ${g ? "o portão " + g : "o portão"}${via ? " via " + via : ""}`,
+    gHold: (via, r) => `Táxi${via ? " via " + via : ""}, aguarde antes da pista ${r}`,
+    gCross: r => `cruze a pista ${r}`, gGive: cs => `dê passagem a ${cs}`, gWord: "Pista", gVacate: "livre via",
     takeoff: r => r ? `Pista ${r}, autorizado a decolar` : "Autorizado a decolar",
     land: r => r ? `Pista ${r}, autorizado a pousar` : "Autorizado a pousar",
     busyTakeoff: (r, n) => `Aguarde na posição, pista ${r} ocupada, número ${n}`,
@@ -153,14 +164,14 @@ const PHRASE = {
     departure: f => `Contate a saída${f ? " " + f : ""}`,
     approach: f => `Contate a aproximação${f ? " " + f : ""}`,
     tower: f => `Contate a torre${f ? " " + f : ""}`,
-    welcome: (a, f) => `Bem-vindo a ${a}${f ? ", contate o solo " + f : ""}, táxi para o portão`,
+    welcome: (a, f) => `Bem-vindo a ${a}${f ? ", contate o solo " + f : ""}`,
     goAround: r => `Arremeta, pista ${r} ocupada`,
     vTaxi: "Pare, aguarde na posição, você não está autorizado a taxiar",
     vRunway: "Aguarde na posição, você não está autorizado na pista, desocupe",
     vLand: r => `Pouso sem autorização${r ? " na pista " + r : ""}, desocupe a pista`,
   },
 };
-const REQ_LABEL = { clearance: "clearance", taxi: "taxi", takeoff: "takeoff", land: "landing" };
+const REQ_LABEL = { clearance: "clearance", pushback: "pushback", taxi: "taxi", takeoff: "takeoff", land: "landing" };
 const cleanRunway = v => {
   const m = /^(\d{1,2})([LRC]?)$/.exec(String(v || "").toUpperCase().replace(/\s/g, ""));
   if (!m) return "";
@@ -170,6 +181,7 @@ const cleanRunway = v => {
 
 // opposite end of a runway: 29L <-> 11R
 const oppRunway = r => { const m = /^(\d\d)([LRC]?)$/.exec(r); if (!m) return r; const n = ((Number(m[1]) + 17) % 36) + 1; return String(n).padStart(2, "0") + ({ L: "R", R: "L", C: "C", "": "" })[m[2]]; };
+const spokenRwy = r => String(r || "").replace(/^(\d)(?=\D|$)/, "0$1");
 const rwyKey = (apt, r) => (apt || "?") + "/" + [r, oppRunway(r)].sort()[0];
 const GRACE_MS = 20_000, VIOL_SHOW_MS = 30_000, VIOL_RENEW_MS = 20_000, MAX_VIOL = 100;
 const PUSH_MS = 3000;
@@ -243,7 +255,7 @@ export class Hub {
   constructor(ctx) {
     this.towers = new Map(); this.creds = new Map(); this.credOn = false; this.wx = new Map(); this.crashes = new Map(); this.ta = new Map();
     this.voiceStreams = new Map(); this.latestVoiceByPeer = new Map();
-    this.prof = new Map(); this.lastClaim = new Map(); this.clients = new Map(); this.msgs = new Map(); this.rwy = new Map(); this.rwyQ = new Map(); this.violations = []; this.clips = new Map(); this.listeners = new Map(); this.msgSeq = 0; this.since = Date.now(); this.counts = {};
+    this.prof = new Map(); this.lastClaim = new Map(); this.clients = new Map(); this.msgs = new Map(); this.rwy = new Map(); this.rwyQ = new Map(); this.gfx = new Map(); this.tres = new Map(); this.stands = new Map(); this.violations = []; this.clips = new Map(); this.listeners = new Map(); this.msgSeq = 0; this.since = Date.now(); this.counts = {};
     ctx.blockConcurrencyWhile(async () => {
       for (const [k, v] of await ctx.storage.list({ prefix: "tower:" })) this.towers.set(k.slice(6), v);
       for (const [k, v] of await ctx.storage.list({ prefix: "cred:" })) this.creds.set(k.slice(5), v);
@@ -257,6 +269,9 @@ export class Hub {
     for (const [k, c] of this.clients) if (now - c.seen > TTL_MS) this.clients.delete(k);
     for (const [k, m] of this.msgs) if (now - m.at > 30 * 60 * 1000) this.msgs.delete(k);
     for (const [k, l] of this.rwy) if (now > l.until) this.rwy.delete(k);
+    for (const [k, r] of this.tres) if (now > r.until || !this.clients.has(r.key)) this.tres.delete(k);
+    for (const [k, r] of this.stands) if (now > r.until || !this.clients.has(r.key)) this.stands.delete(k);
+    for (const [k, v] of this.gfx) if (now - v.at > 24 * 3600_000) this.gfx.delete(k);
     for (const [k, v] of this.clips) if (now - v.at > VOICE_TTL_MS) this.clips.delete(k);
     for (const [k, v] of this.listeners) if (now - v.at > VOICE_LISTEN_MS) this.listeners.delete(k);
     for (const [k, v] of this.voiceStreams) if (now - v.at > 90_000) this.voiceStreams.delete(k);
@@ -264,6 +279,77 @@ export class Hub {
     for (const [k, t] of this.ta) if (now - t > 120_000) this.ta.delete(k);
     for (const [k, cr] of this.crashes) if (now - cr.at > CRASH_SHOW_MS) { this.crashes.delete(k); this.ctx.storage.delete("crash:" + k); }
     for (const [k, t] of this.towers) if (now - t.at > (t.holder ? POS_TTL_MS : TOWER_TTL_MS)) { this.towers.delete(k); this.ctx.storage.delete("tower:" + k); }
+  }
+
+
+  // ---- ground routing (taxiway names from OSM/Overpass; cached per airport 24 h, failures retried after 2 min)
+  graphFor(apt, lat, lon) {
+    const now = Date.now(), v = this.gfx.get(apt);
+    if (v && v.g && gDist(lat, lon, v.g.center.lat, v.g.center.lon) < 3500) return Promise.resolve(v.g);
+    if (v && v.p) return v.p;
+    if (v && !v.g && now - v.at < 120_000) return Promise.resolve(null);
+    const p = fetchGraph(lat, lon).then(g => { this.gfx.set(apt, { at: Date.now(), g }); return g; }, () => { this.gfx.set(apt, { at: Date.now(), g: null }); return null; });
+    this.gfx.set(apt, { at: now, g: v ? v.g : null, p });
+    return p;
+  }
+  // kind: "out" (to the hold short point of rwy) | "gate". Returns {text} or null (no data / no path): caller falls back to generic text.
+  async groundRoute(key, c, kind, apt, rwy, wait) {
+    const p = c.pos;
+    let g = null;
+    try { g = await Promise.race([this.graphFor(apt, p.latitude, p.longitude), new Promise(r => setTimeout(() => r(undefined), wait))]); } catch (e) {}
+    if (g === undefined) return undefined;   // still downloading
+    if (!g) return null;
+    const now = Date.now(), lang = c.lang === "pt" ? "pt" : "en", ph = PHRASE[lang];
+    const from = nearest(g, p.latitude, p.longitude, 500);
+    if (!from) return null;
+    let toId = null, gate = "";
+    if (kind === "out") { const h = rwy && holdNode(g, rwy); if (!h) return null; toId = h.id; }
+    // other ground traffic: occupied nodes and reserved edges cost extra so routes avoid meeting head on
+    const occ = new Set();
+    for (const [k2, o] of this.clients) {
+      if (k2 === key || !o.pos || now - o.seen > 15_000 || o.pos.phase === "air" || !!o.member !== !!c.member) continue;
+      if (gDist(o.pos.latitude, o.pos.longitude, p.latitude, p.longitude) > 6000) continue;
+      const n = nearest(g, o.pos.latitude, o.pos.longitude, 60); if (n) occ.add(n.id);
+    }
+    const extra = (e, fromId) => {
+      let x = 0;
+      const r = this.tres.get(apt + ":" + e.i);
+      if (r && r.key !== key && now < r.until) x += r.from === fromId ? 350 : 800;
+      if (occ.has(e.a) || occ.has(e.b)) x += 500;
+      return x;
+    };
+    let path = null;
+    if (kind === "gate") {
+      const taken = new Set([...this.stands].filter(([k, r]) => r.key !== key && now < r.until).map(([k]) => k));
+      const cand = g.stands.filter(s => !taken.has(apt + ":" + (s.ref || s.lat + "," + s.lon))).map(s => ({ s, d: gDist(p.latitude, p.longitude, s.lat, s.lon) })).sort((a, b) => a.d - b.d).slice(0, 4);
+      for (const { s } of cand) { path = taxiRoute(g, from.id, s.node, extra); if (path) { gate = s.ref; this.stands.set(apt + ":" + (s.ref || s.lat + "," + s.lon), { key, until: now + 15 * 60_000 }); break; } }
+    } else path = taxiRoute(g, from.id, toId, extra);
+    if (!path) return null;
+    // legs -> words; a crossing of a busy runway ends the instruction ("hold short")
+    const lg = taxiLegs(path, g), parts = []; let held = "", cutAt = -1, rwyIdx = 0;
+    let lead = true;   // the aircraft may start on a runway (rollout): that part is "vacate", not a crossing
+    for (const l of lg) {
+      if (l.kind === "rwy") {
+        if (lead) continue;
+        const idents = String(l.name).split(/[\/;]/).map(s => s.trim().toUpperCase()).filter(Boolean), id0 = idents[0] || "";
+        const busy = idents.some(r => { const h = this.rwy.get(rwyKey(apt, r)); return h && h.key !== key && now < h.until && this.clients.has(h.key); });
+        if (busy) { held = id0; break; }
+        for (const r of idents) this.rwy.set(rwyKey(apt, r), { key, type: "cross", until: now + 60_000 });
+        parts.push(ph.gCross(spokenRwy(id0)));
+      } else { lead = false; if (l.name) parts.push(spokenName(l.name)); }
+    }
+    // reserve the route, note who is in the way
+    for (const [k, r] of this.tres) if (r.key === key) this.tres.delete(k);
+    const who = new Set();
+    for (const s of path) {
+      const k = apt + ":" + s.e.i, r = this.tres.get(k);
+      if (r && r.key !== key && now < r.until) { const o = this.clients.get(r.key); if (o) who.add(normCallsign(o.plan?.callsign ?? o.pos?.callsign)); }
+      this.tres.set(k, { key, until: now + 8 * 60_000, from: s.from });
+    }
+    const via = parts.join(", ");
+    let text = held ? ph.gHold(via, spokenRwy(held)) : kind === "out" ? ph.gTaxiOut(rwy, via) : ph.gTaxiGate(gate, via);
+    if (who.size) text += ", " + ph.gGive([...who][0]);
+    return { text, held: !!held };
   }
 
   // Profile: nickname + flight time (airborne) + ATC time (holding a role), per app key. Saved at most once a minute.
@@ -374,6 +460,7 @@ export class Hub {
     if (this.humanCovers(c, apt || dep)) { c.viol = null; return out; }   // a human controller owns this airport
 
     const gs = Number(p.ground_speed) || 0;
+    if (cur === "ground" && /^[A-Z]{4}$/.test(dep) && !this.gfx.has(dep)) this.graphFor(dep, p.latitude, p.longitude);   // warm the taxiway cache before the first taxi request
     const onRwys = String(p.rwy_on || "").split("/").map(cleanRunway).filter(Boolean);
 
     // runway locks held by this aircraft: kept while it is on the runway, dropped when it leaves or departs
@@ -412,6 +499,7 @@ export class Hub {
           if (!cleared || busy) this.violate(key, c, st, "landing", apt, lr, now, () => say(ph.vLand(lr), true));
         }
         st.gr.land = 0; st.gr.taxi = now + 30 * 60_000;
+        if (apt && apt === arr && /^[A-Z]{4}$/.test(apt)) st.rollout = apt;   // taxi route to the gate follows once the speed is down
         c.emerg = null;   // an emergency ends on the ground (its landing is never a violation)
         if (cleared && !busy && apt && apt === arr) { const f = this.pf(p.fq_arr, arr, ["GND"]); say(ph.welcome(apt, f), false, "Ground" + (f ? " " + f : "")); }
       } else if (now > st.grace) {
@@ -420,6 +508,10 @@ export class Hub {
         if (cur === "runway" && !(st.gr.takeoff > now) && now - st.landedAt > 120_000 && (p.on_rwy || gs >= 15))
           this.violate(key, c, st, "runway", apt, onRwys[0] || "", now, () => say(ph.vRunway, true));
       }
+    }
+    if (st.rollout && cur !== "air" && prev !== "air" && gs < 35 && now - st.landedAt > 6000) {
+      const a = st.rollout; st.rollout = null;
+      this.groundRoute(key, c, "gate", a, "", 25_000).then(r => { this.addMsg(c, r ? r.text : ph.gTaxiGate("", ""), "auto", {}); }, () => {});
     }
     if (c.viol && now - c.viol.at > VIOL_SHOW_MS) c.viol = null;
     return out;
@@ -820,7 +912,7 @@ export class Hub {
     if ((m === "PUT" || m === "POST") && p === "/api/atc/request") {
       const d = await request.json().catch(() => ({}));
       const type = String(d.type || "");
-      if (!REQ_TYPES.includes(type)) return json({ error: "type must be clearance, taxi, takeoff, land, mayday or mayday_cancel" }, 400);
+      if (!REQ_TYPES.includes(type)) return json({ error: "type must be clearance, pushback, taxi, takeoff, land, mayday or mayday_cancel" }, 400);
       const c = this.clients.get(key);
       if (!c || !c.pos) return json({ error: "start flying first" }, 404);
       if (!c.pos.freq && !type.startsWith("mayday")) return json({ error: "frequency_required" }, 409);   // an emergency never waits for the radio
@@ -883,8 +975,15 @@ export class Hub {
           await this.ctx.storage.put("sq:" + c.pos.icao_address, c.assigned);
         }
         text = ph.clearance(dest, rwy, sq);
+      } else if (type === "pushback") {
+        text = ph.pushback(rwy); st.pushed = now;
       } else if (type === "taxi") {
         text = ph.taxi(rwy); st.gr.taxi = now + 30 * 60_000;
+        if (/^[A-Z]{4}$/.test(apt) && rwy) {
+          const r = await this.groundRoute(key, c, "out", apt, rwy, 3500);
+          if (r) text = r.text;
+          else if (r === undefined) this.groundRoute(key, c, "out", apt, rwy, 25_000).then(r2 => { if (r2) this.addMsg(c, r2.text, "auto", {}); }, () => {});   // download still running: route follows as a second message
+        }
       } else if (!lockKey) {
         text = ph[type](rwy);
         if (type === "takeoff") st.gr.takeoff = now + 10 * 60_000; else { st.gr.land = now + 15 * 60_000; st.landRwy = ""; }

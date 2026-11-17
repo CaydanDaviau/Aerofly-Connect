@@ -79,7 +79,7 @@ class Flight {
     this.s.phase = ph.phaseName; this.s.eta = ph.etaMin; this.s.landFpm = ph.landingShown(now) ? ph.landFpm : null;
     this.atc.onPhase(ph.phaseName);
     this.s.own = { lat: pos.latitude, lon: pos.longitude, hdg: pos.heading_true || 0, gs: pos.ground_speed || 0, alt: pos.altitude_ft || 0, callsign: String(f.callsign || "").toUpperCase(), eta: ph.etaMin, fpm: ph.landingShown(now) ? ph.landFpm : null };
-    this.s.offers = [ph.clearance && "clearance", ph.taxi && "taxi", ph.takeoff && "takeoff", ph.land && "land"].filter(Boolean);
+    this.s.offers = [ph.clearance && "clearance", ph.pushback && "pushback", ph.taxi && "taxi", ph.takeoff && "takeoff", ph.land && "land"].filter(Boolean);
     try {
       if (!this.planSent) {
         const plan = {};

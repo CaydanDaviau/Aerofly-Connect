@@ -65,7 +65,7 @@ public class PilotService extends Service {
                 new Intent(c, RequestReceiver.class).setAction(RequestReceiver.ACT_MENU),
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         // Without the overlay, requests go through a notification button (only when one fits the phase).
-        boolean reqBtn = !Overlay.active && (Phase.clearance || Phase.taxi || Phase.takeoff || Phase.land);
+        boolean reqBtn = !Overlay.active && (Phase.clearance || Phase.pushback || Phase.taxi || Phase.takeoff || Phase.land);
         Notification.Builder nb = new Notification.Builder(c, "pilot")
                 .setContentTitle("Aerofly Connect")
                 .setContentText(Api.t(c, "Sharing your position", "Compartilhando sua posição"))
@@ -485,6 +485,7 @@ public class PilotService extends Service {
                         PilotService s = inst;
                         if (s != null) s.showMessages(r.body);
                         if (type.equals("mayday")) emergency = true; else if (type.equals("mayday_cancel")) emergency = false;
+                        if (type.equals("pushback")) Phase.markPushed();
                         if (type.equals("clearance")) {
                             Phase.markCleared();
                             PilotService s2 = inst;

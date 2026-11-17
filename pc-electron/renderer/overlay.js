@@ -32,7 +32,7 @@
   const bU = h("button", { class: "no", onclick: () => S.pending && window.ov.reply(S.pending.id, "unable") }, "");
   const ans = h("div", { class: "row" }, bW, bU);
   const reqs = {}; const grid = h("div", { class: "g2" });
-  for (const [k, en, pt] of [["clearance", "Clearance", "Autorização"], ["taxi", "Taxi", "Táxi"], ["takeoff", "Take off", "Decolagem"], ["land", "Landing", "Pouso"]]) {
+  for (const [k, en, pt] of [["clearance", "Clearance", "Autorização"], ["pushback", "Pushback", "Pushback"], ["taxi", "Taxi", "Táxi"], ["takeoff", "Take off", "Decolagem"], ["land", "Landing", "Pouso"]]) {
     reqs[k] = h("button", { onclick: () => window.ov.request(k) }); reqs[k].dataset.en = en; reqs[k].dataset.pt = pt; grid.append(reqs[k]);
   }
   const bE = h("button", { class: "no", onclick: () => window.ov.emergency() }), bA = h("button", { onclick: toggleAtis });

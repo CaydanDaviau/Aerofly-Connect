@@ -291,7 +291,7 @@ await call("DELETE", "/api/atc/tower?name=SBBR_TWR", null, "ctl");
   await P("s2", { phase: "ground", ground_speed: 5, latitude: -22.9, longitude: -43.3 });
   await R("s3", "land");
   r = await P("s3", { phase: "runway", rwy_on: "15/33", on_rwy: "15", rwy_apt: "SBGL", ground_speed: 90, latitude: -22.7, longitude: -43.1, fq_arr: "TWR=118.7;GND=121.9" });
-  T("cleared landing welcomed with ground frequency, no violation", r.messages.length === 1 && r.messages[0].text === "Welcome to SBGL, contact ground 121.9, taxi to the gate" && r.messages[0].contact === "Ground 121.9");
+  T("cleared landing welcomed with ground frequency, no violation", r.messages.length === 1 && r.messages[0].text === "Welcome to SBGL, contact ground 121.9" && r.messages[0].contact === "Ground 121.9");
   // arrival handoffs: approach inside 35 nm, tower inside 12 nm, each once; no frequency data -> no number
   await call("PUT", "/api/flightplan", { callsign: "EEE5", arrival_airport: "SBGL" }, "s5");
   const fqa = "APP=119.1;TWR=118.7";

@@ -115,6 +115,7 @@ class AtcPanel {
         this.ingest(r.body);
         if (type === "mayday") this.emergency = true; else if (type === "mayday_cancel") this.emergency = false;
         if (type === "clearance") { this.phase && this.phase.markCleared(); }
+        if (type === "pushback") { this.phase && this.phase.markPushed(); }
         let mode = ""; try { mode = JSON.parse(r.body).mode; } catch (e) {}
         fb = mode === "controller" ? this.t("Request sent to the tower", "Pedido enviado à torre") : this.t("Request sent", "Pedido enviado");
       } else if (r.code === 429) fb = this.t("Wait a moment", "Aguarde um momento");

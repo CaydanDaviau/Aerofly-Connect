@@ -10,7 +10,7 @@ package com.aeroflyconnect.app;
 final class Phase {
     private Phase() {}
 
-    static volatile boolean clearance, taxi, takeoff, land;
+    static volatile boolean clearance, pushback, taxi, takeoff, land;
     /** Near the departure or arrival airport: traffic advisories use relaxed limits (shared with the server in each upload). */
     static volatile boolean terminal;
     /** Minutes to the arrival airport (straight line / ground speed), -1 = unknown. */
@@ -29,15 +29,15 @@ final class Phase {
     private static long candAt;
 
     private static Airports.Apt dep, arr;
-    private static boolean init, airborne, cleared;
+    private static boolean init, airborne, cleared, moved, pushedAsked;
     private static double groundAlt, lat, lon, hdg;
     private static long slowSince;
 
     static final double NM = 1852.0;
 
     static synchronized void reset() {
-        dep = null; arr = null; init = false; airborne = false; cleared = false; slowSince = 0;
-        clearance = false; taxi = false; takeoff = false; land = false; terminal = false;
+        dep = null; arr = null; init = false; airborne = false; cleared = false; moved = false; pushedAsked = false; slowSince = 0;
+        clearance = false; pushback = false; taxi = false; takeoff = false; land = false; terminal = false;
         etaMin = -1; landFpm = 0; landUntil = 0; candAt = 0;
         phaseName = "ground"; rwyOn = ""; onRwy = ""; rwyApt = ""; arrNm = -1;
     }
@@ -50,6 +50,8 @@ final class Phase {
 
     /** The pilot got (or asked for) the clearance: the Clearance button dims until the next departure. */
     static synchronized void markCleared() { cleared = true; clearance = false; }
+    /** The pilot asked for pushback: the button dims until the next departure. */
+    static synchronized void markPushed() { pushedAsked = true; pushback = false; }
 
     static synchronized void setAirports(Airports.Apt d, Airports.Apt a) { dep = d; arr = a; }
 
@@ -66,12 +68,14 @@ final class Phase {
             if (now - slowSince > 20000 && low) { airborne = false; groundAlt = altFt; }
         } else slowSince = 0;
         if (!airborne && gsKt >= 60 && altFt - groundAlt > 250) airborne = true;
-        if (airborne) cleared = false;   // next departure starts with a new clearance
+        if (airborne) { cleared = false; moved = false; pushedAsked = false; }   // next departure starts with a new clearance
+        if (!airborne && gsKt >= 4) moved = true;
 
         boolean nearDep = dep == null || distNm(la, lo, dep.lat, dep.lon) <= 5;
         boolean lined = dep != null && nearDep && linedUp() != null;
         boolean cl = !airborne && !cleared && gsKt < 40 && nearDep && !lined;
         boolean t = !airborne && gsKt < 40 && nearDep && !lined;
+        boolean pb = !airborne && gsKt < 2 && nearDep && !lined && !moved && !pushedAsked && (dep == null || holdShort() == null);
         // Take off is offered lined up on the runway AND holding short (near a runway, slow), so the clearance can be asked before entering it.
         boolean o = !airborne && gsKt < 60 && nearDep && (dep == null || lined || (gsKt < 40 && holdShort() != null));
         boolean l = airborne && (arr == null || distNm(la, lo, arr.lat, arr.lon) <= 30);
@@ -118,8 +122,8 @@ final class Phase {
         phaseName = airborne ? "air" : (pair.isEmpty() ? "ground" : "runway");
 
         terminal = (dep != null && distNm(la, lo, dep.lat, dep.lon) <= 6) || (arr != null && distNm(la, lo, arr.lat, arr.lon) <= 8);
-        boolean changed = cl != clearance || t != taxi || o != takeoff || l != land;
-        clearance = cl; taxi = t; takeoff = o; land = l;
+        boolean changed = pb != pushback || cl != clearance || t != taxi || o != takeoff || l != land;
+        clearance = cl; pushback = pb; taxi = t; takeoff = o; land = l;
         return changed;
     }
 
