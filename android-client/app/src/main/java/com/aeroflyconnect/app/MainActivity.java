@@ -311,15 +311,16 @@ public class MainActivity extends Activity {
                 final String n = nick.getText().toString().trim();
                 new Thread(new Runnable() {
                     @Override public void run() {
-                        boolean ok = false;
+                        int code = -1; String why = "";
                         try {
                             Api.Resp r = Api.request("PUT", "/api/profile", new org.json.JSONObject().put("nick", n).toString(), key);
-                            ok = r.code < 400;
-                        } catch (Exception ignored) { }
-                        final boolean fok = ok;
+                            code = r.code; why = r.body;
+                        } catch (Exception e) { why = String.valueOf(e); }
+                        final boolean fok = code >= 200 && code < 400;
+                        final String fmsg = code < 0 ? Api.t(MainActivity.this, "No connection", "Sem conexão") : "HTTP " + code + " " + (why.length() > 80 ? why.substring(0, 80) : why);
                         ui.post(new Runnable() {
                             @Override public void run() {
-                                Toast.makeText(MainActivity.this, fok ? Api.t(MainActivity.this, "Saved", "Salvo") : Api.t(MainActivity.this, "No connection", "Sem conexão"), Toast.LENGTH_SHORT).show();
+                                Toast.makeText(MainActivity.this, fok ? Api.t(MainActivity.this, "Saved", "Salvo") : fmsg, Toast.LENGTH_LONG).show();
                             }
                         });
                     }

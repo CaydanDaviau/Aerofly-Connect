@@ -796,3 +796,13 @@ await call("DELETE", "/api/atc/tower?name=SBBR_TWR", null, "ctl");
   T("managed name shown", (await traffic(M)).find(x => x.callsign === "ATC_SBAA").positions.find(x => x.pos === "GND").ctl === "Ana");
   T("public users unaffected", (await A("PUT", "/api/atc/message", { icao_address: icao, text: "x" }, "c2")).st !== 403);
 }
+
+// profile
+{
+  const T = (n, v) => console.log("profile " + n + ":", v ? "PASS" : "FAIL");
+  const raw = async (method, path, body) => { const r = await worker.fetch(new Request("https://x" + path, { method, body: body && JSON.stringify(body), headers: { "X-API-Key": "pk", "Content-Type": "application/json" } }), env); return { s: r.status, t: await r.text() }; };
+  const g = await raw("GET", "/api/profile");
+  T("get ok", g.s === 200 && JSON.parse(g.t).nick === "");
+  const p = await raw("PUT", "/api/profile", { nick: "Cayden<b>" });
+  T("put saves nick, strips <>", p.s === 200 && JSON.parse(p.t).nick === "Caydenb");
+}
