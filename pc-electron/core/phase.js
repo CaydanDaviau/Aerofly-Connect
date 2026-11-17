@@ -48,7 +48,8 @@ class Phase {
     const lined = !!dep && nearDep && this.linedUp() !== null;
     const cl = !this.airborne && !this.cleared && gsKt < 40 && nearDep && !lined;
     const t = !this.airborne && gsKt < 40 && nearDep && !lined;
-    const o = !this.airborne && gsKt < 60 && nearDep && (!dep || lined);
+    // Take off is offered lined up AND holding short (near a runway, slow), so the clearance can be asked before entering it.
+    const o = !this.airborne && gsKt < 60 && nearDep && (!dep || lined || (gsKt < 40 && this.holdShort() !== null));
     const l = this.airborne && (!arr || distNm(la, lo, arr.lat, arr.lon) <= 30);
 
     if (this.airborne && arr && gsKt >= 60) this.etaMin = Math.min(5999, Math.round(distNm(la, lo, arr.lat, arr.lon) / gsKt * 60));
@@ -89,7 +90,7 @@ class Phase {
 
   // Runway ident for a request when the form field is empty ("" = unknown). type: "takeoff" | "land" | "taxi".
   runwayFor(type) {
-    if (type === "takeoff") return this.linedUp() || "";
+    if (type === "takeoff") return this.linedUp() || this.holdShort() || "";
     if (type === "land" && this.arr) {
       let best = "", bd = 1e9;
       for (const r of this.arr.rwys) for (let e = 0; e < 2; e++) {
@@ -101,6 +102,22 @@ class Phase {
       return best;
     }
     return "";
+  }
+
+  // Holding short: within 200 m of a departure runway. Returns the end best aligned with the heading, or null.
+  holdShort() {
+    if (!this.dep) return null;
+    let best = null, bd = 1e9;
+    for (const r of this.dep.rwys) {
+      const dm = distToSegM(this.lat, this.lon, r.aLat, r.aLon, r.bLat, r.bLon);
+      if (dm <= 60 || dm > 200) continue;   // on the runway = rwyOn logic; beyond 200 m = just taxiing
+      for (let e = 0; e < 2; e++) {
+        const tl = e === 0 ? r.aLat : r.bLat, tn = e === 0 ? r.aLon : r.bLon, ol = e === 0 ? r.bLat : r.aLat, on = e === 0 ? r.bLon : r.aLon;
+        const d = angDiff(bearing(tl, tn, ol, on), this.hdg);
+        if (d < bd) { bd = d; best = e === 0 ? r.a : r.b; }
+      }
+    }
+    return best;
   }
 
   linedUp() {

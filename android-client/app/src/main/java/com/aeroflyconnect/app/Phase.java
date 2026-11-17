@@ -72,7 +72,8 @@ final class Phase {
         boolean lined = dep != null && nearDep && linedUp() != null;
         boolean cl = !airborne && !cleared && gsKt < 40 && nearDep && !lined;
         boolean t = !airborne && gsKt < 40 && nearDep && !lined;
-        boolean o = !airborne && gsKt < 60 && nearDep && (dep == null || lined);
+        // Take off is offered lined up on the runway AND holding short (near a runway, slow), so the clearance can be asked before entering it.
+        boolean o = !airborne && gsKt < 60 && nearDep && (dep == null || lined || (gsKt < 40 && holdShort() != null));
         boolean l = airborne && (arr == null || distNm(la, lo, arr.lat, arr.lon) <= 30);
 
         // ETA: straight line to the arrival airport at the current ground speed.
@@ -126,6 +127,7 @@ final class Phase {
     static synchronized String runwayFor(String type) {
         if (type.equals("takeoff")) {
             String r = linedUp();
+            if (r == null) r = holdShort();
             return r == null ? "" : r;
         }
         if (type.equals("land") && arr != null) {
@@ -158,6 +160,23 @@ final class Phase {
             }
         }
         return null;
+    }
+
+    /** Holding short: 60-200 m from a departure runway centre line (off the runway surface). Returns the runway end best aligned with the heading, or null. */
+    private static String holdShort() {
+        if (dep == null) return null;
+        String best = null; double bd = 1e9;
+        for (Airports.Rwy r : dep.rwys) {
+            double dm = distToSegM(lat, lon, r.aLat, r.aLon, r.bLat, r.bLon);
+            if (dm <= 60 || dm > 200) continue;   // on the runway = rwyOn logic; beyond 200 m = just taxiing
+            for (int e = 0; e < 2; e++) {
+                double tl = e == 0 ? r.aLat : r.bLat, tn = e == 0 ? r.aLon : r.bLon;
+                double ol = e == 0 ? r.bLat : r.aLat, on = e == 0 ? r.bLon : r.aLon;
+                double d = angDiff(bearing(tl, tn, ol, on), hdg);
+                if (d < bd) { bd = d; best = e == 0 ? r.a : r.b; }
+            }
+        }
+        return best;
     }
 
     /** Elevation of the departure / arrival airport when the aircraft is within 5 nm of it, else NaN. */
