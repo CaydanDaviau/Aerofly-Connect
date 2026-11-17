@@ -156,6 +156,7 @@ app.whenReady().then(() => {
   ses.setPermissionRequestHandler((wc, perm, cb) => cb(perm === "media" && mediaOk(wc)));
   ses.setPermissionCheckHandler((wc, perm) => perm === "media" && mediaOk(wc));
   // live PTT: the overlay sends start/chunk/end over the flight's WebSocket
+  ipcMain.handle("voice:clip", (e, body) => (flight && flight.state().running ? flight.api.request("PUT", "/api/voice/clip", body) : null));
   ipcMain.handle("voice:tx", (e, action, payload) => (flight && flight.state().running ? flight.api.sendVoiceStream(String(action), payload || {}) : false));
 });
 

@@ -118,19 +118,36 @@
     let media; try { media = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } }); }
     catch (e) { if (ptt === me) ptt = null; say(T("Microphone blocked: allow it in Windows privacy settings", "Microfone bloqueado: permita nas configurações de privacidade do Windows"), 5000); return; }
     if (ptt !== me || me.ended) { media.getTracks().forEach(t => t.stop()); if (ptt === me) ptt = null; draw(); return; }
-    me.st = media; const c = ac(); me.src = c.createMediaStreamSource(media); me.proc = c.createScriptProcessor(2048, 1, 1); me.enc = new AFVoice.PttEncoder(c.sampleRate);
-    const ok = await window.ov.voice("start", { id: me.id, direction: "up", sampleRate: AFVoice.OUT_RATE });
-    if (!ok) { cleanup(me); say(T("No live connection yet, try again", "Sem conexão ao vivo ainda, tente de novo"), 4000); return; }
-    if (me.ended) { cleanup(me); window.ov.voice("end", { id: me.id }); return; }
-    me.proc.onaudioprocess = e => { if (me.ended) return; for (const d of me.enc.push(new Float32Array(e.inputBuffer.getChannelData(0)))) sendChunk(me, d); if (me.n >= MAX_CHUNKS) pttEnd(); };
+    me.st = media; const c = ac(); me.src = c.createMediaStreamSource(media); me.proc = c.createScriptProcessor(2048, 1, 1); me.enc = null; me.sr = c.sampleRate;
+    // pilot -> ATC goes as a clip (autoplays on /atc, shows in the strip); only the local replay keeps raw PCM
+    try { me.rec = new MediaRecorder(media); me.parts = []; me.t0 = Date.now(); me.rec.ondataavailable = e => { if (e.data && e.data.size) me.parts.push(e.data); }; me.rec.start(); }
+    catch (e) { cleanup(me); say(T("Recording not supported", "Gravação não suportada"), 4000); return; }
+    if (me.ended) { cleanup(me); return; }
+    me.proc.onaudioprocess = e => { if (me.ended) return; me.chunks.push(Int16Array.from(new Float32Array(e.inputBuffer.getChannelData(0)), v => Math.max(-32768, Math.min(32767, Math.round(v * 32767))))); me.n++; if (Date.now() - me.t0 >= 20000) pttEnd(); };
     me.src.connect(me.proc); me.proc.connect(c.destination); draw();
   }
-  function sendChunk(me, d) { me.n++; me.chunks.push(AFVoice.b64ToPcm(d)); window.ov.voice("chunk", { id: me.id, data: d }); }
   function cleanup(me) { try { me.proc && me.proc.disconnect(); me.src && me.src.disconnect(); } catch (e) {} if (me.st) me.st.getTracks().forEach(t => t.stop()); if (ptt === me) ptt = null; draw(); }
   function pttEnd() {
     const me = ptt; if (!me || me.ended) return; me.ended = true;
-    if (me.enc) { for (const d of me.enc.flush()) sendChunk(me, d); window.ov.voice("end", { id: me.id }); remember(me.chunks, AFVoice.OUT_RATE); }
-    cleanup(me);
+    const ms = Date.now() - (me.t0 || Date.now());
+    const done = () => {
+      cleanup(me);
+      if (ms < 400 || !me.parts || !me.parts.length) { say(T("Too short", "Muito curto"), 2000); return; }
+      const blob = new Blob(me.parts, { type: me.rec.mimeType || "audio/webm" });
+      blob.arrayBuffer().then(buf => {
+        let bin = ""; const u = new Uint8Array(buf); for (let i = 0; i < u.length; i += 0x8000) bin += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000));
+        return window.ov.clip({ audio: btoa(bin), mime: blob.type || "audio/webm", ms: Math.min(ms, 20000) });
+      }).then(r => {
+        const code = r && (r.code || r.status), body = String((r && r.body && (typeof r.body === "string" ? r.body : JSON.stringify(r.body))) || "");
+        if (code === 200 || code === 201) say(T("Sent to ATC", "Enviado ao ATC"), 2500);
+        else if (/frequency_required/.test(body)) say(T("Tune a frequency first", "Sintonize uma frequência primeiro"), 3500);
+        else if (/no_listener/.test(body)) say(T("No controller can hear voice, use text", "Nenhum controlador ouve voz, use texto"), 4000);
+        else if (/voice_off/.test(body)) say(T("Your voice is off", "Sua voz está desligada"), 3000);
+        else say(T("Clip not sent", "Áudio não enviado"), 3000);
+      }).catch(() => say(T("Clip not sent", "Áudio não enviado"), 3000));
+    };
+    if (me.chunks.length) remember(me.chunks, me.sr || 48000);
+    if (me.rec && me.rec.state !== "inactive") { me.rec.onstop = done; try { me.rec.stop(); } catch (e) { done(); } } else done();
   }
 
   function draw() {

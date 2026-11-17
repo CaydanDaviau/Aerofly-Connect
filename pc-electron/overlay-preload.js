@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld("ov", {
   emergency: () => ipcRenderer.invoke("atc:emergency"),
   chat: text => ipcRenderer.invoke("atc:chat", text),
   atis: icao => ipcRenderer.invoke("atc:atis", icao),
+  clip: body => ipcRenderer.invoke("voice:clip", body),
   voice: (action, payload) => ipcRenderer.invoke("voice:tx", action, payload),
   onVoice: cb => ipcRenderer.on("overlay:voice", (e, j) => cb(j)),
   freq: (mode, v) => ipcRenderer.invoke("atc:freq", mode, v),
