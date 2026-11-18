@@ -141,6 +141,15 @@ app.whenReady().then(() => {
       const j = await r.json(); latestPc = j.latest_pc || ""; return j.pilots !== undefined ? j.pilots : j.active_clients;
     } catch (e) { return null; }
   });
+  ipcMain.handle("profile", async (e, nick) => {
+    try {
+      const h = { "X-API-Key": store.data.key, "Content-Type": "application/json" }; if (store.data.group) h["X-Group"] = store.data.group;
+      const r = await fetch(SERVER + "/api/profile", nick == null ? { headers: h } : { method: "PUT", headers: h, body: JSON.stringify({ nick }) });
+      const b = await r.text();
+      if (r.status >= 400) return { error: "HTTP " + r.status + " " + b.slice(0, 80) };
+      return JSON.parse(b);
+    } catch (err) { return { error: "net" }; }
+  });
   ipcMain.handle("simbrief", async (e, u) => {
     const p = await simbrief.fetchPlan(u);
     if (!p.error) store.set({ simbrief: u, sbRoute: { dep: p.dep, arr: p.arr, points: p.points, route: p.route } });

@@ -303,12 +303,14 @@ public class MainActivity extends Activity {
         LinearLayout card = section(root, Api.t(this, "Pilot / controller", "Piloto / controlador"));
         final EditText nick = addField(card, Api.t(this, "Nickname", "Apelido"), "", false, false);
         nick.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(20)});
-        final TextView flight = text("", 18, true), atc = text("", 18, true);
+        final TextView flight = text("", 18, true), atc = text("", 18, true), flights = text("", 18, true);
         card.addView(dim(Api.t(this, "Flight time (in the air)", "Tempo de voo (no ar)"), 13));
         card.addView(flight);
+        card.addView(dim(Api.t(this, "Flights completed", "Voos concluídos"), 13));
+        card.addView(flights);
         card.addView(dim(Api.t(this, "ATC time (holding a division)", "Tempo de ATC (com uma divisão)"), 13));
         card.addView(atc);
-        flight.setText("--"); atc.setText("--");
+        flight.setText("--"); atc.setText("--"); flights.setText("--");
         final Button save = Ui.button(this, Api.t(this, "Save nickname", "Salvar apelido"), Ui.PRIMARY);
         root.addView(save, Ui.lp(this, 12));
         final String key = Api.key(this);
@@ -327,6 +329,7 @@ public class MainActivity extends Activity {
                                 nick.setText(j.optString("nick", ""));
                                 flight.setText(hm(j.optLong("flight_s", 0)));
                                 atc.setText(hm(j.optLong("atc_s", 0)));
+                                flights.setText(String.valueOf(j.optLong("flights", 0)));
                             }
                         });
                     }

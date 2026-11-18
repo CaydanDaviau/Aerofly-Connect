@@ -809,6 +809,17 @@ await call("DELETE", "/api/atc/tower?name=SBBR_TWR", null, "ctl");
   T("get ok", g.s === 200 && JSON.parse(g.t).nick === "");
   const p = await raw("PUT", "/api/profile", { nick: "Cayden<b>" });
   T("put saves nick, strips <>", p.s === 200 && JSON.parse(p.t).nick === "Caydenb");
+  T("flights starts at 0", JSON.parse(g.t).flights === 0);
+  const up = ph => raw("PUT", "/api/position", { latitude: -15.8, longitude: -47.9, altitude_ft: 3000, heading_true: 90, ground_speed: 150, phase: ph });
+  await raw("PUT", "/api/flightplan", { callsign: "PROF1" });
+  await up("air"); await up("air");
+  await up("ground");   // landed after < 3 min in the air: not a flight
+  T("short hop not counted", JSON.parse((await raw("GET", "/api/profile")).t).flights === 0);
+  await up("air"); const c = [...hub.clients.entries()].find(([k]) => k === "pk")[1]; c.airS = 200;
+  await up("ground");
+  T("landing after 3+ min counts", JSON.parse((await raw("GET", "/api/profile")).t).flights === 1);
+  await up("ground");
+  T("staying on ground does not count again", JSON.parse((await raw("GET", "/api/profile")).t).flights === 1);
 }
 
 // airport lead approval + handoff

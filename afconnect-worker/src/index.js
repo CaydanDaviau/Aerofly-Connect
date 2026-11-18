@@ -116,7 +116,8 @@ function computeTA(a, b) {
 
 // ---- Auto-ATC (basic clearances for pilots when no human controller covers the airport) ----
 // Newest released app versions: bump when a new APK / PC build is published; clients older than this show an update notice.
-const LATEST = { android: "1.1.3", pc: "2.1.0" };
+const FLIGHT_MIN_AIR_S = 180;   // airborne at least 3 min, then touchdown (no crash) = flight completed
+const LATEST = { android: "1.2", pc: "2.2.0" };
 const REQ_TYPES = ["clearance", "pushback", "taxi", "takeoff", "land", "mayday", "mayday_cancel"];
 const MAYDAY_MS = 30 * 60_000, MAYDAY_NEAR_MI = 30;
 const REQ_LOCK_MS = { takeoff: 90_000, land: 120_000 };
@@ -398,7 +399,7 @@ export class Hub {
   }
 
   // Profile: nickname + flight time (airborne) + ATC time (holding a role), per app key. Saved at most once a minute.
-  profGet(key) { let p = this.prof.get(key); if (!p) { p = { nick: "", flight_s: 0, atc_s: 0, saved: 0 }; this.prof.set(key, p); } return p; }
+  profGet(key) { let p = this.prof.get(key); if (!p) { p = { nick: "", flight_s: 0, atc_s: 0, flights: 0, saved: 0 }; this.prof.set(key, p); } if (!p.flights) p.flights = 0; return p; }
   profAdd(key, field, secs, now) {
     if (!key || !(secs > 0)) return;
     const p = this.profGet(key); p[field] += secs;
@@ -1156,7 +1157,7 @@ export class Hub {
         pr.nick = String(d.nick ?? "").replace(/[\u0000-\u001f<>]/g, "").trim().slice(0, 20); pr.saved = Date.now();
         this.ctx.storage.put("prof:" + key, pr);
       }
-      if (m === "GET" || m === "PUT" || m === "POST") return json({ nick: pr.nick, flight_s: Math.round(pr.flight_s), atc_s: Math.round(pr.atc_s) });
+      if (m === "GET" || m === "PUT" || m === "POST") return json({ nick: pr.nick, flight_s: Math.round(pr.flight_s), atc_s: Math.round(pr.atc_s), flights: pr.flights || 0 });
     }
     if (m === "DELETE" && p === "/api/atc/tower") {
       if (this.noCred(request)) return json({ error: "atc_credential" }, 403);
@@ -1349,7 +1350,10 @@ export class Hub {
         c = { plan: (await this.ctx.storage.get("plan:" + key)) || {}, route: (await this.ctx.storage.get("route:" + key)) || null,
               assigned: rec && Date.now() - rec.at < ASSIGN_TTL_MS ? rec : null };
       }
-      if (pos.phase === "air" && c.seen) this.profAdd(key, "flight_s", Math.min(Date.now() - c.seen, 10_000) / 1000, Date.now());
+      if (pos.phase === "air" && c.seen) { const gap = Math.min(Date.now() - c.seen, 10_000) / 1000; this.profAdd(key, "flight_s", gap, Date.now()); c.airS = (c.airS || 0) + gap; }
+      else if (c.pos && c.pos.phase === "air" && pos.phase && pos.phase !== "air" && (c.airS || 0) >= FLIGHT_MIN_AIR_S) {   // landed after a real flight
+        const pf = this.profGet(key); pf.flights += 1; pf.saved = Date.now(); this.ctx.storage.put("prof:" + key, pf); c.airS = 0;
+      }
       c.pos = pos; c.seen = Date.now(); c.member = request.headers.get("X-Member") === "1";
       const lg = pick(d, "lang"); if (lg === "pt" || lg === "en") c.lang = lg;
       const lf = Number(pos.landing_fpm);

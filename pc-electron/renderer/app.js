@@ -42,7 +42,34 @@
       h("div", { class: "ver" }, "v" + cfg.version + " PC"), count, updBar, banner,
       h("div", { class: "card click", onclick: () => go("pilot") }, h("h2", {}, "Pilot"), h("p", {}, t("Share your flight with other pilots and ATC", "Compartilhe seu voo com outros pilotos e o ATC"))),
       h("div", { class: "card click", onclick: () => window.afc.open("atc") }, h("h2", {}, t("Controller", "Controlador")), h("p", {}, t("See the radar and message pilots (opens in your browser)", "Veja o radar e envie mensagens aos pilotos (abre no navegador)"))),
+      h("button", { class: "wide", onclick: () => go("profile") }, t("Profile", "Perfil")),
       h("button", { class: "wide", onclick: () => go("settings") }, t("Settings", "Configurações")),
+    );
+  }
+
+  // ---------- Profile ----------
+  function profileScreen() {
+    const hm = s => { const m = Math.floor((s || 0) / 60); return Math.floor(m / 60) + " h " + String(m % 60).padStart(2, "0") + " min"; };
+    const nick = h("input", { maxlength: "20", autocomplete: "off", spellcheck: "false" });
+    const fl = h("div", { class: "big" }, "--"), fc = h("div", { class: "big" }, "--"), at = h("div", { class: "big" }, "--");
+    const msg = h("div", { class: "note" });
+    window.afc.profile().then(p => {
+      if (screen !== "profile") return;
+      if (!p || p.error) { msg.textContent = t("No connection", "Sem conexão"); return; }
+      nick.value = p.nick || ""; fl.textContent = hm(p.flight_s); fc.textContent = String(p.flights || 0); at.textContent = hm(p.atc_s);
+    });
+    const save = h("button", { class: "wide primary", onclick: async () => {
+      const p = await window.afc.profile(nick.value.trim());
+      msg.textContent = !p || p.error ? (p && p.error !== "net" ? p.error : t("No connection", "Sem conexão")) : t("Saved", "Salvo");
+    } }, t("Save nickname", "Salvar apelido"));
+    root.append(
+      h("button", { class: "back", onclick: () => go("start") }, "← " + t("Back", "Voltar")),
+      h("h1", {}, t("Profile", "Perfil")),
+      card(t("Pilot / controller", "Piloto / controlador"), h("label", {}, t("Nickname", "Apelido")), nick,
+        h("label", {}, t("Flight time (in the air)", "Tempo de voo (no ar)")), fl,
+        h("label", {}, t("Flights completed", "Voos concluídos")), fc,
+        h("label", {}, t("ATC time (holding a division)", "Tempo de ATC (com uma divisão)")), at),
+      save, msg,
     );
   }
 
@@ -132,7 +159,7 @@
     );
   }
 
-  function render() { clear(); bg(); if (screen === "pilot") pilotScreen(); else if (screen === "settings") settingsScreen(); else startScreen(); }
+  function render() { clear(); bg(); if (screen === "pilot") pilotScreen(); else if (screen === "settings") settingsScreen(); else if (screen === "profile") profileScreen(); else startScreen(); }
   window.afc.onState(s => { st = s; if (s.crash) cfg.crashUntil = s.crash.until; paint(); });
   render();
 })();
