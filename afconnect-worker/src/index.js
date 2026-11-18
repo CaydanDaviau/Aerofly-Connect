@@ -11,19 +11,19 @@ const TTL_MS = 60_000;
 const ASSIGN_TTL_MS = 12 * 3600_000;
 const TOWER_TTL_MS = 120_000;   // an airport expires this long after its owner's page last refreshed it (the page sends a heartbeat every 45 s)
 const MAX_TOWERS = 50;
-// Positions of one airport: key = ICAO (TWR, kept for old towers) or ICAO_DEL / _GND / _APP / _DEP.
+// Positions of one airport: key = ICAO (TWR, kept for old towers) or ICAO_DEL / _GND / _APP / _CTR.
 // A claimed position (the page sends a `holder` id + heartbeat) is freed POS_TTL_MS after the last heartbeat.
 const ROLE_COOLDOWN_MS = 120_000;
 const POS_TTL_MS = 120_000;
-const POS_NAMES = ["DEL", "GND", "TWR", "APP", "DEP"];
+const POS_NAMES = ["DEL", "GND", "TWR", "APP", "CTR"];
 const HANDOFF_TTL_MS = 120_000, PEND_TTL_MS = 120_000;
-const POS_SPOKEN = { DEL: "delivery", GND: "ground", TWR: "tower", APP: "approach", DEP: "departure" };
+const POS_SPOKEN = { DEL: "delivery", GND: "ground", TWR: "tower", APP: "approach", CTR: "center" };
 // Which positions can answer each request when staffed (next one up covers the one below it).
 const COVER = { clearance: ["DEL", "GND", "TWR"], pushback: ["GND", "TWR"], taxi: ["GND", "TWR"], takeoff: ["TWR"], land: ["TWR"] };
 const parseTowerName = s => {
-  const m = /^([A-Z0-9]{2,8}?)(?:_(DEL|GND|TWR|APP|DEP))?$/.exec(String(s || "").trim().toUpperCase());
+  const m = /^([A-Z0-9]{2,8}?)(?:_(DEL|GND|TWR|APP|CTR))?$/.exec(String(s || "").trim().toUpperCase());
   if (!m) return null;
-  const pos = m[2] || "APT";   // plain ICAO = the airport itself (symbol, ATIS); roles are ICAO_DEL / _GND / _TWR / _APP / _DEP
+  const pos = m[2] || "APT";   // plain ICAO = the airport itself (symbol, ATIS); roles are ICAO_DEL / _GND / _TWR / _APP / _CTR
   return { apt: m[1], pos, name: pos === "APT" ? m[1] : m[1] + "_" + pos };
 };
 // short public id for a holder id (ids themselves are secrets: they are what proves you own a role)
@@ -46,7 +46,7 @@ const normCallsign = cs => {
 // How the Android app decides to draw a tower (TrafficClassification.detectControlTower):
 // callsign contains "ATC_" AND (airplane_model is a 3-4 char airport code OR airplane_livery is a function name).
 const towerFields = cs => {
-  const m = /^ATC_([A-Z0-9]+)(?:_(?:DEL|GND|TWR|APP|DEP))?$/.exec(cs || "");
+  const m = /^ATC_([A-Z0-9]+)(?:_(?:DEL|GND|TWR|APP|CTR))?$/.exec(cs || "");
   if (!m) return null;
   return { airplane_model: /^[A-Z0-9]{3,4}$/.test(m[1]) ? m[1] : "", airplane_livery: "TOWER", livery: "TOWER" };
 };
@@ -1145,7 +1145,7 @@ export class Hub {
       const pn = parseTowerName(d.name);
       const lat = Number(d.latitude), lon = Number(d.longitude);
       if (!pn || !(Math.abs(lat) <= 90) || !(Math.abs(lon) <= 180))
-        return json({ error: "need name (2-8 letters/digits, optional _DEL/_GND/_TWR/_APP/_DEP), latitude and longitude" }, 400);
+        return json({ error: "need name (2-8 letters/digits, optional _DEL/_GND/_TWR/_APP/_CTR), latitude and longitude" }, 400);
       const name = pn.name, old = this.towers.get(name), now = Date.now();
       const holder = String(d.holder || "").slice(0, 40), who = holder || String(d.owner || "").slice(0, 40);
       const lk = this.lockedApt(who, now);

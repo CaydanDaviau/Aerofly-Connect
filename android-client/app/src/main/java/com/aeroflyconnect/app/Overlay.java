@@ -933,7 +933,7 @@ final class Overlay {
     /** Quick buttons: frequencies typed by staffed positions first, then OurAirports data for the airport we are at / heading to. */
     private java.util.List<String[]> quickList() {
         java.util.LinkedHashMap<String, String> m = new java.util.LinkedHashMap<String, String>();
-        String[] order = { "DEL", "GND", "TWR", "APP", "DEP" };
+        String[] order = { "DEL", "GND", "TWR", "APP", "CTR" };
         String ours = "air".equals(Phase.phaseName) && !PilotService.fqArr.isEmpty() ? PilotService.fqArr : PilotService.fqDep;
         for (String src : new String[] { PilotService.stations, ours }) {
             for (String kv : src.split(";")) {
