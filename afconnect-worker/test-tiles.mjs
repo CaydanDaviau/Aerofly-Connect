@@ -75,6 +75,13 @@ T("tiles used, Overpass not needed", nTile > 0 && nOver === 0);
 hub.clients.get("tt1").lastReq = 0;
 const r = await call("PUT", "/api/atc/request", { type: "taxi" }, "tt1");
 T("routed taxi text from tiles", r.messages[0].text === "Taxi to runway 27 via Alpha, Bravo, hold short runway 27");
+const tx = await call("GET", "/api/taxi?icao_address=" + hub.clients.get("tt1").pos.icao_address, null, "tt1");
+T("taxi line stored: points + hold-short end", Array.isArray(tx.points) && tx.points.length >= 3 && tx.end && /^HOLD 27/.test(tx.end.label) && tx.kind === "out");
+const tl = await call("GET", "/api/traffic?lat=" + B0[0] + "&lon=" + B0[1] + "&radius_miles=50", null, "tt1");
+T("traffic flags has_taxi", tl.aircraft.some(a => a.callsign === "TT1" && a.has_taxi === true));
+await pos("tt1", { phase: "air", ground_speed: 150 });
+const tl2 = await call("GET", "/api/traffic?lat=" + B0[0] + "&lon=" + B0[1] + "&radius_miles=50", null, "tt1");
+T("taxi line cleared when airborne", tl2.aircraft.every(a => !a.has_taxi));
 const dbg = await call("GET", "/api/debug?key=x", null, "x");
 T("debug lists ground data source", dbg.ground && dbg.ground[0] && dbg.ground[0].src === "tiles" && dbg.ground[0].edges > 5);
 // ---- profile nickname as label (public section only)

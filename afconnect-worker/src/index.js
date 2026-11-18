@@ -372,14 +372,14 @@ export class Hub {
     } else path = taxiRoute(g, from.id, toId, extra);
     if (!path) return null;
     // legs -> words; a crossing of a busy runway ends the instruction ("hold short")
-    const lg = taxiLegs(path, g), parts = []; let held = "", cutAt = -1, rwyIdx = 0;
+    const lg = taxiLegs(path, g), parts = []; let held = "", heldFrom = null, cutAt = -1, rwyIdx = 0;
     let lead = true;   // the aircraft may start on a runway (rollout): that part is "vacate", not a crossing
     for (const l of lg) {
       if (l.kind === "rwy") {
         if (lead) continue;
         const idents = String(l.name).split(/[\/;]/).map(s => s.trim().toUpperCase()).filter(Boolean), id0 = idents[0] || "";
         const busy = idents.some(r => { const h = this.rwy.get(rwyKey(apt, r)); return h && h.key !== key && now < h.until && this.clients.has(h.key); });
-        if (busy) { held = id0; break; }
+        if (busy) { held = id0; heldFrom = l.from; break; }
         for (const r of idents) this.rwy.set(rwyKey(apt, r), { key, type: "cross", until: now + 60_000 });
         parts.push(ph.gCross(spokenRwy(id0)));
       } else { lead = false; if (l.name) parts.push(spokenName(l.name)); }
@@ -391,6 +391,18 @@ export class Hub {
       const k = apt + ":" + s.e.i, r = this.tres.get(k);
       if (r && r.key !== key && now < r.until) { const o = this.clients.get(r.key); if (o) who.add(normCallsign(o.plan?.callsign ?? o.pos?.callsign)); }
       this.tres.set(k, { key, until: now + 8 * 60_000, from: s.from });
+    }
+    // route line for the maps: nodes from the aircraft to the hold-short point / stand (cut where a busy runway stops the instruction)
+    {
+      const pts = [[from.lat, from.lon]]; const heldNode = held ? heldFrom : null;
+      for (const s of path) {
+        const nd = g.nodes.get(s.to); if (!nd) continue;
+        if (heldNode !== null && s.from === heldNode) break;
+        pts.push([nd.lat, nd.lon]);
+        if (heldNode !== null && s.to === heldNode) break;
+      }
+      const last = pts[pts.length - 1];
+      c.taxi = { kind, apt, points: pts.map(q => [Math.round(q[0] * 1e6) / 1e6, Math.round(q[1] * 1e6) / 1e6]), end: { lat: last[0], lon: last[1], label: held ? "HOLD " + held : kind === "out" ? "HOLD " + (rwy || "") : gate ? "GATE " + gate : "GATE" }, held: !!held, at: now, until: now + 20 * 60_000 };
     }
     const via = parts.join(", ");
     let text = held ? ph.gHold(via, spokenRwy(held)) : kind === "out" ? ph.gTaxiOut(rwy, via) : ph.gTaxiGate(gate, via);
@@ -619,7 +631,7 @@ export class Hub {
       const d = haversineMi(lat, lon, pos.latitude, pos.longitude);
       if (d <= rad) {
         const callsign = normCallsign(c.plan.callsign ?? pos.callsign);
-        out.push({ ...pos, ...c.plan, callsign, ...towerFields(callsign), member: !!c.member, ...(!c.member && this.prof.get(ck)?.nick ? { nick: this.prof.get(ck).nick } : {}), has_route: !!c.route, ...this.handFields(c), freq: c.pos.freq || "", assigned_squawk: c.assigned ? c.assigned.squawk : null, emergency: !!(c.emerg && Date.now() < c.emerg.until), no_clnc: !!(c.viol && Date.now() - c.viol.at < VIOL_SHOW_MS), ...(ck === key ? { self: true } : {}), distance_miles: Math.round(d * 10) / 10 });
+        out.push({ ...pos, ...c.plan, callsign, ...towerFields(callsign), member: !!c.member, ...(!c.member && this.prof.get(ck)?.nick ? { nick: this.prof.get(ck).nick } : {}), has_route: !!c.route, has_taxi: !!(c.taxi && Date.now() < c.taxi.until), ...this.handFields(c), freq: c.pos.freq || "", assigned_squawk: c.assigned ? c.assigned.squawk : null, emergency: !!(c.emerg && Date.now() < c.emerg.until), no_clnc: !!(c.viol && Date.now() - c.viol.at < VIOL_SHOW_MS), ...(ck === key ? { self: true } : {}), distance_miles: Math.round(d * 10) / 10 });
       }
     }
     // one symbol per airport; its staffed roles are listed in `positions`
@@ -1355,6 +1367,7 @@ export class Hub {
         const pf = this.profGet(key); pf.flights += 1; pf.saved = Date.now(); this.ctx.storage.put("prof:" + key, pf); c.airS = 0;
       }
       c.pos = pos; c.seen = Date.now(); c.member = request.headers.get("X-Member") === "1";
+      if (pos.phase === "air" && c.taxi) c.taxi = null;
       const lg = pick(d, "lang"); if (lg === "pt" || lg === "en") c.lang = lg;
       const lf = Number(pos.landing_fpm);
       if (pos.landing_fpm !== undefined && Number.isFinite(lf) && lf <= HARD_LANDING_FPM) {
@@ -1422,6 +1435,12 @@ export class Hub {
       await this.ctx.storage.put("route:" + key, route);
       this.clients.set(key, c);
       return json({ success: true, points: pts.length });
+    }
+    if (m === "GET" && p === "/api/taxi") {
+      const icao = String(url.searchParams.get("icao_address") || "").toUpperCase();
+      const target = [...this.clients.values()].find(c => c.pos && c.pos.icao_address === icao);
+      if (!target || !target.taxi || Date.now() >= target.taxi.until || (!!target.member !== (request.headers.get("X-Member") === "1"))) return json({ error: "no taxi route" }, 404);
+      return json(target.taxi);
     }
     if (m === "GET" && p === "/api/route") {
       const icao = String(url.searchParams.get("icao_address") || "").toUpperCase();

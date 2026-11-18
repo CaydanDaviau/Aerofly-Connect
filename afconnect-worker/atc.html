@@ -285,8 +285,8 @@ function bgStyle(){var L=function(id,sl,type,paint,extra){var o={id:id,type:type
     L('rd-sec','transportation','line',{'line-color':'#4a4a4a','line-width':W(.6,2,9)},{filter:['all',line,cls(['secondary','tertiary'])],minzoom:9}),
     L('rd-maj','transportation','line',{'line-color':'#585858','line-width':W(1,3,12)},{filter:['all',line,cls(['motorway','trunk','primary'])]}),
     L('twy','aeroway','line',{'line-color':'#4c4c4c','line-width':W(.5,3,14)},{filter:['==',['get','class'],'taxiway'],minzoom:12})]}}
-function lblStyle(){return{version:8,glyphs:'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf',sources:{o:{type:'vector',url:'https://tiles.openfreemap.org/planet'}},layers:[{id:'twylbl',type:'symbol',source:'o','source-layer':'aeroway',minzoom:12.3,filter:['all',['==',['get','class'],'taxiway'],['has','ref']],layout:{'symbol-placement':'line','text-field':['get','ref'],'text-font':['Noto Sans Bold'],'text-size':12,'symbol-spacing':220,'text-keep-upright':true,'text-max-angle':50},paint:{'text-color':'#e6c352','text-halo-color':'#1c1c1c','text-halo-width':2}},
-    {id:'gatelbl',type:'symbol',source:'o','source-layer':'aeroway',minzoom:13.3,filter:['all',['==',['get','class'],'gate'],['has','ref']],layout:{'text-field':['get','ref'],'text-font':['Noto Sans Bold'],'text-size':10},paint:{'text-color':'#b8b8b8','text-halo-color':'#1c1c1c','text-halo-width':1.6}}]}}
+function lblStyle(){return{version:8,glyphs:'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf',sources:{o:{type:'vector',url:'https://tiles.openfreemap.org/planet'}},layers:[{id:'twylbl',type:'symbol',source:'o','source-layer':'aeroway',minzoom:11,filter:['all',['==',['get','class'],'taxiway'],['has','ref']],layout:{'symbol-placement':'line','text-field':['get','ref'],'text-font':['Noto Sans Bold'],'text-size':12,'symbol-spacing':220,'text-keep-upright':true,'text-max-angle':50},paint:{'text-color':'#e6c352','text-halo-color':'#1c1c1c','text-halo-width':2}},
+    {id:'gatelbl',type:'symbol',source:'o','source-layer':'aeroway',minzoom:12.3,filter:['all',['==',['get','class'],'gate'],['has','ref']],layout:{'text-field':['get','ref'],'text-font':['Noto Sans Bold'],'text-size':10},paint:{'text-color':'#b8b8b8','text-halo-color':'#1c1c1c','text-halo-width':1.6}}]}}
 function initBg(){if(typeof maplibregl==='undefined')return;
   try{bgMap=new maplibregl.Map({container:'bgmap',style:bgStyle(),center:[0,0],zoom:2,interactive:false,attributionControl:false,fadeDuration:0});
     bgMap.on('load',function(){bgOK=true;syncBg();draw()});bgMap.on('error',function(){});
@@ -357,6 +357,28 @@ function drawRoute(maxR){   /* SimBrief route of the selected aircraft: fetched 
     if((lbl||nx)&&p[k][3]&&n<80){n++;g.lineWidth=2;g.strokeStyle='rgba(20,25,30,.9)';g.fillStyle=past?'#b5adbb':nx?'#fff':'#ffd1f6';g.strokeText(p[k][3],q[0]+5,q[1]-5);g.fillText(p[k][3],q[0]+5,q[1]-5)}}
   g.restore();
 }
+var taxiCache={},taxiBusy={};
+function drawTaxi(maxR){   /* taxi route (auto-ATC) of the selected aircraft, and of every taxiing one when zoomed in: fetched through /api/taxi, cached 15 s */
+  var now=Date.now();
+  ac.forEach(function(a){
+    if(!a.has_taxi){if(taxiCache[a.icao_address])delete taxiCache[a.icao_address];return}
+    if(a.icao_address!==sel&&maxR>12)return;
+    var id=a.icao_address,c=taxiCache[id];
+    if((!c||now-c.at>15000)&&!taxiBusy[id]){taxiBusy[id]=1;
+      api('/api/taxi?icao_address='+encodeURIComponent(id)).then(function(r){return r.ok?r.json():null}).then(function(j){
+        taxiBusy[id]=0;taxiCache[id]={at:Date.now(),d:j};draw()}).catch(function(){taxiBusy[id]=0;taxiCache[id]={at:Date.now(),d:null}})}
+    if(!c||!c.d||!c.d.points||c.d.points.length<2)return;
+    var p=c.d.points,bi=0,bd=1e9;
+    for(var k=0;k<p.length;k++){var d=dNm(a.latitude,a.longitude,p[k][0],p[k][1]);if(d<bd){bd=d;bi=k}}
+    var pts=bd<0.25?[[a.latitude,a.longitude]].concat(p.slice(bi+1)):p;   /* drop the part already taxied */
+    if(pts.length<2)return;
+    g.save();g.lineJoin='round';g.lineCap='round';g.setLineDash([]);
+    g.beginPath();pts.forEach(function(q,i){var x=projLL(q[0],q[1]);if(i)g.lineTo(x[0],x[1]);else g.moveTo(x[0],x[1])});
+    g.lineWidth=7;g.strokeStyle='rgba(30,20,0,.55)';g.stroke();g.lineWidth=3.5;g.strokeStyle=id===sel?'#ffd23f':'rgba(255,196,0,.85)';g.stroke();
+    var e=c.d.end;if(e){var q=projLL(e.lat,e.lon);g.fillStyle='#ffc400';g.strokeStyle='#3a2a00';g.lineWidth=2;g.beginPath();g.arc(q[0],q[1],4.5,0,6.2832);g.fill();g.stroke();
+      if(e.label){g.font='bold 10px ui-monospace,monospace';g.textAlign='left';g.textBaseline='middle';g.lineWidth=3;g.strokeStyle='rgba(20,25,30,.9)';g.fillStyle='#ffe28a';g.strokeText(e.label,q[0]+7,q[1]);g.fillText(e.label,q[0]+7,q[1])}}
+    g.restore()});
+}
 /* active leg of a plane's SimBrief route: next waypoint, distance, time (state per aircraft, only moves forward) */
 var navSt={};
 function dNm(la1,lo1,la2,lo2){var r=Math.PI/180,x=(lo2-lo1)*r*Math.cos((la1+la2)/2*r),y=(la2-la1)*r;return Math.hypot(x,y)*3440.065}
@@ -386,7 +408,7 @@ function draw(){
   g.fillText(step+' nm rings',6,H-14);
   var gM=g;if(bgOK){g=gR;gR.clearRect(0,0,W,H)}try{drawRunways(maxR)}finally{g=gM}   /* no map underlay: runways stay on the radar canvas */
   drawFixes(maxR);
-  drawRoute(maxR);
+  drawRoute(maxR);drawTaxi(maxR);
   var blinkOn=Math.floor(Date.now()/450)%2===0;
   for(var k=0;k<ac.length;k++){var cf0=confl[ac[k].icao_address];if(!cf0)continue;
     var cxy=proj(ac[k]),cr=Math.max(16,cf0.r/nmpp);
