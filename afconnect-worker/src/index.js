@@ -16,6 +16,8 @@ const MAX_TOWERS = 50;
 const ROLE_COOLDOWN_MS = 120_000;
 const POS_TTL_MS = 120_000;
 const POS_NAMES = ["DEL", "GND", "TWR", "APP", "DEP"];
+const HANDOFF_TTL_MS = 120_000, PEND_TTL_MS = 120_000;
+const POS_SPOKEN = { DEL: "delivery", GND: "ground", TWR: "tower", APP: "approach", DEP: "departure" };
 // Which positions can answer each request when staffed (next one up covers the one below it).
 const COVER = { clearance: ["DEL", "GND", "TWR"], pushback: ["GND", "TWR"], taxi: ["GND", "TWR"], takeoff: ["TWR"], land: ["TWR"] };
 const parseTowerName = s => {
@@ -407,6 +409,36 @@ export class Hub {
     const now = Date.now();
     return [...this.towers.values()].some(t => t.holder === holder && POS_NAMES.includes(t.pos) && now - t.at <= POS_TTL_MS);
   }
+  // The live role record a holder works (null = none)
+  roleOf(holder, pos) {
+    if (!holder) return null;
+    const now = Date.now(), all = [...this.towers.values()].filter(t => t.holder === holder && POS_NAMES.includes(t.pos) && now - t.at <= POS_TTL_MS);
+    return (pos && all.find(t => t.pos === pos)) || all[0] || null;   // a holder with several roles: the asked one first
+  }
+  // The live role currently handling an aircraft (set when a handoff is accepted); null if none or the role went away
+  handlerOf(c) {
+    const r = c && c.handler && this.towers.get(c.handler);
+    return r && r.holder && Date.now() - r.at <= POS_TTL_MS ? r : null;
+  }
+  handFields(c) {
+    const h = this.handlerOf(c), ho = c.handoff && Date.now() - c.handoff.at <= HANDOFF_TTL_MS ? c.handoff : null;
+    const r = {};
+    if (h) { r.handler = h.pos; r.handler_apt = h.apt; r.handler_ctl = h.ctl || h.nick || ""; }
+    if (ho) { r.handoff_from = ho.from; r.handoff_to = ho.to; r.handoff_apt = ho.apt; }
+    return r;
+  }
+  // Airport lead guard (owner of the airport or a group member), shared by approval / approve / deny
+  leadGuard(request, d) {
+    const apt = String(d.airport || "").trim().toUpperCase(), who = String(d.holder || "").slice(0, 40), now = Date.now();
+    const a = this.towers.get(apt), member = request.headers.get("X-Member") === "1";
+    if (!a || a.pos !== "APT") return { err: json({ error: "no airport open with that code" }, 404) };
+    if (!member) {
+      if (!who || a.owner !== who) return { err: json({ error: "not_owner", airport: apt }, 403) };
+      const lk = this.lockedApt(who, now);
+      if (lk && lk !== apt) return { err: json({ error: "locked_to_airport", airport: lk }, 409) };
+    }
+    return { a, apt, who, now };
+  }
 
   addMsg(target, text, kind, extra) {
     const pos = target.pos || {};
@@ -586,7 +618,7 @@ export class Hub {
       const d = haversineMi(lat, lon, pos.latitude, pos.longitude);
       if (d <= rad) {
         const callsign = normCallsign(c.plan.callsign ?? pos.callsign);
-        out.push({ ...pos, ...c.plan, callsign, ...towerFields(callsign), member: !!c.member, ...(!c.member && this.prof.get(ck)?.nick ? { nick: this.prof.get(ck).nick } : {}), has_route: !!c.route, freq: c.pos.freq || "", assigned_squawk: c.assigned ? c.assigned.squawk : null, emergency: !!(c.emerg && Date.now() < c.emerg.until), no_clnc: !!(c.viol && Date.now() - c.viol.at < VIOL_SHOW_MS), ...(ck === key ? { self: true } : {}), distance_miles: Math.round(d * 10) / 10 });
+        out.push({ ...pos, ...c.plan, callsign, ...towerFields(callsign), member: !!c.member, ...(!c.member && this.prof.get(ck)?.nick ? { nick: this.prof.get(ck).nick } : {}), has_route: !!c.route, ...this.handFields(c), freq: c.pos.freq || "", assigned_squawk: c.assigned ? c.assigned.squawk : null, emergency: !!(c.emerg && Date.now() < c.emerg.until), no_clnc: !!(c.viol && Date.now() - c.viol.at < VIOL_SHOW_MS), ...(ck === key ? { self: true } : {}), distance_miles: Math.round(d * 10) / 10 });
       }
     }
     // one symbol per airport; its staffed roles are listed in `positions`
@@ -606,6 +638,8 @@ export class Hub {
       e.owner_hid = g.anchor && g.anchor.owner ? hid(g.anchor.owner) : "";
       e.bans = g.anchor && g.anchor.bans ? Object.values(g.anchor.bans).map(b => ({ hid: b.hid, pos: b.pos })) : [];
       e.claimed = g.roles.some(r => r.holder);
+      e.approval = !!(g.anchor && g.anchor.approval);
+      e.pending = g.anchor && g.anchor.pend ? Object.values(g.anchor.pend).filter(p => Date.now() - p.at <= PEND_TTL_MS).map(p => ({ hid: p.hid, pos: p.pos, name: p.name || "" })) : [];
       out.push(e);
     }
     out.sort((a, b) => a.distance_miles - b.distance_miles);
@@ -1079,6 +1113,15 @@ export class Hub {
       // one controller per position: a live claim by someone else blocks (heartbeats keep it alive)
       if (old && old.holder && holder && old.holder !== holder && now - old.at <= POS_TTL_MS) return json({ error: "position_taken", position: pn.pos, airport: pn.apt }, 409);
       if (old && old.holder && !holder && now - old.at <= POS_TTL_MS) return json({ error: "position_taken", position: pn.pos, airport: pn.apt }, 409);
+      // airport lead approval: with approval on, only the owner, members and approved people may take a NEW role
+      if (holder && pn.pos !== "APT" && aptRec && aptRec.pos === "APT" && aptRec.approval && !(old && old.holder === holder)
+          && aptRec.owner !== holder && request.headers.get("X-Member") !== "1" && !(aptRec.ok && aptRec.ok[holder])) {
+        aptRec.pend = aptRec.pend || {};
+        const isNew = !aptRec.pend[holder];
+        aptRec.pend[holder] = { hid: hid(holder), pos: pn.pos, at: now, name: this.ctlName(request) || this.prof.get(key)?.nick || "" };
+        if (isNew) await this.ctx.storage.put("tower:" + pn.apt, aptRec);
+        return json({ error: "approval_required", airport: pn.apt, position: pn.pos }, 409);
+      }
       if (holder && pn.pos !== "APT") {
         if (old && old.holder === holder) this.profAdd(key, "atc_s", Math.min(now - old.at, 60_000) / 1000, now);
         else {   // taking a NEW role: 2 minutes after the last one taken before another can be taken
@@ -1093,6 +1136,9 @@ export class Hub {
         const ow = (old && old.owner) || String(d.owner || "").slice(0, 40);
         if (ow) t.owner = ow;
         if (old && old.bans) t.bans = old.bans;
+        if (old && old.approval) t.approval = true;
+        if (old && old.ok) t.ok = old.ok;
+        if (old && old.pend) t.pend = old.pend;
       }
       this.towers.set(name, t);
       await this.ctx.storage.put("tower:" + name, t);
@@ -1125,6 +1171,58 @@ export class Hub {
       this.towers.delete(name);
       await this.ctx.storage.delete("tower:" + name);
       return json({ success: true });
+    }
+
+    // ---- Airport lead: approval switch, approve / deny pending controllers
+    if (m === "POST" && (p === "/api/atc/approval" || p === "/api/atc/approve")) {
+      if (this.noCred(request)) return json({ error: "atc_credential" }, 403);
+      const d = await request.json().catch(() => ({}));
+      const g = this.leadGuard(request, d);
+      if (g.err) return g.err;
+      const { a, apt, now } = g;
+      if (p === "/api/atc/approval") {
+        a.approval = d.on === true;
+        if (a.approval) {   // people already working a role here stay approved
+          a.ok = a.ok || {};
+          for (const t of this.towers.values()) if ((t.apt || t.name) === apt && t.holder && now - t.at <= POS_TTL_MS) a.ok[t.holder] = { hid: hid(t.holder), at: now };
+        } else { delete a.pend; delete a.ok; }
+      } else {
+        const id = String(d.hid || ""), k = a.pend && Object.keys(a.pend).find(x => a.pend[x].hid === id);
+        if (!k) return json({ error: "not pending" }, 404);
+        if (d.allow !== false) { a.ok = a.ok || {}; a.ok[k] = { hid: id, at: now }; }
+        delete a.pend[k];
+      }
+      if (a.pend && !Object.keys(a.pend).length) delete a.pend;
+      await this.ctx.storage.put("tower:" + apt, a);
+      return json({ success: true, approval: !!a.approval });
+    }
+
+    // ---- Handoff of an aircraft between roles of the same airport (target must accept)
+    if (m === "POST" && (p === "/api/atc/handoff" || p === "/api/atc/handoff/accept")) {
+      if (this.noCred(request)) return json({ error: "atc_credential" }, 403);
+      const d = await request.json().catch(() => ({}));
+      const icao = String(d.icao_address || "").toUpperCase(), now = Date.now();
+      const target = [...this.clients.values()].find(c => c.pos && c.pos.icao_address === icao);
+      const me = this.roleOf(String(d.holder || "").slice(0, 40), p === "/api/atc/handoff" ? String(d.from || "").toUpperCase() : target && target.handoff && target.handoff.to);
+      if (!me) return json({ error: "division_required" }, 409);
+      if (!target) return json({ error: "aircraft not found" }, 404);
+      if (p === "/api/atc/handoff") {
+        const to = String(d.to || "").toUpperCase();
+        if (!POS_NAMES.includes(to) || to === me.pos) return json({ error: "bad_target" }, 400);
+        const tr = this.towers.get(me.apt + "_" + to);
+        if (!tr || !tr.holder || now - tr.at > POS_TTL_MS) return json({ error: "not_staffed", position: to }, 409);
+        const h = this.handlerOf(target);
+        if (h && h.name !== me.name) return json({ error: "handled_by", position: h.pos, ctl: h.ctl || h.nick || "" }, 409);
+        target.handoff = { from: me.pos, to, apt: me.apt, at: now };
+        return json({ success: true });
+      }
+      const ho = target.handoff;
+      if (!ho || now - ho.at > HANDOFF_TTL_MS || ho.apt !== me.apt || ho.to !== me.pos) return json({ error: "no_handoff" }, 404);
+      target.handoff = null;
+      if (d.accept === false) return json({ success: true, accepted: false });
+      target.handler = me.name;
+      if (me.freq) this.addMsg(target, "Contact " + POS_SPOKEN[me.pos] + " " + me.freq, "msg", {});
+      return json({ success: true, accepted: true });
     }
 
     if (m === "POST" && (p === "/api/atc/kick" || p === "/api/atc/unban")) {

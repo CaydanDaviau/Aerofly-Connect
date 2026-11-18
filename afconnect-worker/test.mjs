@@ -806,3 +806,55 @@ await call("DELETE", "/api/atc/tower?name=SBBR_TWR", null, "ctl");
   const p = await raw("PUT", "/api/profile", { nick: "Cayden<b>" });
   T("put saves nick, strips <>", p.s === 200 && JSON.parse(p.t).nick === "Caydenb");
 }
+
+// airport lead approval + handoff
+{
+  const T = (n, v) => console.log("lead " + n + ":", v ? "PASS" : "FAIL");
+  const raw = async (method, path, body, mem) => { const h = { "X-API-Key": "k" }; if (mem) h["X-Member"] = "1";
+    const r = await worker.fetch(new Request("https://x" + path, { method, body: body && JSON.stringify(body), headers: h }), env); return { s: r.status, t: await r.text() }; };
+  const put = (name, extra) => (hub.lastClaim.clear(), raw("PUT", "/api/atc/tower", { name, latitude: -15.87, longitude: -47.92, ...extra }).then(r => r.s));
+  const post = (path, b, mem) => raw("POST", path, b, mem).then(r => r.s);
+  const traf = async () => JSON.parse((await raw("GET", "/api/traffic?lat=-15.87&lon=-47.92&radius_miles=3000")).t).aircraft;
+  hub.towers.clear(); hub.credOn = false; hub.creds.clear();
+  await put("SBLD", { owner: "lead" });
+  T("claim ok while approval off", await put("SBLD_TWR", { holder: "a1", freq: "118.3" }) === 200);
+  T("non-owner cannot switch approval", await post("/api/atc/approval", { airport: "SBLD", on: true, holder: "a1" }) === 403);
+  T("owner switches approval on", await post("/api/atc/approval", { airport: "SBLD", on: true, holder: "lead" }) === 200 && hub.towers.get("SBLD").approval === true);
+  T("existing controller stays approved (heartbeat ok)", await put("SBLD_TWR", { holder: "a1", freq: "118.3" }) === 200);
+  T("newcomer refused: approval_required", await put("SBLD_GND", { holder: "n1", freq: "121.9" }) === 409 && !hub.towers.has("SBLD_GND"));
+  T("refused claim does not start the cooldown", !hub.lastClaim.has("n1"));
+  let e = (await traf()).find(a => a.callsign === "ATC_SBLD");
+  T("traffic lists approval + pending (no raw ids)", e.approval === true && e.pending.length === 1 && e.pending[0].pos === "GND" && !JSON.stringify(e).includes('"n1"'));
+  const ph = e.pending[0].hid;
+  T("non-owner cannot approve", await post("/api/atc/approve", { airport: "SBLD", hid: ph, holder: "a1" }) === 403);
+  T("owner approves", await post("/api/atc/approve", { airport: "SBLD", hid: ph, holder: "lead" }) === 200);
+  T("approved newcomer can claim", await put("SBLD_GND", { holder: "n1", freq: "121.9" }) === 200);
+  T("pending cleared", !(await traf()).find(a => a.callsign === "ATC_SBLD").pending.length);
+  await put("SBLD_DEP", { holder: "n2" });
+  const ph2 = (await traf()).find(a => a.callsign === "ATC_SBLD").pending[0].hid;
+  T("owner denies", await post("/api/atc/approve", { airport: "SBLD", hid: ph2, allow: false, holder: "lead" }) === 200 && await put("SBLD_DEP", { holder: "n2" }) === 409);
+  T("member bypasses approval", await worker.fetch(new Request("https://x/api/atc/tower", { method: "PUT", body: JSON.stringify({ name: "SBLD_APP", latitude: -15.87, longitude: -47.92, holder: "m1" }), headers: { "X-API-Key": "k", "X-Group": "tango7" } }), { ...env, GROUP_CODE: "tango7" }).then(r => r.status) === 200);
+  T("owner claims own role", await put("SBLD_DEL", { holder: "lead" }) === 200);
+  T("approval survives airport re-PUT", await put("SBLD", { owner: "lead" }) === 200 && hub.towers.get("SBLD").approval === true && hub.towers.get("SBLD").ok.n1);
+  // handoff
+  await call("PUT", "/api/position", { latitude: -15.87, longitude: -47.92, altitude_ft: 3500, ground_speed: 0 }, "pl1");
+  await call("PUT", "/api/flightplan", { callsign: "HND1" }, "pl1");
+  const icao = (await traf()).find(a => a.callsign === "HND1").icao_address;
+  const ho = (b) => post("/api/atc/handoff", { icao_address: icao, ...b }), acc = (b) => post("/api/atc/handoff/accept", { icao_address: icao, ...b });
+  T("handoff needs a role", await ho({ to: "GND", holder: "nobody" }) === 409);
+  T("handoff to unstaffed role refused", await ho({ to: "DEP", holder: "a1" }) === 409);
+  T("handoff to own role refused", await ho({ to: "TWR", holder: "a1" }) === 400);
+  T("handoff TWR -> GND", await ho({ to: "GND", holder: "a1" }) === 200);
+  let h = (await traf()).find(a => a.callsign === "HND1");
+  T("traffic shows pending handoff", h.handoff_from === "TWR" && h.handoff_to === "GND" && !h.handler);
+  T("wrong role cannot accept", await acc({ holder: "a1", accept: true }) === 404);
+  T("GND accepts", await acc({ holder: "n1", accept: true }) === 200);
+  h = (await traf()).find(a => a.callsign === "HND1");
+  T("handler is GND, handoff cleared", h.handler === "GND" && !h.handoff_to);
+  const pr = await call("PUT", "/api/position", { latitude: -15.87, longitude: -47.92, altitude_ft: 3500, ground_speed: 0 }, "pl1");
+  T("pilot told to contact ground with freq", /Contact ground 121\.900/.test(pr));
+  T("only the handler can hand off", await ho({ to: "DEL", holder: "a1" }) === 409);
+  T("handler hands back, TWR declines", await ho({ to: "TWR", holder: "n1" }) === 200 && await acc({ holder: "a1", accept: false }) === 200 && (await traf()).find(a => a.callsign === "HND1").handler === "GND");
+  hub.towers.get("SBLD_GND").at = Date.now() - 200_000;
+  T("handler tag drops when the role goes away", !(await traf()).find(a => a.callsign === "HND1").handler);
+}
