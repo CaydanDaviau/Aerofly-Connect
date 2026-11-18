@@ -95,6 +95,15 @@ globalThis.fetch = realFetch;
   W("off-route call", rr.messages.some(m => /off route, say intentions/.test(m.text)));
   rr = await pos2({ phase: "air", altitude_ft: 20000, ground_speed: 300, latitude: -17, longitude: -43 });
   W("off-route not repeated", !rr.messages.some(m => /off route/.test(m.text)));
+  // joins mid-route, already past the first fix: next fix is the one ahead, never the one behind
+  await c2("PUT", "/api/flightplan", { callsign: "WP2", departure_airport: "SBBR", arrival_airport: "SBGR" }, "w2");
+  await c2("PUT", "/api/flightplan/route", { points: [[-15.87, -47.92, 0, "SBBR"], [-16.5, -47.5, 20000, "ABCDE"], [-20, -46, 30000, "FGHIJ"], [-23.4, -46.4, 0, "SBGR"]], route: "x" }, "w2");
+  await c2("PUT", "/api/position", { latitude: -18, longitude: -46.8, altitude_ft: 30000, ground_speed: 420, phase: "air" }, "w2");
+  W("mid-route join starts at the fix ahead", h2.clients.get("w2").st.wp.i === 2);
+  await c2("PUT", "/api/position", { latitude: -19.5, longitude: -46.2, altitude_ft: 30000, ground_speed: 420, phase: "air" }, "w2");
+  W("still ahead after more progress", h2.clients.get("w2").st.wp.i === 2);
+  await c2("PUT", "/api/position", { latitude: -20.6, longitude: -45.8, altitude_ft: 30000, ground_speed: 420, phase: "air" }, "w2");
+  W("passed fix is skipped (moves to next)", h2.clients.get("w2").st.wp.i === 3);
   // approach call also gives expected runway
   rr = await pos2({ phase: "air", altitude_ft: 9000, ground_speed: 250, latitude: -23, longitude: -46.5, arr_nm: 30 });
   W("approach + expect runway", rr.messages.some(m => /Contact approach/.test(m.text)) && rr.messages.some(m => m.text === "Expect runway 09R"));

@@ -299,7 +299,19 @@ export class Hub {
     const named = i => /^[A-Z0-9]{2,7}$/.test(id(i)) && !/^[A-Z]{4}$/.test(id(i));   // skip airport idents / blanks
     // advance: first fix not yet reached (within 4 nm or already passed along the leg)
     while (w.i < pts.length - 1 && nm(pts[w.i][0], pts[w.i][1]) < 4) w.i++;
-    if (cur !== "air") { w.i = 0; w.off = 0; return; }
+    if (cur !== "air") { w.i = 0; w.off = 0; w.init = false; return; }
+    // joined (or resumed) mid-route: start at the end of the leg nearest the aircraft, not at the first fix
+    if (!w.init) {
+      w.init = true;
+      let best = 1, bd = Infinity;
+      for (let j = 0; j + 1 < pts.length; j++) { const d = distSeg(la, lo, { lat: pts[j][0], lon: pts[j][1] }, { lat: pts[j + 1][0], lon: pts[j + 1][1] }); if (d < bd) { bd = d; best = j + 1; } }
+      if (best > w.i) w.i = best;
+    }
+    // skip fixes already passed: aircraft is beyond the fix along the next leg
+    while (w.i < pts.length - 1) {
+      const k = Math.cos(la * Math.PI / 180), ax = (la - pts[w.i][0]), ay = (lo - pts[w.i][1]) * k, bx = pts[w.i + 1][0] - pts[w.i][0], by = (pts[w.i + 1][1] - pts[w.i][1]) * k;
+      if (ax * bx + ay * by > 0 && distSeg(la, lo, { lat: pts[w.i][0], lon: pts[w.i][1] }, { lat: pts[w.i + 1][0], lon: pts[w.i + 1][1] }) < 20 * 1852) w.i++; else break;
+    }
     let n = w.i; while (n < pts.length - 1 && !named(n)) n++;
     const fix = named(n) ? id(n) : "";
     // first call after departure: direct to the first named fix
