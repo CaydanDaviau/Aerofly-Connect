@@ -896,6 +896,39 @@ export class Hub {
       return json({ seconds_since_start: Math.round(secs), counts: this.counts, per_minute, total_per_hour: Math.round(Object.values(this.counts).reduce((a, b) => a + b, 0) / secs * 3600) });
     }
 
+    // controller-drawn taxi route: click a destination, the Worker finds the taxiway path; preview first, then send (line only, no message)
+    if ((m === "PUT" || m === "POST" || m === "DELETE") && p === "/api/atc/taxiroute") {
+      if (this.noCred(request)) return json({ error: "atc_credential" }, 403);
+      const d = m === "DELETE" ? Object.fromEntries(url.searchParams) : await request.json().catch(() => ({}));
+      const role = this.roleOf(String(d.holder || ""));
+      if (!role) return json({ error: "division_required" }, 409);
+      const icao = String(d.icao_address || "").toUpperCase();
+      const target = [...this.clients.values()].find(c => c.pos && c.pos.icao_address === icao);
+      if (!target || !!target.member !== (request.headers.get("X-Member") === "1")) return json({ error: "aircraft not found" }, 404);
+      if (!tunedTo(target.pos.freq, normFreq(d.freq))) return json({ error: "not_tuned", freq: target.pos.freq, callsign: normCallsign(target.plan.callsign ?? target.pos.callsign) }, 409);
+      if (m === "DELETE") { target.taxi = null; return json({ success: true }); }
+      if (target.pos.phase === "air") return json({ error: "airborne" }, 409);
+      const lat = Number(d.lat), lon = Number(d.lon);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) return json({ error: "bad_point" }, 400);
+      const pp = target.pos;
+      let g; try { g = await Promise.race([this.graphFor(role.apt, pp.latitude, pp.longitude), new Promise(r => setTimeout(() => r(undefined), 4000))]); } catch (e) { g = null; }
+      if (g === undefined) return json({ error: "graph_loading" }, 503);
+      if (!g) return json({ error: "no_taxi_data" }, 404);
+      const from = nearest(g, pp.latitude, pp.longitude, 500), to = nearest(g, lat, lon, 250, true);
+      if (!from) return json({ error: "not_on_taxiway" }, 404);
+      if (!to) return json({ error: "no_destination" }, 404);
+      const path = from.id === to.id ? [] : taxiRoute(g, from.id, to.id, null);
+      if (!path) return json({ error: "no_path" }, 404);
+      const pts = [[from.lat, from.lon]];
+      for (const s of path) { const nd = g.nodes.get(s.to); if (nd) pts.push([nd.lat, nd.lon]); }
+      let label = "STOP";
+      const st = g.stands.filter(s => s.node === to.id || gDist(s.lat, s.lon, to.lat, to.lon) < 80).sort((a, b) => gDist(a.lat, a.lon, lat, lon) - gDist(b.lat, b.lon, lat, lon))[0];
+      if (st) label = st.ref ? "GATE " + st.ref : "GATE";
+      else for (const r of g.runways) { const id0 = (r.refs || []).find(x => { const h = holdNode(g, x); return h && h.id === to.id; }); if (id0) { label = "HOLD " + id0; break; } }
+      const taxi = { kind: "ctl", apt: role.apt, points: pts.map(q => [Math.round(q[0] * 1e6) / 1e6, Math.round(q[1] * 1e6) / 1e6]), end: { lat: to.lat, lon: to.lon, label }, held: false, by: role.name || role.apt, at: Date.now(), until: Date.now() + 20 * 60_000 };
+      if (!d.preview) target.taxi = taxi;
+      return json({ success: true, preview: !!d.preview, ...taxi });
+    }
     if ((m === "PUT" || m === "POST") && p === "/api/atc/squawk") {
       if (this.noCred(request)) return json({ error: "atc_credential" }, 403);
       const d = await request.json().catch(() => ({}));

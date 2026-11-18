@@ -82,6 +82,22 @@ T("traffic flags has_taxi", tl.aircraft.some(a => a.callsign === "TT1" && a.has_
 await pos("tt1", { phase: "air", ground_speed: 150 });
 const tl2 = await call("GET", "/api/traffic?lat=" + B0[0] + "&lon=" + B0[1] + "&radius_miles=50", null, "tt1");
 T("taxi line cleared when airborne", tl2.aircraft.every(a => !a.has_taxi));
+// ---- controller-drawn taxi route (needs a live role at the airport)
+await pos("tt1", { phase: "ground", ground_speed: 0 });
+const ic = hub.clients.get("tt1").pos.icao_address;
+const txr = (b, m = "PUT") => call(m, "/api/atc/taxiroute" + (m === "DELETE" ? "?" + new URLSearchParams(b) : ""), m === "DELETE" ? null : b, "ctl1");
+const dest = { lat: B0[0] - .0008, lon: B0[1] + 0 };
+T("ctl taxiroute: no role refused", (await txr({ icao_address: ic, holder: "h1", ...dest })).error === "division_required");
+await call("PUT", "/api/atc/tower", { name: "SBBR_GND", latitude: B0[0], longitude: B0[1], holder: "h1", freq: "118.000" }, "ctl1");
+const pv = await txr({ icao_address: ic, holder: "h1", freq: "118.000", preview: true, ...dest });
+T("ctl taxiroute: preview returns path + end", pv.success && pv.preview && pv.points.length >= 3 && pv.end && typeof pv.end.label === "string");
+T("ctl taxiroute: preview does not store", !hub.clients.get("tt1").taxi || hub.clients.get("tt1").taxi.kind !== "ctl");
+const sv = await txr({ icao_address: ic, holder: "h1", freq: "118.000", ...dest });
+T("ctl taxiroute: send stores line, has_taxi in traffic", sv.success && hub.clients.get("tt1").taxi.kind === "ctl" && (await call("GET", "/api/traffic?lat=" + B0[0] + "&lon=" + B0[1] + "&radius_miles=50", null, "tt1")).aircraft.some(a => a.callsign === "TT1" && a.has_taxi));
+T("ctl taxiroute: far click = no_destination", (await txr({ icao_address: ic, holder: "h1", freq: "118.000", lat: B0[0] + .05, lon: B0[1] + .05 })).error === "no_destination");
+T("ctl taxiroute: wrong frequency refused", (await txr({ icao_address: ic, holder: "h1", freq: "121.500", ...dest })).error === "not_tuned");
+await txr({ icao_address: ic, holder: "h1", freq: "118.000" }, "DELETE");
+T("ctl taxiroute: delete clears", !hub.clients.get("tt1").taxi);
 const dbg = await call("GET", "/api/debug?key=x", null, "x");
 T("debug lists ground data source", dbg.ground && dbg.ground[0] && dbg.ground[0].src === "tiles" && dbg.ground[0].edges > 5);
 // ---- profile nickname as label (public section only)
