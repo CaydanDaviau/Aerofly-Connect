@@ -31,15 +31,16 @@ console.log("callsign test:", (await call("GET", "/api/traffic?lat=1&lon=2&radiu
 // squawk assignment
 const tr = JSON.parse((await call("GET", "/api/traffic?lat=1&lon=2&radius_miles=50", null, "cs")).slice(4));
 const target = tr.aircraft.find(a => a.callsign === "PEDRO1").icao_address;
-console.log("assign:", await call("PUT", "/api/atc/squawk", { icao_address: target, squawk: "2314" }, "atc"));
-console.log("bad:", (await call("PUT", "/api/atc/squawk", { icao_address: target, squawk: "7700" }, "atc")).slice(0, 3));
-console.log("auto:", await call("PUT", "/api/atc/squawk", { icao_address: target }, "atc"));
-await call("PUT", "/api/atc/squawk", { icao_address: target, squawk: "2314" }, "atc");
+await call("PUT", "/api/atc/tower", { name: "SBTT_TWR", latitude: 1, longitude: 2, holder: "th", owner: "th" }, "th");
+console.log("assign:", await call("PUT", "/api/atc/squawk", { icao_address: target, squawk: "2314", holder: "th" }, "atc"));
+console.log("bad:", (await call("PUT", "/api/atc/squawk", { icao_address: target, squawk: "7700", holder: "th" }, "atc")).slice(0, 3));
+console.log("auto:", await call("PUT", "/api/atc/squawk", { icao_address: target, holder: "th" }, "atc"));
+await call("PUT", "/api/atc/squawk", { icao_address: target, squawk: "2314", holder: "th" }, "atc");
 console.log("in traffic:", (await call("GET", "/api/traffic?lat=1&lon=2&radius_miles=50")).includes('"assigned_squawk":"2314"'));
 hub = new Hub(ctx);
 await call("PUT", "/api/position", { latitude: 1, longitude: 2 }, "cs");
 console.log("after restart:", (await call("GET", "/api/traffic?lat=1&lon=2&radius_miles=50")).includes('"assigned_squawk":"2314"'));
-console.log("unknown:", (await call("PUT", "/api/atc/squawk", { icao_address: "FFFFFF", squawk: "2000" }, "atc")).slice(0, 3));
+console.log("unknown:", (await call("PUT", "/api/atc/squawk", { icao_address: "FFFFFF", squawk: "2000", holder: "th" }, "atc")).slice(0, 3));
 for (const [k, cs] of [["t1", "ATC-SBBR"], ["t2", "twr sbbr"], ["t3", "TWR_SBGL"], ["t4", "ATCSBBR"], ["t5", "PEDRO1"]]) {
   await call("PUT", "/api/flightplan", { callsign: cs }, k);
   await call("PUT", "/api/position", { latitude: 5, longitude: 5 }, k);
@@ -92,7 +93,7 @@ ok("other pilot cannot reply", (await call("PUT", "/api/messages/reply", { id: s
 ok("bad reply 400", (await call("PUT", "/api/messages/reply", { id: sent.id, reply: "maybe" }, "mp")).startsWith("400"));
 ok("wilco", (await call("PUT", "/api/messages/reply", { id: sent.id, reply: "wilco" }, "mp")).startsWith("200") && await status() === "wilco");
 // squawk assignment also creates a message
-await call("PUT", "/api/atc/squawk", { icao_address: micao, squawk: "4321" }, "ctl");
+await call("PUT", "/api/atc/squawk", { icao_address: micao, squawk: "4321", holder: "th" }, "ctl");
 const p3 = JSON.parse((await call("PUT", "/api/position", { latitude: 10, longitude: 10, freq: "122.800" }, "mp")).slice(4));
 ok("squawk message", p3.messages.length === 1 && p3.messages[0].text === "Squawk 4321" && p3.messages[0].kind === "squawk");
 ok("squawk not urgent", p3.messages[0].urgent === false);
@@ -784,8 +785,11 @@ await call("DELETE", "/api/atc/tower?name=SBBR_TWR", null, "ctl");
   T("member no cred: message 403", (await A("PUT", "/api/atc/message", { icao_address: icao, text: "hi" }, "c1", M)).st === 403);
   T("member no cred: voice 403", (await A("PUT", "/api/atc/voice", { icao_address: icao, audio: "AAAA", mime: "audio/webm", ms: 500 }, "c1", M)).st === 403);
   T("member no cred: clear squawk 403", (await A("DELETE", "/api/atc/squawk?icao_address=" + icao, null, "c1", M)).st === 403);
-  T("managed cred: squawk ok", (await A("PUT", "/api/atc/squawk", { icao_address: icao, code: "2101" }, "c1", { ...M, "X-Atc": g })).st === 200);
   await A("PUT", "/api/atc/tower", { name: "SBAA_TWR", latitude: 1, longitude: 1, holder: "h1", owner: "h1" }, "h1", { ...M, "X-Atc": "JOHN-1" });
+  T("managed cred: squawk ok", (await A("PUT", "/api/atc/squawk", { icao_address: icao, code: "2101", holder: "h1", freq: "118.000" }, "c1", { ...M, "X-Atc": g })).st === 200);
+  T("squawk: no role refused", (await A("PUT", "/api/atc/squawk", { icao_address: icao, holder: "nobody", freq: "118.000" }, "c1", { ...M, "X-Atc": g })).st === 409);
+  T("squawk: other frequency refused", (await A("PUT", "/api/atc/squawk", { icao_address: icao, holder: "h1", freq: "121.900" }, "c1", { ...M, "X-Atc": g })).j.error === "not_tuned");
+  T("squawk: clear other frequency refused", (await A("DELETE", "/api/atc/squawk?icao_address=" + icao + "&holder=h1&freq=121.900", null, "c1", { ...M, "X-Atc": g })).st === 409);
   T("managed cred: message ok", (await A("PUT", "/api/atc/message", { icao_address: icao, text: "hi", holder: "h1", freq: "118.000" }, "c1", { ...M, "X-Atc": g })).st === 200);
   const claim = async (name, hdr, h) => (await A("PUT", "/api/atc/tower", { name, latitude: 1, longitude: 1, holder: h, owner: h }, h, { ...M, ...hdr })).st;
   T("open airport", (await claim("SBAA", { "X-Atc": "JOHN-1" }, "h1")) === 200);

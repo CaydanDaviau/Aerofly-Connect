@@ -501,10 +501,10 @@ function api(path,opt){opt=opt||{};var m=(opt.method||'GET').toUpperCase();
     var tm=setTimeout(function(){if(m==='GET')httpApi(path,opt).then(function(r){fin(res,r)},function(e){fin(rej,e)});else fin(rej,new Error('timeout'))},7000);
     wsPend[id]={ok:function(j){var b=j.body,t=typeof b==='string'?b:JSON.stringify(b);fin(res,{ok:j.status>=200&&j.status<300,status:j.status,json:function(){return Promise.resolve(typeof b==='string'?JSON.parse(b):b)},text:function(){return Promise.resolve(t)}})},bad:function(){fin(rej,new Error('socket closed'))}};
     try{ws.send(JSON.stringify(o))}catch(e){fin(rej,e)}})}
-function assign(id,sq){var body={icao_address:id};if(sq)body.squawk=sq;
+function assign(id,sq){var body={icao_address:id,holder:holder,freq:talkFreq()};if(sq)body.squawk=sq;
   api('/api/atc/squawk',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
    .then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j,s:r.status}})})
-   .then(function(o){toast(o.ok?L('Assigned ','Atribuído ')+o.j.squawk:L('Error: ','Erro: ')+(o.j.error||o.s));poll(true)})
+   .then(function(o){toast(o.ok?L('Assigned ','Atribuído ')+o.j.squawk:o.j.error==='not_tuned'?NOTTUNED(o.j):o.j.error==='division_required'?L('Claim a role first','Assuma uma função primeiro'):L('Error: ','Erro: ')+(o.j.error||o.s));poll(true)})
    .catch(function(){toast(L('Network error','Erro de rede'))})}
 function sendMsg(id){var el=$('msgin'),t=(el.value||'').trim();if(!t){toast(L('Type a message','Digite uma mensagem'));return}
   api('/api/atc/message',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({icao_address:id,text:t,urgent:urgent,freq:talkFreq(),holder:holder})})
@@ -512,7 +512,7 @@ function sendMsg(id){var el=$('msgin'),t=(el.value||'').trim();if(!t){toast(L('T
    .catch(function(){toast(L('Network error','Erro de rede'))})}
 $('strips').addEventListener('change',function(e){if(e.target.id==='urg')urgent=e.target.checked});
 $('strips').addEventListener('keydown',function(e){if(e.key==='Enter'&&e.target.id==='msgin'){var s=e.target.closest('.strip');if(s)sendMsg(s.getAttribute('data-id'))}});
-function clearSq(id){api('/api/atc/squawk?icao_address='+encodeURIComponent(id),{method:'DELETE'}).then(function(){toast(L('Cleared','Removido'));poll(true)})}
+function clearSq(id){api('/api/atc/squawk?icao_address='+encodeURIComponent(id)+'&holder='+encodeURIComponent(holder)+'&freq='+encodeURIComponent(talkFreq()),{method:'DELETE'}).then(function(r){return r.json().then(function(j){toast(r.ok?L('Cleared','Removido'):j.error==='not_tuned'?NOTTUNED(j):j.error==='division_required'?L('Claim a role first','Assuma uma função primeiro'):L('Error: ','Erro: ')+(j.error||r.status));poll(true)})})}
 
 /* ---------- virtual towers ---------- */
 var myTowers=[],myApts=[];try{myTowers=JSON.parse(localStorage.getItem('abflug_towers')||'[]');myApts=JSON.parse(localStorage.getItem('afc_apts')||'[]')}catch(e){}

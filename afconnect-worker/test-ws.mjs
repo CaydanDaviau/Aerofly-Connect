@@ -53,9 +53,10 @@ T("push sees HTTP client too", JSON.parse(rd.sent.at(-1)).aircraft.length === 2)
 a = await msg(rd, { sub: { lat: 0, lon: 0, radius_miles: 13000, max: 1 } });
 T("sub max caps list", a.aircraft.length === 1 && a.truncated === true && rd.att.sub.max === 1);
 await msg(rd, { sub: { lat: 0, lon: 0, radius_miles: 13000 } });
+await hub.fetch(new Request("https://x/api/atc/tower", { method: "PUT", body: JSON.stringify({ name: "SBWS_TWR", latitude: 0, longitude: 0, holder: "wh", owner: "wh", freq: "118.000" }), headers: { "X-API-Key": "wh" } }));
 // ATC action over the radar socket reaches the pilot
 const icao = JSON.parse(rd.sent.at(-1)).aircraft.find(x => x.callsign === "WS1").icao_address;
-a = await msg(rd, { id: 8, method: "PUT", path: "/api/atc/squawk", body: { icao_address: icao, squawk: "2314" } });
+a = await msg(rd, { id: 8, method: "PUT", path: "/api/atc/squawk", body: { icao_address: icao, squawk: "2314", holder: "wh", freq: "118.000" } });
 T("squawk over ws", a.status === 200 && a.body.squawk === "2314");
 a = await msg(ws, { id: 9, method: "PUT", path: "/api/position", body: { latitude: 10, longitude: 20, freq: "118.000" } });
 T("pilot gets message in position reply", a.body.messages.some(m => /Squawk 2314/.test(m.text)));

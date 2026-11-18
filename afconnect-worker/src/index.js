@@ -886,9 +886,11 @@ export class Hub {
     if ((m === "PUT" || m === "POST") && p === "/api/atc/squawk") {
       if (this.noCred(request)) return json({ error: "atc_credential" }, 403);
       const d = await request.json().catch(() => ({}));
+      if (!this.activeAtcHolder(String(d.holder || ""))) return json({ error: "division_required" }, 409);
       const icao = String(d.icao_address || "").toUpperCase();
       const target = [...this.clients.values()].find(c => c.pos && c.pos.icao_address === icao);
       if (!target) return json({ error: "aircraft not found" }, 404);
+      if (!tunedTo(target.pos.freq, normFreq(d.freq))) return json({ error: "not_tuned", freq: target.pos.freq, callsign: normCallsign(target.plan.callsign ?? target.pos.callsign) }, 409);
       let sq = d.squawk === undefined || d.squawk === null || d.squawk === "" ? null : String(d.squawk);
       if (sq === null) {
         sq = this.pickSquawk();
@@ -904,7 +906,10 @@ export class Hub {
     }
     if (m === "DELETE" && p === "/api/atc/squawk") {
       if (this.noCred(request)) return json({ error: "atc_credential" }, 403);
+      if (!this.activeAtcHolder(String(url.searchParams.get("holder") || ""))) return json({ error: "division_required" }, 409);
       const icao = String(url.searchParams.get("icao_address") || "").toUpperCase();
+      const tg = [...this.clients.values()].find(c => c.pos && c.pos.icao_address === icao);
+      if (tg && !tunedTo(tg.pos.freq, normFreq(url.searchParams.get("freq")))) return json({ error: "not_tuned", freq: tg.pos.freq, callsign: normCallsign(tg.plan.callsign ?? tg.pos.callsign) }, 409);
       for (const c of this.clients.values()) if (c.pos && c.pos.icao_address === icao) c.assigned = null;
       await this.ctx.storage.delete("sq:" + icao);
       return json({ success: true });
