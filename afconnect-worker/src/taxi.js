@@ -336,3 +336,29 @@ export function legs(path, g) {
   });
   return out;
 }
+
+// ---- heading-aware start: a moving aircraft cannot turn back on the spot.
+// startFor: nearest node, but nodes behind a moving aircraft (> 90 deg off its heading) are penalised so the route starts ahead.
+export function startFor(g, lat, lon, hdg, gs, maxM = 500) {
+  if (!(gs >= 3) || !Number.isFinite(hdg)) return nearest(g, lat, lon, maxM);
+  let best = null, bs = Infinity;
+  for (const n of g.nodes.values()) {
+    const d = dist(lat, lon, n.lat, n.lon); if (d > maxM) continue;
+    const behind = d > 12 && angDiff(bearing(lat, lon, n.lat, n.lon), hdg) > 90;
+    const s = d + (behind ? 400 : 0);
+    if (s < bs) { bs = s; best = n; }
+  }
+  return best;
+}
+// wraps an extra-cost function: from the start node, edges that lead back against the heading cost +1500 m (a reversal only if nothing else exists)
+export function noUturn(g, startId, lat, lon, hdg, gs, extra) {
+  if (!(gs >= 3) || !Number.isFinite(hdg)) return extra;
+  return (e, fromId) => {
+    let x = extra ? extra(e, fromId) : 0;
+    if (fromId === startId) {
+      const s = g.nodes.get(startId), o = g.nodes.get(e.a === fromId ? e.b : e.a);
+      if (s && o && angDiff(bearing(s.lat, s.lon, o.lat, o.lon), hdg) > 100) x += 1500;
+    }
+    return x;
+  };
+}

@@ -1,6 +1,6 @@
 import { parseMetar, wxSig, nextLetter } from "./atis.js";
 import { distSeg } from "./taxi.js";
-import { fetchGraph, diag as taxiDiag, nearest, holdNode, route as taxiRoute, legs as taxiLegs, spokenName, dist as gDist } from "./taxi.js";
+import { fetchGraph, diag as taxiDiag, nearest, startFor, noUturn, holdNode, route as taxiRoute, legs as taxiLegs, spokenName, dist as gDist } from "./taxi.js";
 // Community backend for the Abflug Android client (v1.5.0) on Cloudflare Workers.
 // All state lives in one Durable Object (in memory, TTL-based).
 import ATC_HTML from "./atc.js";
@@ -346,7 +346,7 @@ export class Hub {
     if (g === undefined) return undefined;   // still downloading
     if (!g) return null;
     const now = Date.now(), lang = c.lang === "pt" ? "pt" : "en", ph = PHRASE[lang];
-    const from = nearest(g, p.latitude, p.longitude, 500);
+    const hdg = Number(p.heading_true), gs0 = Number(p.ground_speed), from = startFor(g, p.latitude, p.longitude, hdg, gs0, 500);
     if (!from) return null;
     let toId = null, gate = "";
     if (kind === "out") { const h = rwy && holdNode(g, rwy); if (!h) return null; toId = h.id; }
@@ -364,12 +364,13 @@ export class Hub {
       if (occ.has(e.a) || occ.has(e.b)) x += 500;
       return x;
     };
+    const extra2 = noUturn(g, from.id, p.latitude, p.longitude, hdg, gs0, extra);
     let path = null;
     if (kind === "gate") {
       const taken = new Set([...this.stands].filter(([k, r]) => r.key !== key && now < r.until).map(([k]) => k));
       const cand = g.stands.filter(s => !taken.has(apt + ":" + (s.ref || s.lat + "," + s.lon))).map(s => ({ s, d: gDist(p.latitude, p.longitude, s.lat, s.lon) })).sort((a, b) => a.d - b.d).slice(0, 4);
-      for (const { s } of cand) { path = taxiRoute(g, from.id, s.node, extra); if (path) { gate = s.ref; this.stands.set(apt + ":" + (s.ref || s.lat + "," + s.lon), { key, until: now + 15 * 60_000 }); break; } }
-    } else path = taxiRoute(g, from.id, toId, extra);
+      for (const { s } of cand) { path = taxiRoute(g, from.id, s.node, extra2); if (path) { gate = s.ref; this.stands.set(apt + ":" + (s.ref || s.lat + "," + s.lon), { key, until: now + 15 * 60_000 }); break; } }
+    } else path = taxiRoute(g, from.id, toId, extra2);
     if (!path) return null;
     // legs -> words; a crossing of a busy runway ends the instruction ("hold short")
     const lg = taxiLegs(path, g), parts = []; let held = "", heldFrom = null, cutAt = -1, rwyIdx = 0;
@@ -914,10 +915,10 @@ export class Hub {
       let g; try { g = await Promise.race([this.graphFor(role.apt, pp.latitude, pp.longitude), new Promise(r => setTimeout(() => r(undefined), 4000))]); } catch (e) { g = null; }
       if (g === undefined) return json({ error: "graph_loading" }, 503);
       if (!g) return json({ error: "no_taxi_data" }, 404);
-      const from = nearest(g, pp.latitude, pp.longitude, 500), to = nearest(g, lat, lon, 250, true);
+      const hdg = Number(pp.heading_true), gs0 = Number(pp.ground_speed), from = startFor(g, pp.latitude, pp.longitude, hdg, gs0, 500), to = nearest(g, lat, lon, 250, true);
       if (!from) return json({ error: "not_on_taxiway" }, 404);
       if (!to) return json({ error: "no_destination" }, 404);
-      const path = from.id === to.id ? [] : taxiRoute(g, from.id, to.id, null);
+      const path = from.id === to.id ? [] : taxiRoute(g, from.id, to.id, noUturn(g, from.id, pp.latitude, pp.longitude, hdg, gs0, null));
       if (!path) return json({ error: "no_path" }, 404);
       const pts = [[from.lat, from.lon]];
       for (const s of path) { const nd = g.nodes.get(s.to); if (nd) pts.push([nd.lat, nd.lon]); }
