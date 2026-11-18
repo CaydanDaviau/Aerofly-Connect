@@ -33,9 +33,14 @@ async function tileBytes(resp) {
 async function tileGraph(lat, lon, r) {
   const tpl = await tileTemplate(), n = 2 ** TILE_Z;
   const tx = lo => Math.floor((lo + 180) / 360 * n), ty = la => { const s = Math.sin(la * rad); return Math.floor((0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * n); };
-  const dLat = r / 111320, dLon = r / (111320 * Math.cos(lat * rad));
-  const x0 = tx(lon - dLon), x1 = tx(lon + dLon), y0 = ty(lat + dLat), y1 = ty(lat - dLat);
-  if ((x1 - x0 + 1) * (y1 - y0 + 1) > 25) throw new Error("too many tiles");
+  // shrink the radius until the tile count is small (tiles get narrower toward the poles: 25+ tiles at lat 55+ used to throw)
+  let x0, x1, y0, y1;
+  for (;;) {
+    const dLat = r / 111320, dLon = r / (111320 * Math.cos(lat * rad));
+    x0 = tx(lon - dLon); x1 = tx(lon + dLon); y0 = ty(lat + dLat); y1 = ty(lat - dLat);
+    if ((x1 - x0 + 1) * (y1 - y0 + 1) <= 16 || r < 1200) break;
+    r *= 0.85;
+  }
   const jobs = [];
   for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) {
     jobs.push(fetch(tpl.replace("{z}", TILE_Z).replace("{x}", x).replace("{y}", y), { signal: AbortSignal.timeout(7000) }).then(async resp => {
@@ -44,7 +49,11 @@ async function tileGraph(lat, lon, r) {
       return { x, y, layers: decodeTile(await tileBytes(resp)) };
     }));
   }
-  return graphFromTiles((await Promise.all(jobs)).filter(Boolean), TILE_Z, lat, lon);
+  // one failed tile must not kill the whole graph: use what arrived, fail only if nothing did
+  const res = await Promise.allSettled(jobs), ok = res.filter(s => s.status === "fulfilled" && s.value).map(s => s.value), bad = res.filter(s => s.status === "rejected");
+  if (!ok.length && bad.length) throw new Error(`${bad.length}/${res.length} tiles failed: ${bad[0].reason && bad[0].reason.message || bad[0].reason}`);
+  if (bad.length) diag.tiles = `${bad.length}/${res.length} tiles failed (partial graph)`;
+  return graphFromTiles(ok, TILE_Z, lat, lon);
 }
 
 const OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter"];
