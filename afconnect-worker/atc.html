@@ -40,6 +40,7 @@ input::placeholder{color:var(--dim)}
 .ok{color:var(--fg)}.warn{color:var(--amber)}.bad{color:var(--red)}
 .ctl{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;align-items:center}
 .ctl input{width:84px;text-align:center;letter-spacing:.2em}
+.ctl.hdg button{flex:1 1 auto}.ctl input#hdgin{width:64px;font-weight:700}
 .ctl input#msgin{flex:1 1 140px;width:auto;text-align:left;letter-spacing:0}
 .urg{display:flex;align-items:center;gap:4px;white-space:nowrap}.urg input{width:auto;letter-spacing:0}
 .mlog{font-size:12px;margin-top:4px;color:var(--dim2,#8aa)}.mlog b.wilco{color:#3dff7a}.mlog b.unable{color:#ff6b6b}.mlog.chat{color:#4fe3d0;font-size:13px}.mlog.chat b{color:#4fe3d0}
@@ -495,8 +496,8 @@ function showLogin(msg){$('keyErr').textContent=msg||'';$('keyIn').value='';$('l
 
 /* ---------- strips ---------- */
 function renderStrips(force){
-  var f=document.activeElement;if(!force&&(pttBusy||f&&(f.id==='sqin'||f.id==='msgin'||f.id==='urg'||f.id==='hoto'||f.closest&&f.closest('.twmount'))))return;
-  var list=ac.map(function(a){return{a:a,r:rel(a)}}).sort(function(x,y){return x.r.dist-y.r.dist});
+  var f=document.activeElement;if(!force&&(pttBusy||f&&(f.id==='sqin'||f.id==='msgin'||f.id==='hdgin'||f.id==='urg'||f.id==='hoto'||f.closest&&f.closest('.twmount'))))return;
+  var list=ac.map(function(a){return{a:a,r:rel(a)}}).sort(function(x,y){var sx=x.a.icao_address===sel?0:1,sy=y.a.icao_address===sel?0:1;return sx-sy||x.r.dist-y.r.dist});
   if(!list.length){$('list').innerHTML='<div class="empty">'+L('No traffic.','Sem tráfego.')+'</div>';return}
   $('list').innerHTML=list.map(function(o){var a=o.a,r=o.r,id=a.icao_address,tw=isTwr(a),isSel=id===sel;
     var asg=a.assigned_squawk||null,st=tw?'':(asg?'<span class="ok">SQ '+esc(asg)+'</span>':'<span class="warn">'+L('NO CODE &ndash; assign one','SEM CÓDIGO &ndash; atribua um')+'</span>');
@@ -507,6 +508,8 @@ function renderStrips(force){
       '<button data-act="set">'+L('Assign','Atribuir')+'</button><button data-act="auto">Auto</button><button data-act="clear">'+L('Clear','Limpar')+'</button></div>'+
       '<div class="ctl"><button class="ptt'+(voiceOn&&a.voice!==false?'':' off')+'" id="ptt" data-icao="'+esc(id)+'" data-cs="'+esc(a.callsign||id)+'" data-voice="'+(a.voice===false?'0':'1')+'">'+(a.voice===false?L('Pilot voice off','Voz do piloto desligada'):L('Hold to talk','Segure para falar'))+'</button></div>'+
       (a.phase==='air'?'':'<div class="ctl">'+(txMode===id?(txPrev&&txPrev.id===id?'<button data-act="txsend">'+L('Send route','Enviar rota')+'</button>':'<span class="m">'+L('Click the destination on the radar','Clique no destino no radar')+'</span>')+'<button data-act="txcancel">'+L('Cancel','Cancelar')+'</button>':'<button data-act="txr">'+L('Taxi route','Rota de táxi')+'</button>'+(a.has_taxi?'<button data-act="txclr">'+L('Clear route','Limpar rota')+'</button>':''))+'</div>')+
+      '<div class="ctl hdg"><button data-act="hdgs" data-d="-10">&lsaquo;10</button><button data-act="hdgs" data-d="-5">&lsaquo;5</button><input id="hdgin" inputmode="numeric" maxlength="3" value="'+hdgVal(a)+'"><button data-act="hdgs" data-d="5">5&rsaquo;</button><button data-act="hdgs" data-d="10">10&rsaquo;</button></div>'+
+      '<div class="ctl hdg"><button data-act="hdgsend" data-t="L">&larr; '+L('Left','Esq.')+'</button><button data-act="hdgsend" data-t="F">'+L('Fly heading','Voar proa')+'</button><button data-act="hdgsend" data-t="R">'+L('Right','Dir.')+' &rarr;</button></div>'+
       '<div class="ctl"><input id="msgin" maxlength="300" placeholder="'+L('Message to pilot','Mensagem ao piloto')+'"><label class="urg"><input type="checkbox" id="urg"'+(urgent?' checked':'')+'> '+L('Urgent','Urgente')+'</label><button data-act="msg">'+L('Send','Enviar')+'</button></div>':'';
     var ho=handUi(a,isSel&&!tw);
     var vc=vclips.filter(function(v){return v.icao_address===id&&isHeard(v.freq)}).slice(-3).map(function(v){return'<div class="mlog chat"><b>'+L('PILOT voice','PILOTO voz')+'</b> '+Math.round((v.ms||0)/1000)+' s <button data-act="vplay" data-clip="'+esc(v.id)+'">&#9654;</button></div>'}).join('');
@@ -523,8 +526,8 @@ $('strips').addEventListener('click',function(e){
   var btn=e.target.closest('button'),strip=e.target.closest('.strip');if(!strip)return;var id=strip.getAttribute('data-id');
   if(btn){var act=btn.getAttribute('data-act'),v=($('sqin')||{}).value||'';
     if(act==='set'){if(!/^[0-7]{4}$/.test(v)){toast(L('4 digits, each 0-7','4 dígitos, cada um 0-7'));return}assign(id,v)}
-    else if(act==='vplay')playClip(btn.getAttribute('data-clip'));else if(act==='txr'){txMode=id;txPrev=null;renderStrips(true);draw()}else if(act==='txcancel'){txMode='';txPrev=null;renderStrips(true);draw()}else if(act==='txsend')txSend(id);else if(act==='txclr')txClear(id);else if(act==='msg')sendMsg(id);else if(act==='hosend')handoffSend(id);else if(act==='hoacc')handoffReply(id,true);else if(act==='hodec')handoffReply(id,false);else if(act==='auto')assign(id,'');else if(act==='clear')clearSq(id);return}
-  if(e.target.id==='sqin'||e.target.id==='msgin'||e.target.id==='urg'||e.target.id==='ptt'||e.target.id==='hoto')return;
+    else if(act==='vplay')playClip(btn.getAttribute('data-clip'));else if(act==='txr'){txMode=id;txPrev=null;renderStrips(true);draw()}else if(act==='txcancel'){txMode='';txPrev=null;renderStrips(true);draw()}else if(act==='txsend')txSend(id);else if(act==='txclr')txClear(id);else if(act==='msg')sendMsg(id);else if(act==='hdgs')hdgStep(id,Number(btn.getAttribute('data-d')));else if(act==='hdgsend')hdgSend(id,btn.getAttribute('data-t'));else if(act==='hosend')handoffSend(id);else if(act==='hoacc')handoffReply(id,true);else if(act==='hodec')handoffReply(id,false);else if(act==='auto')assign(id,'');else if(act==='clear')clearSq(id);return}
+  if(e.target.id==='sqin'||e.target.id==='msgin'||e.target.id==='hdgin'||e.target.id==='urg'||e.target.id==='ptt'||e.target.id==='hoto')return;
   if(sel!==id){txMode='';txPrev=null}sel=(strip.classList.contains('twr')&&sel===id)?null:id;draw();renderStrips(true)});
 var group='';try{var gp=new URLSearchParams(location.search).get('group');group=gp!==null?gp:(localStorage.getItem('afc_group')||'');if(gp!==null){if(group)localStorage.setItem('afc_group',group);else localStorage.removeItem('afc_group')}}catch(e){}
 var atcCode='';try{var ap=new URLSearchParams(location.search).get('atc');atcCode=ap!==null?ap:(localStorage.getItem('afc_atc')||'');if(ap!==null){if(atcCode)localStorage.setItem('afc_atc',atcCode);else localStorage.removeItem('afc_atc')}}catch(e){}
@@ -545,9 +548,18 @@ function assign(id,sq){var body={icao_address:id,holder:holder,freq:talkFreq()};
    .then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j,s:r.status}})})
    .then(function(o){toast(o.ok?L('Assigned ','Atribuído ')+o.j.squawk:o.j.error==='not_tuned'?NOTTUNED(o.j):o.j.error==='division_required'?L('Claim a role first','Assuma uma função primeiro'):L('Error: ','Erro: ')+(o.j.error||o.s));poll(true)})
    .catch(function(){toast(L('Network error','Erro de rede'))})}
+var hdgSel={};
+function hdgNorm(n){n=Math.round(n)%360;if(n<=0)n+=360;return n}
+function hdgVal(a){var id=a.icao_address;if(hdgSel[id]==null)hdgSel[id]=hdgNorm(Math.round((Number(a.heading_mag!=null?a.heading_mag:a.heading_true)||0)/5)*5);return p3(hdgSel[id])}
+function hdgCur(id){var el=$('hdgin'),v=el?parseInt(el.value,10):NaN;if(!(v>=0))v=hdgSel[id]||360;return hdgNorm(v)}
+function hdgStep(id,d){var v=hdgNorm(hdgCur(id)+d);hdgSel[id]=v;var el=$('hdgin');if(el)el.value=p3(v)}
+function hdgSend(id,t){var v=hdgCur(id);hdgSel[id]=v;var h=p3(v),el=$('hdgin');if(el)el.value=h;
+  postMsg(id,t==='L'?L('Turn left heading ','Vire à esquerda proa ')+h:t==='R'?L('Turn right heading ','Vire à direita proa ')+h:L('Fly heading ','Voe proa ')+h,null)}
 function sendMsg(id){var el=$('msgin'),t=(el.value||'').trim();if(!t){toast(L('Type a message','Digite uma mensagem'));return}
+  postMsg(id,t,el)}
+function postMsg(id,t,el){
   api('/api/atc/message',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({icao_address:id,text:t,urgent:urgent,freq:talkFreq(),holder:holder})})
-   .then(function(r){return r.json().then(function(j){if(!r.ok){toast(j.error==='not_tuned'?NOTTUNED(j):L('Error: ','Erro: ')+(j.error||r.status));return}el.value='';toast(L('Sent','Enviado'));poll(true)})})
+   .then(function(r){return r.json().then(function(j){if(!r.ok){toast(j.error==='not_tuned'?NOTTUNED(j):L('Error: ','Erro: ')+(j.error||r.status));return}if(el)el.value='';toast(L('Sent','Enviado'));poll(true)})})
    .catch(function(){toast(L('Network error','Erro de rede'))})}
 $('strips').addEventListener('change',function(e){if(e.target.id==='urg')urgent=e.target.checked});
 $('strips').addEventListener('keydown',function(e){if(e.key==='Enter'&&e.target.id==='msgin'){var s=e.target.closest('.strip');if(s)sendMsg(s.getAttribute('data-id'))}});

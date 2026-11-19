@@ -117,7 +117,7 @@ function computeTA(a, b) {
 // ---- Auto-ATC (basic clearances for pilots when no human controller covers the airport) ----
 // Newest released app versions: bump when a new APK / PC build is published; clients older than this show an update notice.
 const FLIGHT_MIN_AIR_S = 180;   // airborne at least 3 min, then touchdown (no crash) = flight completed
-const LATEST = { android: "1.2", pc: "2.2.0" };
+const LATEST = { android: "1.2.1", pc: "2.2.1" };
 const REQ_TYPES = ["clearance", "pushback", "taxi", "takeoff", "land", "climb", "descent", "mayday", "mayday_cancel"];
 const MAYDAY_MS = 30 * 60_000, MAYDAY_NEAR_MI = 30;
 const REQ_LOCK_MS = { takeoff: 90_000, land: 120_000 };
@@ -132,7 +132,7 @@ const PHRASE = {
     clearance: (dest, r, sq) => `Cleared ${dest ? "to " + dest + " " : ""}as filed${r ? ", departure runway " + r : ""}, squawk ${sq}`,
     taxi: r => r ? `Taxi to runway ${r}, hold short` : "Taxi to the runway, hold short",
     pushback: r => `Pushback approved${r ? ", expect runway " + r : ""}`,
-    direct: f => `Proceed direct ${f}`, offRoute: f => `You appear off route, say intentions${f ? " or proceed direct " + f : ""}`, expectRwy: r => `Expect runway ${r}`,
+    direct: f => `Proceed direct ${f}`, expectRwy: r => `Expect runway ${r}`,
     gTaxiOut: (r, via) => `Taxi to runway ${r}${via ? " via " + via : ""}, hold short runway ${r}`,
     gTaxiGate: (g, via) => `Taxi to ${g ? "gate " + g : "the gate"}${via ? " via " + via : ""}`,
     gHold: (via, r) => `Taxi${via ? " via " + via : ""}, hold short of runway ${r}`,
@@ -158,7 +158,7 @@ const PHRASE = {
     clearance: (dest, r, sq) => `Autorizado${dest ? " para " + dest : ""} conforme o plano${r ? ", pista de saída " + r : ""}, código ${sq}`,
     taxi: r => r ? `Táxi para a pista ${r}, aguarde antes da pista` : "Táxi para a pista, aguarde antes da pista",
     pushback: r => `Pushback autorizado${r ? ", espere a pista " + r : ""}`,
-    direct: f => `Proceda direto a ${f}`, offRoute: f => `Você parece fora da rota, informe intenções${f ? " ou proceda direto a " + f : ""}`, expectRwy: r => `Espere a pista ${r}`,
+    direct: f => `Proceda direto a ${f}`, expectRwy: r => `Espere a pista ${r}`,
     gTaxiOut: (r, via) => `Táxi para a pista ${r}${via ? " via " + via : ""}, aguarde antes da pista ${r}`,
     gTaxiGate: (g, via) => `Táxi para ${g ? "o portão " + g : "o portão"}${via ? " via " + via : ""}`,
     gHold: (via, r) => `Táxi${via ? " via " + via : ""}, aguarde antes da pista ${r}`,
@@ -325,13 +325,6 @@ export class Hub {
     const fix = named(n) ? id(n) : "";
     // first call after departure: direct to the first named fix
     if (!st.calls.direct && fix && st.calls.dep) { st.calls.direct = true; say(ph.direct(fix), false); }
-    // off route: more than 10 nm from the active leg for 60 s (not near either airport's terminal area)
-    const a = w.i > 0 ? pts[w.i - 1] : null, b = pts[w.i];
-    const from = a ? { lat: a[0], lon: a[1] } : null, to = { lat: b[0], lon: b[1] };
-    const xt = from ? distSeg(la, lo, from, to) / 1852 : nm(to.lat, to.lon);
-    const term = (Number.isFinite(an) && an < 25) || haversineMi(la, lo, pts[0][0], pts[0][1]) < 15;
-    if (!term && xt > 10) { if (!w.off) w.off = now; } else w.off = 0;
-    if (w.off && now - w.off > 60_000 && now - w.said > 5 * 60_000) { w.said = now; say(ph.offRoute(fix), false); }
   }
 
   // ---- ground routing (taxiway names from OpenFreeMap vector tiles, Overpass as fallback; cached per airport 24 h, failures retried after 2 min)

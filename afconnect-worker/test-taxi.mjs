@@ -92,7 +92,7 @@ globalThis.fetch = realFetch;
   rr = await pos2({ phase: "air", altitude_ft: 20000, ground_speed: 300, latitude: -17, longitude: -43 });
   cl.st.wp.off = Date.now() - 61000;
   rr = await pos2({ phase: "air", altitude_ft: 20000, ground_speed: 300, latitude: -17, longitude: -43 });
-  W("off-route call", rr.messages.some(m => /off route, say intentions/.test(m.text)));
+  W("no off-route call any more", !rr.messages.some(m => /off route/.test(m.text)));
   rr = await pos2({ phase: "air", altitude_ft: 20000, ground_speed: 300, latitude: -17, longitude: -43 });
   W("off-route not repeated", !rr.messages.some(m => /off route/.test(m.text)));
   // joins mid-route, already past the first fix: next fix is the one ahead, never the one behind
