@@ -25,7 +25,23 @@ final class Api {
     static volatile String group = "";   // Discord group code, sent as X-Group (server turns it into a member flag)
     static void setGroup(Context c, String v) { group = v == null ? "" : v.trim(); prefs(c).edit().putString("group", group).apply(); }
 
+    static volatile Context appCtx;
+    /** Account token (afa_...) replaces the device key as identity while signed in. */
+    static String token(Context c) { return prefs(c).getString("token", ""); }
+    static String accountName(Context c) { return token(c).isEmpty() ? "" : prefs(c).getString("acct_name", ""); }
+    static void setAccount(Context c, String token, String name) {
+        prefs(c).edit().putString("token", token == null ? "" : token).putString("acct_name", name == null ? "" : name).apply();
+    }
+
+    /** Identity sent to the server: the account token when signed in, else the device key. */
     static String key(Context c) {
+        appCtx = c.getApplicationContext();
+        String t = token(c);
+        String dk = deviceKey(c);   // also loads the group code
+        return t.isEmpty() ? dk : t;
+    }
+
+    static String deviceKey(Context c) {
         SharedPreferences p = prefs(c);
         group = p.getString("group", "");
         String k = p.getString("key", null);
@@ -161,6 +177,7 @@ final class Api {
                 while ((ln = r.readLine()) != null && sb.length() < 65536) sb.append(ln);
                 r.close();
             }
+            if (code == 401 && sb.indexOf("invalid_token") >= 0 && appCtx != null) setAccount(appCtx, "", "");   // revoked token: back to the device key
             return new Resp(code, sb.toString());
         } finally {
             c.disconnect();

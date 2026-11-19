@@ -374,6 +374,78 @@ public class MainActivity extends Activity {
         LinearLayout root = column();
         root.addView(text(Api.t(this, "Settings", "Configurações"), 24, true));
 
+        // ----- Account -----
+        LinearLayout acc = section(root, Api.t(this, "Account", "Conta"));
+        final String accName = Api.accountName(this);
+        if (!accName.isEmpty()) {
+            acc.addView(text(Api.t(this, "Signed in as ", "Conectado como ") + accName, 18, true));
+            TextView ah = dim(Api.t(this, "Your hours and profile follow you on every device you sign in on.",
+                    "Suas horas e perfil acompanham você em qualquer aparelho em que entrar."), 13);
+            ah.setPadding(0, pad / 4, 0, pad / 2);
+            acc.addView(ah);
+            Button out = Ui.button(this, Api.t(this, "Sign out", "Sair"), Ui.SECONDARY);
+            acc.addView(out, Ui.lp(this, 8));
+            out.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View v) {
+                    if (PilotService.running) { Toast.makeText(MainActivity.this, Api.t(MainActivity.this, "Stop the flight first.", "Pare o voo primeiro."), Toast.LENGTH_SHORT).show(); return; }
+                    final String tk = Api.token(MainActivity.this);
+                    Api.setAccount(MainActivity.this, "", "");
+                    new Thread(new Runnable() { @Override public void run() { try { Api.request("POST", "/api/account/logout", "{}", tk); } catch (Exception ignored) { } } }).start();
+                    showSettings();
+                }
+            });
+        } else {
+            final EditText an = addField(acc, Api.t(this, "Account name", "Nome da conta"), "", false, false);
+            an.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD);
+            final EditText ap = addField(acc, Api.t(this, "Password (6+ characters)", "Senha (6+ caracteres)"), "", false, false);
+            ap.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+            TextView ah = dim(Api.t(this, "Optional. Signing in or creating an account adds this device's hours to it. No email: a forgotten password cannot be recovered.",
+                    "Opcional. Entrar ou criar conta soma as horas deste aparelho. Sem e-mail: senha esquecida não pode ser recuperada."), 13);
+            ah.setPadding(0, pad / 4, 0, pad / 2);
+            acc.addView(ah);
+            final Button login = Ui.button(this, Api.t(this, "Log in", "Entrar"), Ui.PRIMARY);
+            Button reg = Ui.button(this, Api.t(this, "Create account", "Criar conta"), Ui.SECONDARY);
+            acc.addView(login, Ui.lp(this, 8));
+            acc.addView(reg, Ui.lp(this, 8));
+            View.OnClickListener go = new View.OnClickListener() {
+                @Override public void onClick(View v) {
+                    if (PilotService.running) { Toast.makeText(MainActivity.this, Api.t(MainActivity.this, "Stop the flight first.", "Pare o voo primeiro."), Toast.LENGTH_SHORT).show(); return; }
+                    final boolean isReg = v != login;
+                    final String n = an.getText().toString().trim(), pw = ap.getText().toString();
+                    if (n.isEmpty() || pw.isEmpty()) return;
+                    final String dk = Api.deviceKey(MainActivity.this);
+                    new Thread(new Runnable() {
+                        @Override public void run() {
+                            String msg; boolean okk = false; String tk = "", nm = "";
+                            try {
+                                org.json.JSONObject o = new org.json.JSONObject();
+                                o.put("name", n); o.put("password", pw);
+                                Api.Resp r = Api.request("POST", isReg ? "/api/account/register" : "/api/account/login", o.toString(), dk);
+                                String err = "";
+                                try { org.json.JSONObject j = new org.json.JSONObject(r.body); err = j.optString("error", ""); tk = j.optString("token", ""); nm = j.optString("name", n); } catch (Exception ignored) { }
+                                if (r.code < 300 && !tk.isEmpty()) { okk = true; msg = Api.t(MainActivity.this, "Signed in as ", "Conectado como ") + nm; }
+                                else if (err.equals("name_taken")) msg = Api.t(MainActivity.this, "That name is taken.", "Esse nome já existe.");
+                                else if (err.equals("bad_name")) msg = Api.t(MainActivity.this, "Name: 3-20 letters, digits, _ . -", "Nome: 3-20 letras, números, _ . -");
+                                else if (err.equals("bad_password")) msg = Api.t(MainActivity.this, "Password must have 6+ characters.", "A senha precisa ter 6+ caracteres.");
+                                else if (err.equals("bad_login")) msg = Api.t(MainActivity.this, "Wrong name or password.", "Nome ou senha incorretos.");
+                                else if (err.equals("too_many_attempts")) msg = Api.t(MainActivity.this, "Too many attempts. Try again in 10 minutes.", "Muitas tentativas. Tente em 10 minutos.");
+                                else msg = Api.t(MainActivity.this, "Failed (HTTP ", "Falhou (HTTP ") + r.code + ")";
+                            } catch (Exception e) { msg = Api.t(MainActivity.this, "No connection", "Sem conexão"); }
+                            final boolean fok = okk; final String fm = msg, ftk = tk, fnm = nm;
+                            ui.post(new Runnable() {
+                                @Override public void run() {
+                                    Toast.makeText(MainActivity.this, fm, Toast.LENGTH_LONG).show();
+                                    if (fok) { Api.setAccount(MainActivity.this, ftk, fnm); if (inSettings) showSettings(); }
+                                }
+                            });
+                        }
+                    }).start();
+                }
+            };
+            login.setOnClickListener(go);
+            reg.setOnClickListener(go);
+        }
+
         // ----- Group code -----
         LinearLayout grp = section(root, Api.t(this, "Aerofly Connect ATC Network", "Aerofly Connect ATC Network"));
         Api.key(this);   // loads Api.group
