@@ -69,7 +69,7 @@ console.log("tower delete:", await call("DELETE", "/api/atc/tower?name=sbbr", nu
 console.log("tower gone:", !(await call("GET", "/api/traffic?lat=-15.8&lon=-47.9&radius_miles=50")).includes("ATC_SBBR"));
 
 // ATC messages (stage 3)
-await call("PUT", "/api/atc/tower", { name: "SBBR_TWR", holder: "ctl-holder", latitude: -15.87, longitude: -47.92 }, "ctl");
+await call("PUT", "/api/atc/tower", { name: "SBBR_TWR", holder: "ctl-holder", latitude: 10, longitude: 10.05 }, "ctl");
 const ok = (name, v) => console.log("msg " + name + ":", v ? "PASS" : "FAIL");
 await call("PUT", "/api/flightplan", { callsign: "MSG1" }, "mp");
 await call("PUT", "/api/position", { latitude: 10, longitude: 10, freq: "122.800" }, "mp");
@@ -78,6 +78,20 @@ const mtr = JSON.parse((await call("GET", "/api/traffic?lat=10&lon=10&radius_mil
 const micao = mtr.find(a => a.callsign === "MSG1").icao_address;
 const sent = JSON.parse((await call("PUT", "/api/atc/message", { icao_address: micao, text: "Descend FL100", holder: "ctl-holder" }, "ctl")).slice(4));
 ok("send", sent.success && sent.id);
+// airspace: far aircraft only for CTR (separate aircraft so the message tests below stay untouched)
+await call("PUT", "/api/flightplan", { callsign: "FAR1" }, "farp");
+await call("PUT", "/api/position", { latitude: 10, longitude: 14, freq: "122.800" }, "farp");
+const farIcao = JSON.parse((await call("GET", "/api/traffic?lat=10&lon=10&radius_miles=500")).slice(4)).aircraft.find(a => a.callsign === "FAR1").icao_address;
+const farMsg = async h => JSON.parse((await call("PUT", "/api/atc/message", { icao_address: farIcao, text: "Hello", holder: h }, "ctl")).slice(4));
+console.log("airspace TWR blocked far aircraft:", (await farMsg("ctl-holder")).error === "outside_airspace" ? "PASS" : "FAIL");
+await call("PUT", "/api/atc/tower", { name: "SBBR_CTR", holder: "ctr-holder", latitude: 50, longitude: 50 }, "ctr");
+console.log("airspace CTR handles it:", (await farMsg("ctr-holder")).success ? "PASS" : "FAIL");
+await call("DELETE", "/api/atc/tower?name=SBBR_CTR&holder=ctr-holder", null, "ctr");
+await call("PUT", "/api/position", { latitude: 10, longitude: 10.1, freq: "122.800" }, "farp");
+console.log("airspace TWR ok inside 15 nm:", (await farMsg("ctl-holder")).success ? "PASS" : "FAIL");
+await call("DELETE", "/api/position", null, "farp");
+
+
 ok("unknown aircraft 404", (await call("PUT", "/api/atc/message", { icao_address: "FFFFFF", text: "x", holder: "ctl-holder" }, "ctl")).startsWith("404"));
 ok("empty 400", (await call("PUT", "/api/atc/message", { icao_address: micao, text: "  ", holder: "ctl-holder" }, "ctl")).startsWith("400"));
 const status = async () => JSON.parse((await call("GET", "/api/traffic?lat=10&lon=10&radius_miles=50")).slice(4)).atc_messages.find(m => m.id === sent.id).status;
@@ -93,7 +107,7 @@ ok("other pilot cannot reply", (await call("PUT", "/api/messages/reply", { id: s
 ok("bad reply 400", (await call("PUT", "/api/messages/reply", { id: sent.id, reply: "maybe" }, "mp")).startsWith("400"));
 ok("wilco", (await call("PUT", "/api/messages/reply", { id: sent.id, reply: "wilco" }, "mp")).startsWith("200") && await status() === "wilco");
 // squawk assignment also creates a message
-await call("PUT", "/api/atc/squawk", { icao_address: micao, squawk: "4321", holder: "th" }, "ctl");
+await call("PUT", "/api/atc/squawk", { icao_address: micao, squawk: "4321", holder: "ctl-holder" }, "ctl");
 const p3 = JSON.parse((await call("PUT", "/api/position", { latitude: 10, longitude: 10, freq: "122.800" }, "mp")).slice(4));
 ok("squawk message", p3.messages.length === 1 && p3.messages[0].text === "Squawk 4321" && p3.messages[0].kind === "squawk");
 ok("squawk not urgent", p3.messages[0].urgent === false);

@@ -496,7 +496,7 @@ cv.addEventListener('pointercancel',function(e){delete ptrs[e.pointerId]});
 cv.addEventListener('wheel',function(e){e.preventDefault();nmpp=Math.min(8,Math.max(0.0025,nmpp*(e.deltaY>0?1.15:0.87)));draw()},{passive:false});
 var txMode='',txPrev=null;
 function txBody(id,lat,lon,pre){return JSON.stringify({icao_address:id,holder:holder,freq:talkFreq(),lat:lat,lon:lon,preview:!!pre})}
-function txErr(j,s){var e=j&&j.error;return e==='not_tuned'?NOTTUNED(j):e==='division_required'?L('Claim a role first','Assuma uma função primeiro'):e==='airborne'?L('Aircraft is airborne','Aeronave no ar'):e==='graph_loading'?L('Loading taxiway data, try again','Carregando dados de taxiway, tente de novo'):e==='no_taxi_data'?L('No taxiway data here','Sem dados de taxiway aqui'):e==='not_on_taxiway'?L('Aircraft is not on a taxiway','Aeronave fora da taxiway'):e==='no_destination'?L('No taxiway near that point','Nenhuma taxiway perto desse ponto'):e==='no_path'?L('No taxiway path found','Caminho não encontrado'):L('Error: ','Erro: ')+(e||s)}
+function txErr(j,s){var e=j&&j.error;return (e==='not_tuned'||e==='outside_airspace')?NOTTUNED(j):e==='division_required'?L('Claim a role first','Assuma uma função primeiro'):e==='airborne'?L('Aircraft is airborne','Aeronave no ar'):e==='graph_loading'?L('Loading taxiway data, try again','Carregando dados de taxiway, tente de novo'):e==='no_taxi_data'?L('No taxiway data here','Sem dados de taxiway aqui'):e==='not_on_taxiway'?L('Aircraft is not on a taxiway','Aeronave fora da taxiway'):e==='no_destination'?L('No taxiway near that point','Nenhuma taxiway perto desse ponto'):e==='no_path'?L('No taxiway path found','Caminho não encontrado'):L('Error: ','Erro: ')+(e||s)}
 function txPoint(x,y){var id=txMode,lat=center.lat-(y-H/2)*nmpp/60,lon=center.lon+(x-W/2)*nmpp/(60*Math.cos(center.lat*Math.PI/180));
   api('/api/atc/taxiroute',{method:'PUT',headers:{'Content-Type':'application/json'},body:txBody(id,lat,lon,true)}).then(function(r){return r.json().then(function(j){
     if(!r.ok){toast(txErr(j,r.status));return}txPrev={id:id,lat:lat,lon:lon,d:j};renderStrips(true);draw()})}).catch(function(){toast(L('Network error','Erro de rede'))})}
@@ -579,7 +579,7 @@ function api(path,opt){opt=opt||{};var m=(opt.method||'GET').toUpperCase();
 function assign(id,sq){var body={icao_address:id,holder:holder,freq:talkFreq()};if(sq)body.squawk=sq;
   api('/api/atc/squawk',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
    .then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j,s:r.status}})})
-   .then(function(o){toast(o.ok?L('Assigned ','Atribuído ')+o.j.squawk:o.j.error==='not_tuned'?NOTTUNED(o.j):o.j.error==='division_required'?L('Claim a role first','Assuma uma função primeiro'):L('Error: ','Erro: ')+(o.j.error||o.s));poll(true)})
+   .then(function(o){toast(o.ok?L('Assigned ','Atribuído ')+o.j.squawk:(o.j.error==='not_tuned'||o.j.error==='outside_airspace')?NOTTUNED(o.j):o.j.error==='division_required'?L('Claim a role first','Assuma uma função primeiro'):L('Error: ','Erro: ')+(o.j.error||o.s));poll(true)})
    .catch(function(){toast(L('Network error','Erro de rede'))})}
 function nocText(t){return t==='taxi'?L('NO TAXI CLNC','SEM AUT. TÁXI'):t==='runway'?L('NO T/O CLNC','SEM AUT. DECOLAGEM'):t==='landing'?L('NO LDG CLNC','SEM AUT. POUSO'):t==='alt'?L('NO ALT CLNC','SEM AUT. ALT'):L('NO CLNC','SEM AUT.')}
 function altTxt(ft){return ft>=TA?'FL'+p3(Math.round(ft/100)):ft+' ft'}
@@ -593,7 +593,7 @@ function clrCtl(a){var air=a.phase==='air',any=!a.phase,h='<div class="ctl clrs"
 function clrSend(id,t,on,alt){var body={icao_address:id,type:t,on:on,holder:holder,freq:talkFreq(),msg:autoMsg};if(alt)body.altitude=alt;
   api('/api/atc/clearance',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
    .then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j,s:r.status}})})
-   .then(function(o){toast(o.ok?L('Clearance updated','Autorização atualizada'):o.j.error==='not_tuned'?NOTTUNED(o.j):o.j.error==='division_required'?L('Claim a role first','Assuma uma função primeiro'):o.j.error==='bad_altitude'?L('Altitude: 100 = FL100, 5000 = ft','Altitude: 100 = FL100, 5000 = ft'):L('Error: ','Erro: ')+(o.j.error||o.s));poll(true)})
+   .then(function(o){toast(o.ok?L('Clearance updated','Autorização atualizada'):(o.j.error==='not_tuned'||o.j.error==='outside_airspace')?NOTTUNED(o.j):o.j.error==='division_required'?L('Claim a role first','Assuma uma função primeiro'):o.j.error==='bad_altitude'?L('Altitude: 100 = FL100, 5000 = ft','Altitude: 100 = FL100, 5000 = ft'):L('Error: ','Erro: ')+(o.j.error||o.s));poll(true)})
    .catch(function(){toast(L('Network error','Erro de rede'))})}
 var hdgSel={};
 function hdgNorm(n){n=Math.round(n)%360;if(n<=0)n+=360;return n}
@@ -606,12 +606,12 @@ function sendMsg(id){var el=$('msgin'),t=(el.value||'').trim();if(!t){toast(L('T
   postMsg(id,t,el)}
 function postMsg(id,t,el){
   api('/api/atc/message',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({icao_address:id,text:t,urgent:urgent,freq:talkFreq(),holder:holder})})
-   .then(function(r){return r.json().then(function(j){if(!r.ok){toast(j.error==='not_tuned'?NOTTUNED(j):L('Error: ','Erro: ')+(j.error||r.status));return}if(el)el.value='';toast(L('Sent','Enviado'));poll(true)})})
+   .then(function(r){return r.json().then(function(j){if(!r.ok){toast((j.error==='not_tuned'||j.error==='outside_airspace')?NOTTUNED(j):L('Error: ','Erro: ')+(j.error||r.status));return}if(el)el.value='';toast(L('Sent','Enviado'));poll(true)})})
    .catch(function(){toast(L('Network error','Erro de rede'))})}
 $('strips').addEventListener('input',function(e){if(e.target.id==='hdgin'&&sel){var v=parseInt(e.target.value,10);if(v>=0&&v<=360){hdgSel[sel]=hdgNorm(v);draw()}}});
 $('strips').addEventListener('change',function(e){if(e.target.id==='urg')urgent=e.target.checked});
 $('strips').addEventListener('keydown',function(e){if(e.key==='Enter'&&e.target.id==='altin'){var s0=e.target.closest('.strip');if(s0&&e.target.value)clrSend(s0.getAttribute('data-id'),'alt',true,e.target.value)}if(e.key==='Enter'&&e.target.id==='msgin'){var s=e.target.closest('.strip');if(s)sendMsg(s.getAttribute('data-id'))}});
-function clearSq(id){api('/api/atc/squawk?icao_address='+encodeURIComponent(id)+'&holder='+encodeURIComponent(holder)+'&freq='+encodeURIComponent(talkFreq()),{method:'DELETE'}).then(function(r){return r.json().then(function(j){toast(r.ok?L('Cleared','Removido'):j.error==='not_tuned'?NOTTUNED(j):j.error==='division_required'?L('Claim a role first','Assuma uma função primeiro'):L('Error: ','Erro: ')+(j.error||r.status));poll(true)})})}
+function clearSq(id){api('/api/atc/squawk?icao_address='+encodeURIComponent(id)+'&holder='+encodeURIComponent(holder)+'&freq='+encodeURIComponent(talkFreq()),{method:'DELETE'}).then(function(r){return r.json().then(function(j){toast(r.ok?L('Cleared','Removido'):(j.error==='not_tuned'||j.error==='outside_airspace')?NOTTUNED(j):j.error==='division_required'?L('Claim a role first','Assuma uma função primeiro'):L('Error: ','Erro: ')+(j.error||r.status));poll(true)})})}
 
 /* ---------- virtual towers ---------- */
 var myTowers=[],myApts=[];try{myTowers=JSON.parse(localStorage.getItem('abflug_towers')||'[]');myApts=JSON.parse(localStorage.getItem('afc_apts')||'[]')}catch(e){}
@@ -648,7 +648,7 @@ function updateTalk(){var row=$('talkRow'),sel=$('talkOn');if(!myTowers.length){
   sel.innerHTML='<option value="*"'+(talkName==='*'?' selected':'')+'>'+L('All frequencies (reach every aircraft)','Todas as frequências (alcança todas)')+'</option>'+myTowers.map(function(x){return'<option value="'+esc(x.name)+'"'+(x.name===talkName?' selected':'')+'>'+esc(roleLabel(x.name))+(x.freq?' '+esc(x.freq):'')+'</option>'}).join('');row.style.display='';
   var b=$('twList');if(b)b._sig=null}
 $('talkOn').onchange=function(){talkName=this.value;updateTalk();renderTowerBox()};
-var NOTTUNED=function(j){return(j.callsign||'')+L(' is tuned to ',' está sintonizado em ')+j.freq+(talkFreq()?L(' (you are on ',' (você está em ')+talkFreq()+')'+L('. Pick "All frequencies" to reach everyone','.'):'')};
+var NOTTUNED=function(j){if(j.error==='outside_airspace')return(j.callsign||'')+L(' is outside your airspace ('+j.nm+' nm, '+j.role+' limit '+j.limit+' nm). Only CTR can handle it',' está fora do seu espaço aéreo ('+j.nm+' nm, limite '+j.role+' '+j.limit+' nm). Só o CTR pode atendê-lo');return(j.callsign||'')+L(' is tuned to ',' está sintonizado em ')+j.freq+(talkFreq()?L(' (you are on ',' (você está em ')+talkFreq()+')'+L('. Pick "All frequencies" to reach everyone','.'):'')};
 var TAKEN=function(j){return L('Position '+(j.airport||'')+' '+(j.position||'')+' is already staffed by another controller','Posição '+(j.airport||'')+' '+(j.position||'')+' já está ocupada por outro controlador')};
 var MEMBER_MSG=function(){return L('Member tower: enter the ATC Network code first (ATC Network button)','Torre de membro: digite antes o código da ATC Network (botão ATC Network)')};
 var LOCKED=function(j){return L('You are working at '+(j.airport||'another airport')+' - release your role there first','Você está atuando em '+(j.airport||'outro aeroporto')+' - libere sua função lá primeiro')};

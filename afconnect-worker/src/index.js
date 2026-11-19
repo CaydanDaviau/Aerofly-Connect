@@ -268,6 +268,7 @@ export default {
   },
 };
 
+const AIRSPACE_NM = { DEL: 5, GND: 5, TWR: 15, APP: 50 };
 const TOK_TTL_MS = 90 * 86_400_000;
 export class Hub {
   constructor(ctx) {
@@ -488,6 +489,23 @@ export class Hub {
     if (!holder) return false;
     const now = Date.now();
     return [...this.towers.values()].some(t => t.holder === holder && POS_NAMES.includes(t.pos) && now - t.at <= POS_TTL_MS);
+  }
+  // Airspace: a non-CTR role only handles aircraft inside its circle around the airport (DEL/GND 5 nm, TWR 15 nm, APP 50 nm). CTR handles anything.
+  airspaceBlock(holder, target) {
+    if (!holder || !target || !target.pos) return null;
+    const now = Date.now(), roles = [...this.towers.values()].filter(t => t.holder === holder && POS_NAMES.includes(t.pos) && now - t.at <= POS_TTL_MS);
+    if (!roles.length || roles.some(r => r.pos === "CTR")) return null;
+    const la = Number(target.pos.latitude), lo = Number(target.pos.longitude);
+    if (!isFinite(la) || !isFinite(lo)) return null;
+    let best = null;
+    for (const r of roles) {
+      const a = this.towers.get(r.apt) || r, alat = Number(a.latitude), alon = Number(a.longitude);
+      if (!alat && !alon) return null;   // no airport position known: do not block
+      const nm = haversineMi(alat, alon, la, lo) / 1.15078, lim = AIRSPACE_NM[r.pos] || 50;
+      if (nm <= lim) return null;
+      if (!best || nm - lim < best.nm - best.limit) best = { nm: Math.round(nm), limit: lim, role: r.pos, airport: r.apt };
+    }
+    return { error: "outside_airspace", callsign: normCallsign(target.plan.callsign ?? target.pos.callsign), ...best };
   }
   // The live role record a holder works (null = none)
   roleOf(holder, pos) {
@@ -1016,6 +1034,7 @@ export class Hub {
       const target = [...this.clients.values()].find(c => c.pos && c.pos.icao_address === icao);
       if (!target || !!target.member !== (request.headers.get("X-Member") === "1")) return json({ error: "aircraft not found" }, 404);
       if (!tunedTo(target.pos.freq, normFreq(d.freq))) return json({ error: "not_tuned", freq: target.pos.freq, callsign: normCallsign(target.plan.callsign ?? target.pos.callsign) }, 409);
+      { const ob = this.airspaceBlock(String(d.holder || ""), target); if (ob) return json(ob, 409); }
       if (m === "DELETE") { target.taxi = null; return json({ success: true }); }
       if (target.pos.phase === "air") return json({ error: "airborne" }, 409);
       const lat = Number(d.lat), lon = Number(d.lon);
@@ -1047,6 +1066,7 @@ export class Hub {
       const target = [...this.clients.values()].find(c => c.pos && c.pos.icao_address === icao);
       if (!target) return json({ error: "aircraft not found" }, 404);
       if (!tunedTo(target.pos.freq, normFreq(d.freq))) return json({ error: "not_tuned", freq: target.pos.freq, callsign: normCallsign(target.plan.callsign ?? target.pos.callsign) }, 409);
+      { const ob = this.airspaceBlock(String(d.holder || ""), target); if (ob) return json(ob, 409); }
       let sq = d.squawk === undefined || d.squawk === null || d.squawk === "" ? null : String(d.squawk);
       if (sq === null) {
         sq = this.pickSquawk();
@@ -1066,6 +1086,7 @@ export class Hub {
       const icao = String(url.searchParams.get("icao_address") || "").toUpperCase();
       const tg = [...this.clients.values()].find(c => c.pos && c.pos.icao_address === icao);
       if (tg && !tunedTo(tg.pos.freq, normFreq(url.searchParams.get("freq")))) return json({ error: "not_tuned", freq: tg.pos.freq, callsign: normCallsign(tg.plan.callsign ?? tg.pos.callsign) }, 409);
+      { const ob = this.airspaceBlock(String(url.searchParams.get("holder") || ""), tg); if (ob) return json(ob, 409); }
       for (const c of this.clients.values()) if (c.pos && c.pos.icao_address === icao) c.assigned = null;
       await this.ctx.storage.delete("sq:" + icao);
       return json({ success: true });
@@ -1079,6 +1100,7 @@ export class Hub {
       const target = [...this.clients.values()].find(c => c.pos && c.pos.icao_address === icao);
       if (!target) return json({ error: "aircraft not found" }, 404);
       if (!tunedTo(target.pos.freq, normFreq(d.freq))) return json({ error: "not_tuned", freq: target.pos.freq, callsign: normCallsign(target.plan.callsign ?? target.pos.callsign) }, 409);
+      { const ob = this.airspaceBlock(String(d.holder || ""), target); if (ob) return json(ob, 409); }
       const type = String(d.type || ""), now = Date.now(), on = d.on !== false;
       if (!["taxi", "takeoff", "land", "alt"].includes(type)) return json({ error: "type must be taxi, takeoff, land or alt" }, 400);
       const st = target.st || (target.st = { gr: {}, ph: null, at: 0, lat: 0, lon: 0, grace: now + GRACE_MS, calls: {}, viol: {}, landedAt: 0, landRwy: "" });
@@ -1109,6 +1131,7 @@ export class Hub {
       if (!target) return json({ error: "aircraft not found" }, 404);
       if (!text) return json({ error: "empty message" }, 400);
       if (!tunedTo(target.pos.freq, normFreq(d.freq))) return json({ error: "not_tuned", freq: target.pos.freq, callsign: normCallsign(target.plan.callsign ?? target.pos.callsign) }, 409);
+      { const ob = this.airspaceBlock(String(d.holder || ""), target); if (ob) return json(ob, 409); }
       return json({ success: true, id: this.addMsg(target, text, "msg", { urgent: d.urgent === true }).id });
     }
     if ((m === "PUT" || m === "POST") && p === "/api/messages/reply") {
@@ -1156,6 +1179,7 @@ export class Hub {
       if (target.pos.voice === false) return json({ error: "voice_off", callsign: normCallsign(target.plan.callsign ?? target.pos.callsign) }, 409);
       if (!d.audio || typeof d.audio !== "string" || d.audio.length > VOICE_MAX_B64) return json({ error: "bad audio" }, 400);
       if (!tunedTo(target.pos.freq, normFreq(d.freq))) return json({ error: "not_tuned", freq: target.pos.freq, callsign: normCallsign(target.plan.callsign ?? target.pos.callsign) }, 409);
+      { const ob = this.airspaceBlock(String(d.holder || ""), target); if (ob) return json(ob, 409); }
       return json({ success: true, id: this.addClip("down", target, d) });
     }
 
@@ -1407,6 +1431,7 @@ export class Hub {
       const me = this.roleOf(String(d.holder || "").slice(0, 40), p === "/api/atc/handoff" ? String(d.from || "").toUpperCase() : target && target.handoff && target.handoff.to);
       if (!me) return json({ error: "division_required" }, 409);
       if (!target) return json({ error: "aircraft not found" }, 404);
+      if (p === "/api/atc/handoff") { const ob = this.airspaceBlock(String(d.holder || "").slice(0, 40), target); if (ob) return json(ob, 409); }
       if (p === "/api/atc/handoff") {
         const to = String(d.to || "").toUpperCase();
         if (!POS_NAMES.includes(to) || to === me.pos) return json({ error: "bad_target" }, 400);
