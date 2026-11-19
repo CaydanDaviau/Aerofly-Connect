@@ -84,6 +84,7 @@ input::placeholder{color:var(--dim)}
     <button id="autoMsgBtn" title="Send the pilot a text when you grant a clearance">Auto msg: on</button>
     <button id="replayVoiceBtn" title="Replay the last voice message (sent or received). Plays locally, nothing is transmitted." disabled>Replay last</button>
     <div id="menu" style="display:none"><button id="voiceBtn" title="Voice on/off">Voice: on</button>
+    <button id="acctBtn" title="Account: your hours and profile follow you on every device">Account</button>
     <button id="grpBtn" title="Aerofly Connect ATC Network code (from Discord)">ATC Network</button>
     <button id="credBtn" title="ATC credential issued by the network management: lets you open towers in the network" disabled>ATC Credential</button>
     <button id="dimBtn" title="Grey out aircraft that are not on my frequencies (they stay visible)">My freqs: off</button>
@@ -133,6 +134,8 @@ var key='';try{key=new URLSearchParams(location.search).get('key')||localStorage
 /* no key yet (e.g. PC browser): make one so nobody has to type it; the login box only shows if the server rejects it */
 if(!key){var _a='';try{var _b=new Uint8Array(8);crypto.getRandomValues(_b);for(var _i=0;_i<8;_i++)_a+=('0'+_b[_i].toString(16)).slice(-2)}catch(e){for(var _j=0;_j<16;_j++)_a+=Math.floor(Math.random()*16).toString(16)}
   key='rv'+_a;try{localStorage.setItem('abflug_key',key)}catch(e){}}
+var tok='',acctName='',devKey=key,fromApp=false;try{tok=localStorage.getItem('afc_token')||'';acctName=localStorage.getItem('afc_acct')||''}catch(e){}
+if(key.indexOf('afa_')===0){tok=key;devKey='';fromApp=true}else if(tok)key=tok;
 var ac=[],crashes=[],confl={},hasViol=false,msgs=[],sel=null,center={lat:0,lon:0},manual=false,centroidDone=false,nmpp=0.25,W=300,H=300;
 var trails={},TRACE_MS=30*60*1000,RK='afc_rtrails_v1',ranges=[1,2,5,10,25,50,100,250,500,1000];
 
@@ -779,6 +782,33 @@ function askText(msg,def,cb){
   function mk(t,ok){var x=document.createElement('button');x.textContent=t;x.style.cssText='padding:7px 14px;border-radius:8px;border:1px solid #3a4651;background:'+(ok?'#1a73e8':'#2a333b')+';color:#fff;font:inherit;cursor:pointer';x.onclick=function(){o.remove();if(ok)cb(i.value)};return x}
   i.onkeydown=function(e){if(e.key==='Enter'){o.remove();cb(i.value)}else if(e.key==='Escape')o.remove()};
   r.append(mk(L('Cancel','Cancelar'),false),mk('OK',true));b.append(m,i,r);o.append(b);document.body.append(o);i.focus();i.select()}
+function dropToken(){tok='';acctName='';try{localStorage.removeItem('afc_token');localStorage.removeItem('afc_acct')}catch(e){}key=devKey;setAcctBtn();reopenWs();setTimeout(refreshMyTowers,1500);poll(true)}
+function setAcctBtn(){var b=$('acctBtn');if(fromApp){b.style.display='none';return}b.textContent=acctName?L('Account: ','Conta: ')+acctName:L('Account','Conta');b.style.borderColor=acctName?'#3dff7a':'';b.style.color=acctName?'#3dff7a':''}
+function acctPost(path,body){return fetch(path,{method:'POST',headers:{'X-API-Key':body.token||devKey||key,'Content-Type':'application/json'},body:JSON.stringify(body.data||{})}).then(function(r){return r.json().catch(function(){return{}}).then(function(j){return{s:r.status,j:j}})})}
+var ACCT_ERR={name_taken:['That name is taken.','Esse nome já existe.'],bad_name:['Name: 3-20 letters, digits, _ . -','Nome: 3-20 letras, números, _ . -'],bad_password:['Password must have 6+ characters.','A senha precisa ter 6+ caracteres.'],bad_login:['Wrong name or password.','Nome ou senha incorretos.'],too_many_attempts:['Too many attempts. Try again in 10 minutes.','Muitas tentativas. Tente em 10 minutos.']};
+function acctDialog(){
+  var o=document.createElement('div');o.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px';
+  var b=document.createElement('div');b.style.cssText='background:#1b2127;color:#fff;border:1px solid #3a4651;border-radius:12px;padding:14px;max-width:420px;width:100%;font:14px system-ui,sans-serif';
+  var m=document.createElement('div');m.style.marginBottom='10px';
+  var st=document.createElement('div');st.style.cssText='color:#ff8a80;margin-top:8px;min-height:16px;font-size:13px';
+  var r=document.createElement('div');r.style.cssText='display:flex;gap:8px;justify-content:flex-end;margin-top:10px;flex-wrap:wrap';
+  function mk(t,primary,fn){var x=document.createElement('button');x.textContent=t;x.style.cssText='padding:7px 14px;border-radius:8px;border:1px solid #3a4651;background:'+(primary?'#1a73e8':'#2a333b')+';color:#fff;font:inherit;cursor:pointer';x.onclick=fn;return x}
+  function close(){o.remove()}
+  if(acctName){m.textContent=L('Signed in as ','Conectado como ')+acctName;
+    r.append(mk(L('Close','Fechar'),false,close),mk(L('Sign out','Sair'),true,function(){var t=tok;close();acctPost('/api/account/logout',{token:t,data:{}});dropToken();toast(L('Signed out','Saiu da conta'))}));
+    b.append(m,r)}
+  else{m.textContent=L('Log in or create an account. Your hours and profile follow you on every device. No email: a forgotten password cannot be recovered.','Entre ou crie uma conta. Suas horas e perfil acompanham você em qualquer aparelho. Sem e-mail: senha esquecida não pode ser recuperada.');
+    function fld(ph,type){var i=document.createElement('input');i.type=type;i.placeholder=ph;i.autocomplete='off';i.spellcheck=false;i.style.cssText='width:100%;box-sizing:border-box;padding:8px;border-radius:8px;border:1px solid #3a4651;background:#0f1418;color:#fff;font:inherit;margin-top:6px';return i}
+    var n=fld(L('Account name','Nome da conta'),'text'),pw=fld(L('Password (6+ characters)','Senha (6+ caracteres)'),'password');
+    function go(reg){var nm=n.value.trim(),p=pw.value;if(!nm||!p)return;st.textContent='...';
+      acctPost(reg?'/api/account/register':'/api/account/login',{data:{name:nm,password:p}}).then(function(x){
+        if(x.s<300&&x.j.token){tok=x.j.token;acctName=x.j.name||nm;try{localStorage.setItem('afc_token',tok);localStorage.setItem('afc_acct',acctName)}catch(e){}key=tok;close();setAcctBtn();reopenWs();setTimeout(refreshMyTowers,1500);poll(true);toast(L('Signed in as ','Conectado como ')+acctName)}
+        else{var e=ACCT_ERR[x.j.error];st.textContent=e?L(e[0],e[1]):'HTTP '+x.s}}).catch(function(){st.textContent=L('No connection','Sem conexão')})}
+    pw.onkeydown=function(e){if(e.key==='Enter')go(false)};
+    r.append(mk(L('Cancel','Cancelar'),false,close),mk(L('Create account','Criar conta'),false,function(){go(true)}),mk(L('Log in','Entrar'),true,function(){go(false)}));
+    b.append(m,n,pw,st,r)}
+  o.append(b);document.body.append(o)}
+$('acctBtn').addEventListener('click',acctDialog);setAcctBtn();
 $('grpBtn').addEventListener('click',function(){askText(L('Aerofly Connect ATC Network code (from Discord). Empty = public section.','Código da Aerofly Connect ATC Network (do Discord). Vazio = seção pública.'),group,function(v){
   group=v.trim();try{if(group)localStorage.setItem('afc_group',group);else localStorage.removeItem('afc_group')}catch(e){}checkGroup();reopenWs();setTimeout(refreshMyTowers,1500)})});
 function reopenWs(){if(ws){var old=ws;ws=null;try{old.close()}catch(x){}}clearTimeout(wsTimer);wsOpen()}
@@ -800,7 +830,7 @@ function poll(force){
   if(document.hidden&&!force)return;
   if(!force&&wsLive())return;
   api('/api/traffic?lat=0&lon=0&radius_miles=13000').then(function(r){
-    if(r.status===401){key='';try{localStorage.removeItem('abflug_key')}catch(e){}showLogin('Invalid key');return null}
+    if(r.status===401){if(tok&&!fromApp){dropToken();toast(L('Signed out: session expired','Sessão expirada, saiu da conta'));return null}key='';try{localStorage.removeItem('abflug_key')}catch(e){}showLogin('Invalid key');return null}
     return r.json()}).then(function(j){if(!j)return;applyTraffic(j)
   }).catch(function(){setStatus(L('offline','sem conexão'),false)})}
 function applyTraffic(j){
