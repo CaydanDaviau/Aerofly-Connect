@@ -19,7 +19,7 @@ const POS_NAMES = ["DEL", "GND", "TWR", "APP", "CTR"];
 const HANDOFF_TTL_MS = 120_000, PEND_TTL_MS = 120_000;
 const POS_SPOKEN = { DEL: "delivery", GND: "ground", TWR: "tower", APP: "approach", CTR: "center" };
 // Which positions can answer each request when staffed (next one up covers the one below it).
-const COVER = { clearance: ["DEL", "GND", "TWR"], pushback: ["GND", "TWR"], taxi: ["GND", "TWR"], takeoff: ["TWR"], land: ["TWR"] };
+const COVER = { clearance: ["DEL", "GND", "TWR"], pushback: ["GND", "TWR"], taxi: ["GND", "TWR"], takeoff: ["TWR"], land: ["TWR"], climb: ["APP", "TWR", "CTR"], descent: ["APP", "TWR", "CTR"] };
 const parseTowerName = s => {
   const m = /^([A-Z0-9]{2,8}?)(?:_(DEL|GND|TWR|APP|CTR))?$/.exec(String(s || "").trim().toUpperCase());
   if (!m) return null;
@@ -118,7 +118,7 @@ function computeTA(a, b) {
 // Newest released app versions: bump when a new APK / PC build is published; clients older than this show an update notice.
 const FLIGHT_MIN_AIR_S = 180;   // airborne at least 3 min, then touchdown (no crash) = flight completed
 const LATEST = { android: "1.2", pc: "2.2.0" };
-const REQ_TYPES = ["clearance", "pushback", "taxi", "takeoff", "land", "mayday", "mayday_cancel"];
+const REQ_TYPES = ["clearance", "pushback", "taxi", "takeoff", "land", "climb", "descent", "mayday", "mayday_cancel"];
 const MAYDAY_MS = 30 * 60_000, MAYDAY_NEAR_MI = 30;
 const REQ_LOCK_MS = { takeoff: 90_000, land: 120_000 };
 const TOWER_COVER_MI = 8;   // a human tower this close to the aircraft (or named like its airport) takes the request
@@ -141,6 +141,7 @@ const PHRASE = {
     land: r => r ? `Runway ${r}, cleared to land` : "Cleared to land",
     busyTakeoff: (r, n) => `Hold position, runway ${r} occupied, number ${n}`,
     busyLand: (r, n) => `Runway ${r} occupied, number ${n}, extend and request again`,
+    climb: a => `Climb and maintain ${altSay(a)}`, descent: a => `Descend and maintain ${altSay(a)}`,
     mayday: "Roger Mayday, say intentions",
     maydayNear: (cs, mi) => `Mayday traffic, ${cs} declared an emergency ${mi} miles from you, keep clear`,
     maydayEnd: "Mayday cancelled",
@@ -166,6 +167,7 @@ const PHRASE = {
     land: r => r ? `Pista ${r}, autorizado a pousar` : "Autorizado a pousar",
     busyTakeoff: (r, n) => `Aguarde na posição, pista ${r} ocupada, número ${n}`,
     busyLand: (r, n) => `Pista ${r} ocupada, número ${n}, prolongue e solicite novamente`,
+    climb: a => `Suba e mantenha ${a >= TRANS_ALT ? altSay(a) : a + " pés"}`, descent: a => `Desça e mantenha ${a >= TRANS_ALT ? altSay(a) : a + " pés"}`,
     mayday: "Mayday recebido, informe intenções",
     maydayNear: (cs, mi) => `Tráfego em Mayday, ${cs} declarou emergência a ${mi} milhas, mantenha-se afastado`,
     maydayEnd: "Mayday cancelado",
@@ -179,7 +181,11 @@ const PHRASE = {
     vLand: r => `Pouso sem autorização${r ? " na pista " + r : ""}, desocupe a pista`,
   },
 };
-const REQ_LABEL = { clearance: "clearance", pushback: "pushback", taxi: "taxi", takeoff: "takeoff", land: "landing" };
+const REQ_LABEL = { clearance: "clearance", pushback: "pushback", taxi: "taxi", takeoff: "takeoff", land: "landing", climb: "climb", descent: "descent" };
+// "100"/"FL100" = flight level, "5000"/"5000ft" = feet (numbers below 1000 are flight levels); returns feet or 0
+const parseAlt = v => { const t = String(v ?? "").trim().toUpperCase().replace(/\s+/g, ""); const m = /^(FL)?(\d{1,5})(FT)?$/.exec(t); if (!m) return 0; let n = Number(m[2]); if (m[1] || (!m[3] && n < 1000)) n *= 100; return n >= 500 && n <= 60000 ? n : 0; };
+const TRANS_ALT = 5000;
+const altSay = ft => ft >= TRANS_ALT ? "FL" + String(Math.round(ft / 100)).padStart(3, "0") : ft + " feet";
 const cleanRunway = v => {
   const m = /^(\d{1,2})([LRC]?)$/.exec(String(v || "").toUpperCase().replace(/\s/g, ""));
   if (!m) return "";
@@ -1043,7 +1049,7 @@ export class Hub {
     if ((m === "PUT" || m === "POST") && p === "/api/atc/request") {
       const d = await request.json().catch(() => ({}));
       const type = String(d.type || "");
-      if (!REQ_TYPES.includes(type)) return json({ error: "type must be clearance, pushback, taxi, takeoff, land, mayday or mayday_cancel" }, 400);
+      if (!REQ_TYPES.includes(type)) return json({ error: "type must be clearance, pushback, taxi, takeoff, land, climb, descent, mayday or mayday_cancel" }, 400);
       const c = this.clients.get(key);
       if (!c || !c.pos) return json({ error: "start flying first" }, 404);
       if (!c.pos.freq && !type.startsWith("mayday")) return json({ error: "frequency_required" }, 409);   // an emergency never waits for the radio
@@ -1060,8 +1066,9 @@ export class Hub {
         const m0 = this.addMsg(c, PHRASE[c.lang === "pt" ? "pt" : "en"].maydayEnd, "auto", {}); m0.status = "delivered";
         return json({ success: true, mode: "auto", messages: [{ id: m0.id, text: m0.text, kind: "auto", urgent: false, at: m0.at }] });
       }
+      const toArr = type === "land" || type === "descent";
       const rwy = cleanRunway(plan[type === "land" ? "arrival_runway" : "departure_runway"]) || cleanRunway(d.runway);
-      const apt = String(plan[type === "land" ? "arrival_airport" : "departure_airport"] || "").trim().toUpperCase();
+      const apt = String(plan[toArr ? "arrival_airport" : "departure_airport"] || "").trim().toUpperCase();
       const dest = String(plan.arrival_airport || "").trim().toUpperCase();
       const apt0 = String(plan.departure_airport || "").trim().toUpperCase();
       if (type === "mayday") {
@@ -1087,9 +1094,17 @@ export class Hub {
         const m1 = this.addMsg(c, ph.mayday, "auto", { urgent: true }); m1.status = "delivered";
         return json({ success: true, mode: "auto", messages: [{ id: m1.id, text: m1.text, kind: "auto", urgent: true, at: m1.at }] });
       }
+      let altFt = 0;
+      if (type === "climb" || type === "descent") {
+        if (c.pos.phase && c.pos.phase !== "air") return json({ error: "not_airborne" }, 409);
+        altFt = parseAlt(d.altitude);
+        if (!altFt) return json({ error: "bad_altitude", reason: "format" }, 400);
+        const cur = Number(c.pos.altitude_ft) || 0;
+        if (type === "climb" ? altFt < cur + 200 : altFt > cur - 200) return json({ error: "bad_altitude", reason: type === "climb" ? "above" : "below" }, 400);
+      }
       // A human controller wins: a tower named like the airport, or one close to the aircraft.
       if (this.humanCovers(c, apt, type)) {
-        const msg = this.addMsg(c, "Requests " + REQ_LABEL[type] + (rwy ? ", runway " + rwy : ""), "request", {});
+        const msg = this.addMsg(c, "Requests " + REQ_LABEL[type] + (altFt ? " " + (altFt >= TRANS_ALT ? "FL" + Math.round(altFt / 100) : altFt + " ft") : "") + (rwy && !altFt ? ", runway " + rwy : ""), "request", {});
         msg.status = "request";
         return json({ success: true, mode: "controller", id: msg.id });
       }
@@ -1097,7 +1112,9 @@ export class Hub {
       const lockKey = rwy ? rwyKey(apt, rwy) : null;
       const holder = lockKey && this.rwy.get(lockKey);
       const st = c.st || (c.st = { gr: {}, ph: null, at: 0, lat: 0, lon: 0, grace: now + GRACE_MS, calls: {}, viol: {}, landedAt: 0, landRwy: "" });
-      if (type === "clearance") {
+      if (altFt) {
+        text = ph[type](altFt);
+      } else if (type === "clearance") {
         // The clearance carries the squawk: keep the one already assigned, else pick a free one.
         let sq = c.assigned ? c.assigned.squawk : this.pickSquawk();
         if (sq === null) return json({ error: "no free squawk" }, 409);

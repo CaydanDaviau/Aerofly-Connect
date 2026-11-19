@@ -39,6 +39,11 @@ const ok = body => ({ code: 200, body: JSON.stringify(body || {}) });
     r = { code: 404, body: "" }; assert.strictEqual(await a.request("taxi"), "Not flying yet");
     const b = mk(() => { throw new Error("x"); }); assert.strictEqual(await b.a.request("taxi"), "No connection");
   });
+  await T("climb sends altitude, bad altitude message", async () => {
+    let r = ok({ mode: "auto", messages: [] }); const { a, calls } = mk(() => r);
+    assert.strictEqual(await a.request("climb", "100"), "Request sent"); assert.strictEqual(calls[0].b.altitude, "100");
+    r = { code: 400, body: '{"error":"bad_altitude","reason":"above"}' }; assert.strictEqual(await a.request("climb", "10"), "Altitude must be above you");
+  });
   await T("clearance marks phase", async () => { const m = mk(() => ok()); await m.a.request("clearance"); assert.strictEqual(m.marked(), 1); });
   await T("emergency: two taps, cancel, ends at touchdown", async () => {
     const { a, calls, adv } = mk(() => ok());

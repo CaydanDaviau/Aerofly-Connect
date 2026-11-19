@@ -72,7 +72,8 @@ final class Overlay {
     private String alertText = "";
     private ScrollView msgScroll;
     private LinearLayout panel, msgRow, reqGrid;
-    private Button bWilco, bUnable, bClr, bPush, bTaxi, bTakeoff, bLand, bEmerg;
+    private Button bWilco, bUnable, bClr, bPush, bTaxi, bRwy, bClimb, bDescent, bEmerg;
+    private EditText altIn;
     private EditText chatIn;
     // frequency row
     private EditText freqIn, typingField;
@@ -256,22 +257,58 @@ final class Overlay {
             bClr = small(Api.t(ctx, "Clearance", "Autorização"), Ui.SECONDARY);
             bPush = small(Api.t(ctx, "Pushback", "Pushback"), Ui.SECONDARY);
             bTaxi = small(Api.t(ctx, "Taxi", "Táxi"), Ui.SECONDARY);
-            bTakeoff = small(Api.t(ctx, "Take off", "Decolar"), Ui.SECONDARY);
-            bLand = small(Api.t(ctx, "Landing", "Pouso"), Ui.SECONDARY);
+            bRwy = small(Api.t(ctx, "Take off", "Decolar"), Ui.SECONDARY);   // Take off on the ground, Landing in the air
+            bClimb = small(Api.t(ctx, "Climb", "Subir"), Ui.SECONDARY);
+            bDescent = small(Api.t(ctx, "Descend", "Descer"), Ui.SECONDARY);
+            altIn = new EditText(ctx);
+            altIn.setHint("ALT");
+            altIn.setHintTextColor(Ui.DIM);
+            altIn.setTextColor(Ui.TXT);
+            altIn.setTextSize(14);
+            altIn.setGravity(Gravity.CENTER);
+            altIn.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+            altIn.setSingleLine(true);
+            altIn.setInputType(InputType.TYPE_CLASS_NUMBER);
+            altIn.setImeOptions(EditorInfo.IME_ACTION_DONE | EditorInfo.IME_FLAG_NO_EXTRACT_UI);
+            altIn.setFilters(new android.text.InputFilter[] { new android.text.InputFilter.LengthFilter(5) });
+            altIn.setPadding(dp(4), 0, dp(4), 0);
+            altIn.setBackground(Ui.shape(ctx, Ui.FIELD, Ui.STROKE, 10));
+            altIn.setOnTouchListener(new View.OnTouchListener() {
+                @Override public boolean onTouch(View v, MotionEvent e) {
+                    if (e.getActionMasked() == MotionEvent.ACTION_DOWN && !typing) beginTyping(altIn);
+                    return false;
+                }
+            });
+            altIn.setOnEditorActionListener(new android.widget.TextView.OnEditorActionListener() {
+                @Override public boolean onEditorAction(TextView v, int actionId, KeyEvent ev) {
+                    if (actionId == EditorInfo.IME_ACTION_DONE) { endTyping(); return true; }
+                    return false;
+                }
+            });
             bClr.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { request("clearance"); } });
             bPush.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { request("pushback"); } });
             bTaxi.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { request("taxi"); } });
-            bTakeoff.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { request("takeoff"); } });
-            bLand.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { request("land"); } });
+            bRwy.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { request(Phase.air ? "land" : "takeoff"); } });
+            bClimb.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { requestAlt("climb"); } });
+            bDescent.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { requestAlt("descent"); } });
             LinearLayout r1 = new LinearLayout(ctx), r2 = new LinearLayout(ctx);
             r1.setOrientation(LinearLayout.HORIZONTAL); r2.setOrientation(LinearLayout.HORIZONTAL);
             r1.addView(bClr, weight()); r1.addView(bPush, weight());
-            r2.addView(bTaxi, weight()); r2.addView(bTakeoff, weight()); r2.addView(bLand, weight());
+            r2.addView(bTaxi, weight()); r2.addView(bRwy, weight());
+            LinearLayout r3 = new LinearLayout(ctx);
+            r3.setOrientation(LinearLayout.HORIZONTAL);
+            r3.setGravity(Gravity.CENTER_VERTICAL);
+            r3.addView(altIn, new LinearLayout.LayoutParams(0, dp(40), 0.8f));
+            r3.addView(bClimb, weight()); r3.addView(bDescent, weight());
             reqGrid.addView(r1);
             LinearLayout.LayoutParams r2p = new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
             r2p.topMargin = dp(4);
             reqGrid.addView(r2, r2p);
+            LinearLayout.LayoutParams r3p = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            r3p.topMargin = dp(4);
+            reqGrid.addView(r3, r3p);
             LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
             rp.topMargin = dp(6);
@@ -599,7 +636,9 @@ final class Overlay {
         reqGrid.setVisibility(atisOpen ? View.GONE : View.VISIBLE);
         atisBox.setVisibility(atisOpen ? View.VISIBLE : View.GONE);
         bAtis.setText(atisOpen ? Api.t(ctx, "Back", "Voltar") : (atisShownLetter.isEmpty() ? "ATIS" : "ATIS " + atisShownLetter));
-        dim(bClr, Phase.clearance); dim(bPush, Phase.pushback); dim(bTaxi, Phase.taxi); dim(bTakeoff, Phase.takeoff); dim(bLand, Phase.land);
+        dim(bClr, Phase.clearance); dim(bPush, Phase.pushback); dim(bTaxi, Phase.taxi); bRwy.setText(Phase.air ? Api.t(ctx, "Landing", "Pouso") : Api.t(ctx, "Take off", "Decolar"));
+        dim(bRwy, Phase.air ? Phase.land : Phase.takeoff);
+        dim(bClimb, Phase.air); dim(bDescent, Phase.air);
         bWilco.setEnabled(!replyBusy); bUnable.setEnabled(!replyBusy);
         bEmerg.setEnabled(!reqBusy);
         bEmerg.setText(PilotService.emergency ? Api.t(ctx, "Cancel Mayday", "Cancelar Mayday")
@@ -977,12 +1016,21 @@ final class Overlay {
         }
     }
 
-    private void request(String type) {
+    private void requestAlt(String type) {
+        if (reqBusy) return;
+        String a = altIn.getText().toString().trim();
+        if (a.isEmpty()) { setStatus(Api.t(ctx, "Type an altitude (100 = FL100, 5000 = ft)", "Digite uma altitude (100 = FL100, 5000 = ft)"), 4000); return; }
+        request(type, a);
+    }
+
+    private void request(String type) { request(type, null); }
+
+    private void request(String type, String altitude) {
         if (reqBusy) return;
         reqBusy = true;
         autoExpanded = false;
         setStatus(Api.t(ctx, "Sending...", "Enviando..."), 0);
-        PilotService.request(ctx, type, new PilotService.ReqCb() {
+        PilotService.request(ctx, type, altitude, new PilotService.ReqCb() {
             @Override public void done(final String feedback) {
                 h.post(new Runnable() {
                     @Override public void run() {

@@ -126,7 +126,7 @@ app.whenReady().then(() => {
   // overlay: ATC actions
   const A = () => (flight && flight.state().running ? flight.atc : null);
   ipcMain.handle("atc:reply", (e, id, which) => A() ? A().reply(id, which) : false);
-  ipcMain.handle("atc:request", (e, type) => A() ? A().request(type) : null);
+  ipcMain.handle("atc:request", (e, type, alt) => A() ? A().request(type, alt) : null);
   ipcMain.handle("atc:emergency", () => A() ? A().emergencyTap() : null);
   ipcMain.handle("atc:chat", (e, text) => A() ? A().chat(text) : null);
   ipcMain.handle("atc:atis", (e, icao) => A() ? A().fetchAtis(icao) : null);

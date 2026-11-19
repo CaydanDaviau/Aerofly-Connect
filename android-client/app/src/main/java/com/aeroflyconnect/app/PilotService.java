@@ -469,7 +469,9 @@ public class PilotService extends Service {
     }
 
     /** Sends an auto-ATC request (clearance / taxi / takeoff / land) from a background thread; the answer arrives like any ATC message. */
-    static void request(final Context c, final String type, final ReqCb cb) {
+    static void request(Context c, String type, ReqCb cb) { request(c, type, null, cb); }
+
+    static void request(final Context c, final String type, final String altitude, final ReqCb cb) {
         final Context app = c.getApplicationContext();
         new Thread(new Runnable() {
             @Override public void run() {
@@ -478,6 +480,7 @@ public class PilotService extends Service {
                     JSONObject o = new JSONObject();
                     o.put("type", type);
                     o.put("lang", Api.voiceLang(app));
+                    if (altitude != null) o.put("altitude", altitude);
                     String rw = Phase.runwayFor(type);   // only a fallback: the runway typed in the flight form wins on the server
                     if (!rw.isEmpty()) o.put("runway", rw);
                     Api.Resp r = Api.request("PUT", "/api/atc/request", o.toString(), Api.key(app));
@@ -494,7 +497,10 @@ public class PilotService extends Service {
                         boolean tower = "controller".equals(new JSONObject(r.body).optString("mode"));
                         fb = tower ? Api.t(app, "Request sent to the tower", "Pedido enviado à torre")
                                 : Api.t(app, "Request sent", "Pedido enviado");
-                    } else if (r.code == 409 && r.body.contains("frequency_required")) fb = Api.t(app, "Tune a frequency first", "Sintonize uma frequência primeiro");
+                    } else if (r.code == 400 && r.body.contains("bad_altitude")) fb = r.body.contains("\"above\"") ? Api.t(app, "Altitude must be above you", "Altitude deve ser acima de você")
+                            : r.body.contains("\"below\"") ? Api.t(app, "Altitude must be below you", "Altitude deve ser abaixo de você") : Api.t(app, "Invalid altitude (e.g. 100 or 5000)", "Altitude inválida (ex.: 100 ou 5000)");
+                    else if (r.code == 409 && r.body.contains("not_airborne")) fb = Api.t(app, "Only available in flight", "Só disponível em voo");
+                    else if (r.code == 409 && r.body.contains("frequency_required")) fb = Api.t(app, "Tune a frequency first", "Sintonize uma frequência primeiro");
                     else if (r.code == 429) fb = Api.t(app, "Wait a moment", "Aguarde um momento");
                     else if (r.code == 404) fb = Api.t(app, "Not flying yet", "Voo ainda não iniciado");
                     else fb = Api.t(app, "Request failed", "Falha no pedido");

@@ -873,3 +873,24 @@ await call("DELETE", "/api/atc/tower?name=SBBR_TWR", null, "ctl");
   hub.towers.get("SBLD_GND").at = Date.now() - 200_000;
   T("handler tag drops when the role goes away", !(await traf()).find(a => a.callsign === "HND1").handler);
 }
+// climb / descent requests
+{
+  const T = ok;
+  hub.towers.clear();
+  await call("PUT", "/api/flightplan", { callsign: "CLD1", departure_airport: "SBBR", arrival_airport: "SBGR" }, "cd1");
+  const P = o => call("PUT", "/api/position", { latitude: -15.5, longitude: -47.5, altitude_ft: 8000, ground_speed: 250, freq: "119.100", phase: "air", ...o }, "cd1");
+  await P();
+  const R = async b => { hub.clients.get("cd1").lastReq = 0; const r = await call("PUT", "/api/atc/request", b, "cd1"); return [r.slice(0, 3), r.length > 4 ? JSON.parse(r.slice(4)) : {}]; };
+  let [c0, r0] = await R({ type: "climb", altitude: "100" });
+  T("climb FL100 text", c0 === "200" && r0.messages[0].text === "Climb and maintain FL100");
+  [c0, r0] = await R({ type: "descent", altitude: "3000", lang: "pt" });
+  T("descent 3000 pt", r0.messages[0].text === "Desça e mantenha 3000 pés");
+  [c0, r0] = await R({ type: "descent", altitude: "FL60" });
+  T("descent FL60 text", r0.messages[0].text === "Descend and maintain FL060");
+  T("climb below current refused", (await R({ type: "climb", altitude: "5000" }))[0] === "400");
+  T("descent above current refused", (await R({ type: "descent", altitude: "FL200" }))[0] === "400");
+  T("bad altitude text refused", (await R({ type: "climb", altitude: "abc" }))[0] === "400");
+  T("missing altitude refused", (await R({ type: "climb" }))[0] === "400");
+  await P({ phase: "ground", altitude_ft: 3500, ground_speed: 0 });
+  T("on the ground refused", (await R({ type: "climb", altitude: "100" }))[0] === "409");
+}

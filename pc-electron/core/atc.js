@@ -105,10 +105,11 @@ class AtcPanel {
     this.say(this.t("Not sent, try again", "Não enviado, tente de novo")); return false;
   }
 
-  async request(type) {
+  async request(type, altitude) {
     let fb;
     try {
       const o = { type, lang: this.lang() };
+      if (altitude) o.altitude = String(altitude);
       const rw = this.phase ? this.phase.runwayFor(type) : ""; if (rw) o.runway = rw;
       const r = await this.api.request("PUT", "/api/atc/request", o);
       if (r.code < 400) {
@@ -120,6 +121,8 @@ class AtcPanel {
         fb = mode === "controller" ? this.t("Request sent to the tower", "Pedido enviado à torre") : this.t("Request sent", "Pedido enviado");
       } else if (r.code === 429) fb = this.t("Wait a moment", "Aguarde um momento");
       else if (r.code === 404) fb = this.t("Not flying yet", "Voo ainda não iniciado");
+      else if (r.code === 400 && /bad_altitude/.test(r.body)) fb = /"above"/.test(r.body) ? this.t("Altitude must be above you", "Altitude deve ser acima de você") : /"below"/.test(r.body) ? this.t("Altitude must be below you", "Altitude deve ser abaixo de você") : this.t("Invalid altitude (e.g. 100 or 5000)", "Altitude inválida (ex.: 100 ou 5000)");
+      else if (r.code === 409 && /not_airborne/.test(r.body)) fb = this.t("Only available in flight", "Só disponível em voo");
       else if (r.code === 409 && /frequency_required/.test(r.body)) fb = this.noFreq();
       else fb = this.t("Request failed", "Falha no pedido");
     } catch (e) { fb = this.t("No connection", "Sem conexão"); }

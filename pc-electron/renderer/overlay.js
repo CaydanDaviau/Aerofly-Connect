@@ -32,9 +32,17 @@
   const bU = h("button", { class: "no", onclick: () => S.pending && window.ov.reply(S.pending.id, "unable") }, "");
   const ans = h("div", { class: "row" }, bW, bU);
   const reqs = {}; const grid = h("div", { class: "g2" });
-  for (const [k, en, pt] of [["clearance", "Clearance", "Autorização"], ["pushback", "Pushback", "Pushback"], ["taxi", "Taxi", "Táxi"], ["takeoff", "Take off", "Decolagem"], ["land", "Landing", "Pouso"]]) {
+  for (const [k, en, pt] of [["clearance", "Clearance", "Autorização"], ["pushback", "Pushback", "Pushback"], ["taxi", "Taxi", "Táxi"]]) {
     reqs[k] = h("button", { onclick: () => window.ov.request(k) }); reqs[k].dataset.en = en; reqs[k].dataset.pt = pt; grid.append(reqs[k]);
   }
+  // one button for runway clearances: Take off on the ground, Landing in the air
+  const bRwy = h("button", { onclick: () => window.ov.request(S.offers.includes("land") ? "land" : "takeoff") }); grid.append(bRwy);
+  // climb / descent: altitude typed by the pilot (100 = FL100, 5000 = feet)
+  const altIn = h("input", { class: "fr", placeholder: "ALT", autocomplete: "off", spellcheck: "false", maxlength: "5", onfocus: () => window.ov.typing(true), onblur: () => window.ov.typing(false),
+    onkeydown: e => { if (e.key === "Enter") altIn.blur(); } });
+  const altReq = type => { const a = altIn.value.trim(); if (!a) { altIn.focus(); return; } window.ov.request(type, a); };
+  const bCl = h("button", { onclick: () => altReq("climb") }), bDe = h("button", { onclick: () => altReq("descent") });
+  const altRow = h("div", { class: "row" }, altIn, bCl, bDe);
   const bE = h("button", { class: "no", onclick: () => window.ov.emergency() }), bA = h("button", { onclick: toggleAtis });
   const rowEA = h("div", { class: "row" }, bE, bA);
   const aHead = h("div", { class: "row" }), aTitle = h("div", { class: "fr tt" }), aSwap = h("button", { class: "fix", onclick: () => { atisWhich = atisWhich === "dep" ? "arr" : "dep"; fetchAtis(); } }, "⇄");
@@ -62,7 +70,7 @@
   const cIn = h("input", { maxlength: "200", autocomplete: "off", spellcheck: "false", onfocus: () => window.ov.typing(true), onblur: () => window.ov.typing(false), onkeydown: e => { if (e.key === "Enter") sendChat(); } });
   const bS = h("button", { class: "fix", onclick: sendChat }, "➤"); const cRow = h("div", { class: "row" }, cIn, bS);
   const st = h("div", { class: "st" });
-  const panel = h("div", { class: "panel" }, hd, ta, msg, more, ans, grid, rowEA, atisWrap, pttRow, h("div", { class: "sec", id: "fsec" }), fRow, quick, cRow, st);
+  const panel = h("div", { class: "panel" }, hd, ta, msg, more, ans, grid, altRow, rowEA, atisWrap, pttRow, h("div", { class: "sec", id: "fsec" }), fRow, quick, cRow, st);
   const fsec = panel.querySelector("#fsec");
 
   function sendChat() { const v = cIn.value.trim(); if (!v) return; window.ov.chat(v); cIn.value = ""; cIn.blur(); }
@@ -163,7 +171,11 @@
     bU.textContent = T("Unable", "Impossível");
     // phase buttons: shown only when they fit (like Android); hidden grid when ATIS open
     for (const k in reqs) { const on = S.offers.includes(k); reqs[k].textContent = reqs[k].dataset[S.lang === "pt" ? "pt" : "en"]; reqs[k].disabled = !on; reqs[k].style.display = on ? "" : "none"; }
+    const rwyOn = S.offers.includes("takeoff") || S.offers.includes("land");
+    bRwy.textContent = S.offers.includes("land") ? T("Landing", "Pouso") : T("Take off", "Decolagem"); bRwy.disabled = !rwyOn; bRwy.style.display = rwyOn ? "" : "none";
     grid.style.display = !atisOpen && S.offers.length ? "" : "none";
+    bCl.textContent = T("Climb", "Subir"); bDe.textContent = T("Descend", "Descer");
+    altRow.style.display = !atisOpen && S.air ? "" : "none";
     bE.textContent = S.emergency ? T("Cancel Mayday", "Cancelar Mayday") : S.armed ? T("Confirm Mayday", "Confirmar Mayday") : T("Emergency ×2", "Emergência ×2");
     bA.textContent = atisOpen ? T("Back", "Voltar") : "ATIS" + (S.atis && S.atis.letter ? " " + S.atis.letter : "");
     atisWrap.style.display = atisOpen ? "" : "none";

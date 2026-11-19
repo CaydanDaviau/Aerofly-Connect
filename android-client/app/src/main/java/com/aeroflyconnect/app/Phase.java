@@ -10,7 +10,7 @@ package com.aeroflyconnect.app;
 final class Phase {
     private Phase() {}
 
-    static volatile boolean clearance, pushback, taxi, takeoff, land;
+    static volatile boolean clearance, pushback, taxi, takeoff, land, air;
     /** Near the departure or arrival airport: traffic advisories use relaxed limits (shared with the server in each upload). */
     static volatile boolean terminal;
     /** Minutes to the arrival airport (straight line / ground speed), -1 = unknown. */
@@ -37,7 +37,7 @@ final class Phase {
 
     static synchronized void reset() {
         dep = null; arr = null; init = false; airborne = false; cleared = false; moved = false; pushedAsked = false; slowSince = 0;
-        clearance = false; pushback = false; taxi = false; takeoff = false; land = false; terminal = false;
+        clearance = false; pushback = false; taxi = false; takeoff = false; land = false; air = false; terminal = false;
         etaMin = -1; landFpm = 0; landUntil = 0; candAt = 0;
         phaseName = "ground"; rwyOn = ""; onRwy = ""; rwyApt = ""; arrNm = -1;
     }
@@ -122,8 +122,8 @@ final class Phase {
         phaseName = airborne ? "air" : (pair.isEmpty() ? "ground" : "runway");
 
         terminal = (dep != null && distNm(la, lo, dep.lat, dep.lon) <= 6) || (arr != null && distNm(la, lo, arr.lat, arr.lon) <= 8);
-        boolean changed = pb != pushback || cl != clearance || t != taxi || o != takeoff || l != land;
-        clearance = cl; pushback = pb; taxi = t; takeoff = o; land = l;
+        boolean changed = pb != pushback || cl != clearance || t != taxi || o != takeoff || l != land || airborne != air;
+        clearance = cl; pushback = pb; taxi = t; takeoff = o; land = l; air = airborne;
         return changed;
     }
 

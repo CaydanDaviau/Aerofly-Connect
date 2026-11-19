@@ -6,7 +6,7 @@ contextBridge.exposeInMainWorld("ov", {
   drag: (t, sx, sy) => ipcRenderer.send("overlay:drag", { t, sx, sy }),
   typing: on => ipcRenderer.send("overlay:typing", !!on),
   reply: (id, which) => ipcRenderer.invoke("atc:reply", id, which),
-  request: type => ipcRenderer.invoke("atc:request", type),
+  request: (type, alt) => ipcRenderer.invoke("atc:request", type, alt),
   emergency: () => ipcRenderer.invoke("atc:emergency"),
   chat: text => ipcRenderer.invoke("atc:chat", text),
   atis: icao => ipcRenderer.invoke("atc:atis", icao),
