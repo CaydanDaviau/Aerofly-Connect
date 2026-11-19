@@ -81,6 +81,7 @@ input::placeholder{color:var(--dim)}
     <input id="ll" size="16" placeholder="lat, lon or ICAO" title="Center on coordinates or an airport code">
     <button id="llGo">Go</button>
     <button id="menuBtn" title="Menu" aria-label="Menu" style="font-size:16px;line-height:1">&#9776;</button>
+    <button id="autoMsgBtn" title="Send the pilot a text when you grant a clearance">Auto msg: on</button>
     <button id="replayVoiceBtn" title="Replay the last voice message (sent or received). Plays locally, nothing is transmitted." disabled>Replay last</button>
     <div id="menu" style="display:none"><button id="voiceBtn" title="Voice on/off">Voice: on</button>
     <button id="grpBtn" title="Aerofly Connect ATC Network code (from Discord)">ATC Network</button>
@@ -573,7 +574,7 @@ function clrCtl(a){var air=a.phase==='air',any=!a.phase,h='<div class="ctl clrs"
   if(!air||any)h+=clrBtn(a,'taxi','Taxi OK','Táxi OK')+clrBtn(a,'takeoff','T/O OK','Dec. OK');
   if(air||any)h+=clrBtn(a,'land','Landing OK','Pouso OK')+'<input id="altin" inputmode="numeric" maxlength="5" placeholder="ALT" value="'+esc(a.clr&&a.clr.alt?String(a.clr.alt>=TA?Math.round(a.clr.alt/100):a.clr.alt):'')+'"><button data-act="altset">'+L('Alt OK','Alt OK')+'</button>'+(a.clr&&a.clr.alt?'<button data-act="altclr">&times;</button>':'');
   return h+'</div>'}
-function clrSend(id,t,on,alt){var body={icao_address:id,type:t,on:on,holder:holder,freq:talkFreq()};if(alt)body.altitude=alt;
+function clrSend(id,t,on,alt){var body={icao_address:id,type:t,on:on,holder:holder,freq:talkFreq(),msg:autoMsg};if(alt)body.altitude=alt;
   api('/api/atc/clearance',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
    .then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j,s:r.status}})})
    .then(function(o){toast(o.ok?L('Clearance updated','Autorização atualizada'):o.j.error==='not_tuned'?NOTTUNED(o.j):o.j.error==='division_required'?L('Claim a role first','Assuma uma função primeiro'):o.j.error==='bad_altitude'?L('Altitude: 100 = FL100, 5000 = ft','Altitude: 100 = FL100, 5000 = ft'):L('Error: ','Erro: ')+(o.j.error||o.s));poll(true)})
@@ -611,6 +612,9 @@ function talkFreq(){if(talkName==='*')return'';var t=myTowers.filter(function(x)
 function roleLabel(n){return n.replace('_',' ')}
 /* same short id as the Worker's hid(): lets me recognise my own airport/role without ever sending ids around */
 function hidOf(h){var x=2166136261;for(var i=0;i<h.length;i++)x=Math.imul(x^h.charCodeAt(i),16777619)>>>0;return x.toString(36).slice(0,6)}
+var autoMsg=true;try{autoMsg=localStorage.getItem('afc_automsg')!=='0'}catch(e){}
+function setAutoBtn(){$('autoMsgBtn').textContent=L('Auto msg: ','Msg auto: ')+(autoMsg?L('on','lig.'):L('off','desl.'))}
+$('autoMsgBtn').onclick=function(){autoMsg=!autoMsg;try{localStorage.setItem('afc_automsg',autoMsg?'1':'0')}catch(e){}setAutoBtn()};setAutoBtn();
 var myHid=hidOf(holder),isMember=false,dimOn=false;try{dimOn=localStorage.getItem('afc_dim')==='1'}catch(e){}
 /* who controls an aircraft: the live human role on its frequency, AUTO when none, ALL when untuned */
 function ctrlOf(a){if(!a.freq)return'ALL';

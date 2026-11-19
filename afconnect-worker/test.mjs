@@ -929,3 +929,17 @@ await call("DELETE", "/api/atc/tower?name=SBBR_TWR", null, "ctl");
   T("human: landing without clearance", a.clnc === "landing");
   T("human: only the role holder can clear", Number((await call("PUT", "/api/atc/clearance", { icao_address: c.pos.icao_address, holder: "nobody", type: "taxi" }, "x")).slice(0, 3)) === 409);
 }
+// clearance text to the pilot (Auto msg)
+{
+  const T = ok;
+  const id = hub.clients.get("hcl").pos.icao_address;
+  const clr = async b => JSON.parse((await call("PUT", "/api/atc/clearance", { icao_address: id, holder: "hc1", freq: "121.900", ...b }, "x")).slice(4));
+  const P = o => call("PUT", "/api/position", { latitude: -15.871, longitude: -47.919, altitude_ft: 3500, ground_speed: 0, freq: "121.900", phase: "ground", ...o }, "hcl");
+  await P(); const pend = async () => JSON.parse((await P()).slice(4)).messages.map(m => m.text);
+  await clr({ type: "taxi", msg: true }); T("auto msg: taxi text", (await pend()).includes("Cleared to taxi"));
+  await clr({ type: "taxi", on: false, msg: true }); T("auto msg: revoke sends nothing", (await pend()).length === 0);
+  await clr({ type: "taxi" }); T("auto msg: off by default in API", (await pend()).length === 0);
+  await P({ phase: "air", altitude_ft: 5000, ground_speed: 200 });
+  await clr({ type: "alt", altitude: "100", msg: true }); T("auto msg: climb text", (await pend()).includes("Climb and maintain FL100"));
+  await clr({ type: "alt", altitude: "3000", msg: true }); T("auto msg: descend text", (await pend()).includes("Descend and maintain 3000 feet"));
+}

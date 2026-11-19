@@ -130,6 +130,7 @@ const fqPick = (str, types) => { const m = {}; for (const kv of String(str || ""
 const PHRASE = {
   en: {
     clearance: (dest, r, sq) => `Cleared ${dest ? "to " + dest + " " : ""}as filed${r ? ", departure runway " + r : ""}, squawk ${sq}`,
+    taxiClr: "Cleared to taxi",
     taxi: r => r ? `Taxi to runway ${r}, hold short` : "Taxi to the runway, hold short",
     pushback: r => `Pushback approved${r ? ", expect runway " + r : ""}`,
     direct: f => `Proceed direct ${f}`, expectRwy: r => `Expect runway ${r}`,
@@ -156,6 +157,7 @@ const PHRASE = {
   },
   pt: {
     clearance: (dest, r, sq) => `Autorizado${dest ? " para " + dest : ""} conforme o plano${r ? ", pista de saída " + r : ""}, código ${sq}`,
+    taxiClr: "Autorizado a taxiar",
     taxi: r => r ? `Táxi para a pista ${r}, aguarde antes da pista` : "Táxi para a pista, aguarde antes da pista",
     pushback: r => `Pushback autorizado${r ? ", espere a pista " + r : ""}`,
     direct: f => `Proceda direto a ${f}`, expectRwy: r => `Espere a pista ${r}`,
@@ -1015,6 +1017,15 @@ export class Hub {
         else { const ft = parseAlt(d.altitude); if (!ft) return json({ error: "bad_altitude" }, 400); st.alt = { ft, at: now }; }
       } else st.gr[type] = on ? now + CLR_MS[type] : 0;
       if (on && target.viol) { const vt = target.viol.type; if ((type === "taxi" && vt === "taxi") || (type === "takeoff" && vt === "runway") || (type === "land" && vt === "landing") || (type === "alt" && vt === "alt")) target.viol = null; }
+      if (on && d.msg === true) {   // controller's "Auto msg" switch: tell the pilot in text too
+        const ph = PHRASE[target.lang === "pt" ? "pt" : "en"], tp = target.plan || {};
+        let text;
+        if (type === "taxi") text = ph.taxiClr;
+        else if (type === "takeoff") text = ph.takeoff(cleanRunway(tp.departure_runway));
+        else if (type === "land") text = ph.land(cleanRunway(tp.arrival_runway));
+        else { const ft = target.st.alt.ft, cur = Number(target.pos.altitude_ft) || 0; text = Math.abs(ft - cur) < 200 ? (target.lang === "pt" ? "Mantenha " : "Maintain ") + altSay(ft) : ph[ft > cur ? "climb" : "descent"](ft); }
+        this.addMsg(target, text, "msg", {});
+      }
       return json({ success: true, clr: this.clrOf(target, now) });
     }
 
