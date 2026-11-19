@@ -443,7 +443,7 @@ function draw(){
   g.fillText(step+' nm rings',6,H-14);
   var gM=g;if(bgOK){g=gR;gR.clearRect(0,0,W,H)}try{drawRunways(maxR)}finally{g=gM}   /* no map underlay: runways stay on the radar canvas */
   drawFixes(maxR);
-  drawRoute(maxR);drawTaxi(maxR);drawHdgBug();
+  drawRoute(maxR);drawTaxi(maxR);drawHdgBug();drawAirspace();
   var blinkOn=Math.floor(Date.now()/450)%2===0;
   for(var k=0;k<ac.length;k++){var cf0=confl[ac[k].icao_address];if(!cf0)continue;
     var cxy=proj(ac[k]),cr=Math.max(16,cf0.r/nmpp);
@@ -638,7 +638,31 @@ function ctrlOf(a){if(!a.freq)return'ALL';
     for(var k=0;k<ps.length;k++)if(ps[k].claimed&&ps[k].freq===a.freq)return String(t.callsign).replace(/^ATC_/,'')+'_'+ps[k].pos+((ps[k].ctl||ps[k].nick)?' ('+(ps[k].ctl||ps[k].nick)+')':'')}
   return'AUTO'}
 /* dimmed = tuned to a frequency none of my roles use (never an emergency, tower, or when I talk on All) */
-function isDim(a){return dimOn&&!a.virtual_tower&&!a.emergency&&!!a.freq&&!isHeard(a.freq)}
+function isDim(a){return!a.virtual_tower&&!a.emergency&&((dimOn&&!!a.freq&&!isHeard(a.freq))||outsideAsp(a))}
+/* airspace: DEL/GND 5 nm, TWR 15 nm, APP 50 nm around the airport (same numbers as the Worker); CTR = everywhere */
+var AS={DEL:5,GND:5,TWR:15,APP:50},aspAc=null,aspVal=null;
+function nmBetween(la1,lo1,la2,lo2){return Math.hypot((la2-la1)*60,(lo2-lo1)*60*Math.cos((la1+la2)/2*Math.PI/180))}
+function myAsp(){   /* my live roles as circles; null = I hold CTR (nothing is outside) */
+  if(aspAc===ac)return aspVal;
+  var out=[],ctr=false;
+  for(var i=0;i<ac.length;i++){var t=ac[i];if(!t.virtual_tower)continue;var ps=t.positions||[];
+    for(var k=0;k<ps.length;k++){var q=ps[k];if(!q.claimed||!q.hid||q.hid!==myHid)continue;
+      if(q.pos==='CTR')ctr=true;else out.push({lat:t.latitude,lon:t.longitude,r:AS[q.pos]||50})}}
+  aspAc=ac;aspVal=ctr?null:out;return aspVal}
+function outsideAsp(a){if(a.virtual_tower||a.emergency)return false;var m=myAsp();if(!m||!m.length)return false;
+  for(var i=0;i<m.length;i++)if(nmBetween(m[i].lat,m[i].lon,a.latitude,a.longitude)<=m[i].r)return false;
+  return true}
+function drawAirspace(){   /* selected airport: all three circles, mine highlighted */
+  var s=sel&&ac.filter(function(x){return x.icao_address===sel})[0];if(!s||!s.virtual_tower)return;
+  var mine={};(s.positions||[]).forEach(function(q){if(q.claimed&&q.hid&&q.hid===myHid)mine[q.pos]=1});
+  var ctr=!!mine.CTR,c=proj(s),rings=[['APP 50',50,ctr||mine.APP],['TWR 15',15,ctr||mine.TWR],['DEL/GND 5',5,ctr||mine.DEL||mine.GND]];
+  g.save();g.font='10px ui-monospace,monospace';g.textBaseline='bottom';g.textAlign='center';
+  for(var i=0;i<rings.length;i++){var r=rings[i][1]/nmpp,hi=!!rings[i][2];if(r<4)continue;
+    g.beginPath();g.arc(c[0],c[1],r,0,6.2832);
+    if(hi){g.fillStyle='rgba(79,227,208,.07)';g.fill();g.setLineDash([]);g.lineWidth=2.5;g.strokeStyle='#4FE3D0'}
+    else{g.setLineDash([6,5]);g.lineWidth=1;g.strokeStyle='rgba(255,255,255,.4)'}
+    g.stroke();g.setLineDash([]);g.fillStyle=hi?'#4FE3D0':'rgba(255,255,255,.6)';g.fillText(rings[i][0]+' nm',c[0],c[1]-r-1)}
+  g.restore()}
 $('wpBtn').onclick=function(){wpUsed=!wpUsed;try{localStorage.setItem('afc_wpused',wpUsed?'1':'0')}catch(e){}setWpBtn();draw()};setWpBtn();
 $('dimBtn').onclick=function(){dimOn=!dimOn;try{localStorage.setItem('afc_dim',dimOn?'1':'0')}catch(e){}setDimBtn();draw();renderStrips(true)};
 function setDimBtn(){$('dimBtn').textContent=L('My freqs: ','Minhas freqs: ')+(dimOn?'on':'off');$('dimBtn').style.borderColor=dimOn?'#4FE3D0':''}
