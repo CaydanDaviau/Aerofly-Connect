@@ -251,7 +251,7 @@ export default {
       if (request.headers.get("Upgrade") !== "websocket") return json({ error: "websocket expected" }, 426);
       const wk = (url.searchParams.get("key") || "").trim();
       const allowed = (env.ABFLUG_KEYS || "").split(",").map(s => s.trim()).filter(Boolean);
-      if (!wk || (allowed.length && !allowed.includes(wk))) return json({ error: "invalid api key" }, 401);
+      if (!wk || (allowed.length && !wk.startsWith("afa_") && !allowed.includes(wk))) return json({ error: "invalid api key" }, 401);
       const h = new Headers(request.headers); h.set("X-API-Key", wk); const mem = memberFlag(request, env, url); h.set("X-Member", mem ? "1" : "0"); h.set("X-Atc", atcFlag(request, env, url, mem)); h.set("X-Atc-Raw", atcRaw(request, url)); h.set("X-Atc-Name", atcName(request, env, url)); h.set("X-IP", ipTag(request));
       return env.HUB.get(env.HUB.idFromName("global")).fetch(request, { headers: h });
     }
@@ -259,7 +259,7 @@ export default {
     const key = (request.headers.get("X-API-Key") || (url.pathname === "/api/debug" ? url.searchParams.get("key") : "") || "").trim();
     if (url.pathname !== "/api/health" && url.pathname !== "/api/stats") {
       const allowed = (env.ABFLUG_KEYS || "").split(",").map(s => s.trim()).filter(Boolean);
-      if (!key || (allowed.length && !allowed.includes(key))) return json({ error: "invalid api key" }, 401);
+      if (!key || (allowed.length && !key.startsWith("afa_") && !allowed.includes(key))) return json({ error: "invalid api key" }, 401);
     }
     if (env.DEBUG) console.log(request.method, url.pathname + url.search, (await request.clone().text()).slice(0, 600));
     const stub = env.HUB.get(env.HUB.idFromName("global"));
@@ -272,13 +272,15 @@ export class Hub {
   constructor(ctx) {
     this.towers = new Map(); this.creds = new Map(); this.credOn = false; this.wx = new Map(); this.crashes = new Map(); this.ta = new Map();
     this.voiceStreams = new Map(); this.latestVoiceByPeer = new Map();
-    this.prof = new Map(); this.lastClaim = new Map(); this.clients = new Map(); this.msgs = new Map(); this.rwy = new Map(); this.rwyQ = new Map(); this.gfx = new Map(); this.tres = new Map(); this.stands = new Map(); this.violations = []; this.clips = new Map(); this.listeners = new Map(); this.msgSeq = 0; this.since = Date.now(); this.counts = {};
+    this.prof = new Map(); this.accts = new Map(); this.toks = new Map(); this.loginFail = new Map(); this.lastClaim = new Map(); this.clients = new Map(); this.msgs = new Map(); this.rwy = new Map(); this.rwyQ = new Map(); this.gfx = new Map(); this.tres = new Map(); this.stands = new Map(); this.violations = []; this.clips = new Map(); this.listeners = new Map(); this.msgSeq = 0; this.since = Date.now(); this.counts = {};
     ctx.blockConcurrencyWhile(async () => {
       for (const [k, v] of await ctx.storage.list({ prefix: "tower:" })) this.towers.set(k.slice(6), v);
       for (const [k, v] of await ctx.storage.list({ prefix: "cred:" })) this.creds.set(k.slice(5), v);
       this.credOn = !!(await ctx.storage.get("credon")) || this.creds.size > 0;
       for (const [k, v] of await ctx.storage.list({ prefix: "crash:" })) this.crashes.set(k.slice(6), v);
       for (const [k, v] of await ctx.storage.list({ prefix: "prof:" })) this.prof.set(k.slice(5), v);
+      for (const [k, v] of await ctx.storage.list({ prefix: "acct:" })) this.accts.set(k.slice(5), v);
+      for (const [k, v] of await ctx.storage.list({ prefix: "tok:" })) this.toks.set(k.slice(4), v);
     }); this.ctx = ctx; }
 
   purge() {
@@ -414,11 +416,68 @@ export class Hub {
   }
 
   // Profile: nickname + flight time (airborne) + ATC time (holding a role), per app key. Saved at most once a minute.
-  profGet(key) { let p = this.prof.get(key); if (!p) { p = { nick: "", flight_s: 0, atc_s: 0, flights: 0, saved: 0 }; this.prof.set(key, p); } if (!p.flights) p.flights = 0; return p; }
+  pkey(key) { const t = this.toks.get(key); return t ? "a:" + t.acct : key; }
+  profPeek(key) { return this.prof.get(this.pkey(key)); }
+  profGet(key) { key = this.pkey(key); let p = this.prof.get(key); if (!p) { p = { nick: "", flight_s: 0, atc_s: 0, flights: 0, saved: 0 }; this.prof.set(key, p); } if (!p.flights) p.flights = 0; return p; }
   profAdd(key, field, secs, now) {
     if (!key || !(secs > 0)) return;
     const p = this.profGet(key); p[field] += secs;
-    if (now - p.saved > 60_000) { p.saved = now; this.ctx.storage.put("prof:" + key, p); }
+    if (now - p.saved > 60_000) { p.saved = now; this.ctx.storage.put("prof:" + this.pkey(key), p); }
+  }
+  // ---- Accounts: name + password (PBKDF2), no email. Token "afa_..." replaces the app key; profile/hours live on the account.
+  async hashPw(pw, salt) {
+    const k = await crypto.subtle.importKey("raw", new TextEncoder().encode(pw), "PBKDF2", false, ["deriveBits"]);
+    const b = await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt, iterations: 100000 }, k, 256);
+    return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, "0")).join("");
+  }
+  hex(n) { return [...crypto.getRandomValues(new Uint8Array(n))].map(x => x.toString(16).padStart(2, "0")).join(""); }
+  linkKey(acct, oldKey) {
+    if (!oldKey || oldKey.startsWith("afa_") || acct.linked.includes(oldKey)) return;
+    acct.linked.push(oldKey); if (acct.linked.length > 20) acct.linked.shift();
+    const o = this.prof.get(oldKey); if (!o) return;
+    const pk = "a:" + acct.id; let pr = this.prof.get(pk); if (!pr) { pr = { nick: "", flight_s: 0, atc_s: 0, flights: 0, saved: 0 }; this.prof.set(pk, pr); }
+    pr.flight_s += o.flight_s || 0; pr.atc_s += o.atc_s || 0; pr.flights += o.flights || 0; if (!pr.nick) pr.nick = o.nick || "";
+    pr.saved = Date.now(); this.ctx.storage.put("prof:" + pk, pr);
+  }
+  mkTok(acct) { const t = "afa_" + this.hex(16); const rec = { acct: acct.id, at: Date.now() }; this.toks.set(t, rec); this.ctx.storage.put("tok:" + t, rec); return t; }
+  async accountApi(request, key, m, p) {
+    const d = (m === "POST" || m === "PUT") ? await request.json().catch(() => ({})) : {};
+    const norm = n => String(n ?? "").trim();
+    if (p === "/api/account" && m === "GET") {
+      const t = this.toks.get(key); if (!t) return json({ error: "not_logged_in" }, 404);
+      const a = this.accts.get(t.acct); return json({ name: a ? a.display : t.acct });
+    }
+    if (p === "/api/account/logout" && m === "POST") { if (this.toks.delete(key)) this.ctx.storage.delete("tok:" + key); return json({ success: true }); }
+    if (p === "/api/account/register" && m === "POST") {
+      const name = norm(d.name), pw = String(d.password ?? "");
+      if (!/^[A-Za-z0-9_.-]{3,20}$/.test(name)) return json({ error: "bad_name" }, 400);
+      if (pw.length < 6 || pw.length > 100) return json({ error: "bad_password" }, 400);
+      const id = name.toLowerCase(); if (this.accts.has(id)) return json({ error: "name_taken" }, 409);
+      const salt = this.hex(16), acct = { id, display: name, salt, hash: await this.hashPw(pw, new TextEncoder().encode(salt)), created: Date.now(), linked: [] };
+      if (this.accts.has(id)) return json({ error: "name_taken" }, 409);
+      this.accts.set(id, acct);
+      const tok = this.mkTok(acct); this.linkKey(acct, key); this.ctx.storage.put("acct:" + id, acct);
+      return json({ success: true, token: tok, name });
+    }
+    if (p === "/api/account/login" && m === "POST") {
+      const id = norm(d.name).toLowerCase(), pw = String(d.password ?? "");
+      const f = this.loginFail.get(id) || { n: 0, at: 0 }; if (Date.now() - f.at > 600_000) f.n = 0;
+      if (f.n >= 5) return json({ error: "too_many_attempts" }, 429);
+      const acct = this.accts.get(id);
+      if (!acct || (await this.hashPw(pw, new TextEncoder().encode(acct.salt))) !== acct.hash) { f.n++; f.at = Date.now(); this.loginFail.set(id, f); return json({ error: "bad_login" }, 401); }
+      this.loginFail.delete(id);
+      const tok = this.mkTok(acct); this.linkKey(acct, key); this.ctx.storage.put("acct:" + id, acct);
+      return json({ success: true, token: tok, name: acct.display });
+    }
+    if (p === "/api/account/password" && m === "POST") {
+      const t = this.toks.get(key); const acct = t && this.accts.get(t.acct); if (!acct) return json({ error: "not_logged_in" }, 401);
+      const np = String(d.new ?? ""); if (np.length < 6 || np.length > 100) return json({ error: "bad_password" }, 400);
+      if ((await this.hashPw(String(d.old ?? ""), new TextEncoder().encode(acct.salt))) !== acct.hash) return json({ error: "bad_login" }, 401);
+      acct.salt = this.hex(16); acct.hash = await this.hashPw(np, new TextEncoder().encode(acct.salt)); this.ctx.storage.put("acct:" + acct.id, acct);
+      for (const [tk, r] of this.toks) if (r.acct === acct.id && tk !== key) { this.toks.delete(tk); this.ctx.storage.delete("tok:" + tk); }
+      return json({ success: true });
+    }
+    return json({ error: "not_found" }, 404);
   }
   activeAtcHolder(holder) {
     if (!holder) return false;
@@ -671,7 +730,7 @@ export class Hub {
       const d = haversineMi(lat, lon, pos.latitude, pos.longitude);
       if (d <= rad) {
         const callsign = normCallsign(c.plan.callsign ?? pos.callsign);
-        out.push({ ...pos, ...c.plan, callsign, ...towerFields(callsign), member: !!c.member, ...(!c.member && this.prof.get(ck)?.nick ? { nick: this.prof.get(ck).nick } : {}), has_route: !!c.route, has_taxi: !!(c.taxi && Date.now() < c.taxi.until), ...this.handFields(c), freq: c.pos.freq || "", assigned_squawk: c.assigned ? c.assigned.squawk : null, emergency: !!(c.emerg && Date.now() < c.emerg.until), no_clnc: !!(c.viol && Date.now() - c.viol.at < VIOL_SHOW_MS), clnc: c.viol && Date.now() - c.viol.at < VIOL_SHOW_MS ? c.viol.type : "", clr: this.clrOf(c, Date.now()), ...(ck === key ? { self: true } : {}), distance_miles: Math.round(d * 10) / 10 });
+        out.push({ ...pos, ...c.plan, callsign, ...towerFields(callsign), member: !!c.member, ...(!c.member && this.profPeek(ck)?.nick ? { nick: this.profPeek(ck).nick } : {}), has_route: !!c.route, has_taxi: !!(c.taxi && Date.now() < c.taxi.until), ...this.handFields(c), freq: c.pos.freq || "", assigned_squawk: c.assigned ? c.assigned.squawk : null, emergency: !!(c.emerg && Date.now() < c.emerg.until), no_clnc: !!(c.viol && Date.now() - c.viol.at < VIOL_SHOW_MS), clnc: c.viol && Date.now() - c.viol.at < VIOL_SHOW_MS ? c.viol.type : "", clr: this.clrOf(c, Date.now()), ...(ck === key ? { self: true } : {}), distance_miles: Math.round(d * 10) / 10 });
       }
     }
     // one symbol per airport; its staffed roles are listed in `positions`
@@ -919,6 +978,7 @@ export class Hub {
     const url = new URL(request.url);
     const key = (request.headers.get("X-API-Key") || "").trim();
     const m = request.method, p = url.pathname;
+    if (key.startsWith("afa_") && !this.toks.has(key) && p !== "/api/health" && p !== "/api/stats") return json({ error: "invalid_token" }, 401);
     if (p === "/ws" && request.headers.get("Upgrade") === "websocket") return this.acceptSocket(request);
     this.purge();
 
@@ -1248,7 +1308,7 @@ export class Hub {
           && aptRec.owner !== holder && request.headers.get("X-Member") !== "1" && !(aptRec.ok && aptRec.ok[holder])) {
         aptRec.pend = aptRec.pend || {};
         const isNew = !aptRec.pend[holder];
-        aptRec.pend[holder] = { hid: hid(holder), pos: pn.pos, at: now, name: this.ctlName(request) || this.prof.get(key)?.nick || "" };
+        aptRec.pend[holder] = { hid: hid(holder), pos: pn.pos, at: now, name: this.ctlName(request) || this.profPeek(key)?.nick || "" };
         if (isNew) await this.ctx.storage.put("tower:" + pn.apt, aptRec);
         return json({ error: "approval_required", airport: pn.apt, position: pn.pos }, 409);
       }
@@ -1261,7 +1321,7 @@ export class Hub {
         }
       }
       const atis = old && old.atis;
-      const t = { name, apt: pn.apt, pos: pn.pos, freq, holder: holder || undefined, ctl: holder ? (this.ctlName(request) || undefined) : undefined, nick: holder && request.headers.get("X-Member") !== "1" ? (this.prof.get(key)?.nick || undefined) : undefined, oip: (old && old.oip) || ipt || undefined, latitude: lat, longitude: lon, altitude_ft: Number(d.altitude_ft) || 0, at: now, member: request.headers.get("X-Member") === "1", atis };
+      const t = { name, apt: pn.apt, pos: pn.pos, freq, holder: holder || undefined, ctl: holder ? (this.ctlName(request) || undefined) : undefined, nick: holder && request.headers.get("X-Member") !== "1" ? (this.profPeek(key)?.nick || undefined) : undefined, oip: (old && old.oip) || ipt || undefined, latitude: lat, longitude: lon, altitude_ft: Number(d.altitude_ft) || 0, at: now, member: request.headers.get("X-Member") === "1", atis };
       if (pn.pos === "APT") {   // the creator owns the airport (kept across re-PUTs); bans live on the airport record
         const ow = (old && old.owner) || String(d.owner || "").slice(0, 40);
         if (ow) t.owner = ow;
@@ -1274,12 +1334,13 @@ export class Hub {
       await this.ctx.storage.put("tower:" + name, t);
       return json({ success: true, callsign: "ATC_" + name, position: pn.pos, airport: pn.apt });
     }
+    if (p.startsWith("/api/account")) return this.accountApi(request, key, m, p);
     if (p === "/api/profile") {
       const pr = this.profGet(key);
       if (m === "PUT" || m === "POST") {
         const d = await request.json().catch(() => ({}));
         pr.nick = String(d.nick ?? "").replace(/[\u0000-\u001f<>]/g, "").trim().slice(0, 20); pr.saved = Date.now();
-        this.ctx.storage.put("prof:" + key, pr);
+        this.ctx.storage.put("prof:" + this.pkey(key), pr);
       }
       if (m === "GET" || m === "PUT" || m === "POST") return json({ nick: pr.nick, flight_s: Math.round(pr.flight_s), atc_s: Math.round(pr.atc_s), flights: pr.flights || 0 });
     }
@@ -1476,7 +1537,7 @@ export class Hub {
       }
       if (pos.phase === "air" && c.seen) { const gap = Math.min(Date.now() - c.seen, 10_000) / 1000; this.profAdd(key, "flight_s", gap, Date.now()); c.airS = (c.airS || 0) + gap; }
       else if (c.pos && c.pos.phase === "air" && pos.phase && pos.phase !== "air" && (c.airS || 0) >= FLIGHT_MIN_AIR_S) {   // landed after a real flight
-        const pf = this.profGet(key); pf.flights += 1; pf.saved = Date.now(); this.ctx.storage.put("prof:" + key, pf); c.airS = 0;
+        const pf = this.profGet(key); pf.flights += 1; pf.saved = Date.now(); this.ctx.storage.put("prof:" + this.pkey(key), pf); c.airS = 0;
       }
       c.pos = pos; c.seen = Date.now(); c.member = request.headers.get("X-Member") === "1";
       if (pos.phase === "air" && c.taxi) c.taxi = null;
