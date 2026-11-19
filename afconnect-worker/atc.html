@@ -32,6 +32,9 @@ input::placeholder{color:var(--dim)}
 .strip.noclnc{border-color:var(--amber);border-left-color:var(--amber)}
 .strip.emerg{border-color:#ff3b30;border-left-color:#ff3b30;background:#3a0f0c}
 .mayday{background:#ff3b30;color:#fff;font-weight:700;border-radius:3px;padding:0 5px;margin-left:6px}
+.strip.nc-taxi{border-color:#ffd23f;border-left-color:#ffd23f}.strip.nc-runway,.strip.nc-landing{border-color:#ff9f1c;border-left-color:#ff9f1c}.strip.nc-alt{border-color:#c8e04a;border-left-color:#c8e04a}
+.noc.nc-taxi{background:#ffd23f}.noc.nc-runway,.noc.nc-landing{background:#ff9f1c}.noc.nc-alt{background:#c8e04a}
+.clr{color:var(--cy)}.ctl button.on{background:var(--fg);color:#000}.ctl input#altin{width:64px;font-weight:700}
 .noc{background:var(--amber);color:#000;font-weight:700;border-radius:3px;padding:0 5px;margin-left:6px}
 .strip .h{display:flex;justify-content:space-between;gap:8px}
 .strip .cs{font-weight:700;font-size:14px}
@@ -507,7 +510,7 @@ function showLogin(msg){$('keyErr').textContent=msg||'';$('keyIn').value='';$('l
 
 /* ---------- strips ---------- */
 function renderStrips(force){
-  var f=document.activeElement;if(!force&&(pttBusy||f&&(f.id==='sqin'||f.id==='msgin'||f.id==='hdgin'||f.id==='urg'||f.id==='hoto'||f.closest&&f.closest('.twmount'))))return;
+  var f=document.activeElement;if(!force&&(pttBusy||f&&(f.id==='sqin'||f.id==='msgin'||f.id==='altin'||f.id==='hdgin'||f.id==='urg'||f.id==='hoto'||f.closest&&f.closest('.twmount'))))return;
   var list=ac.map(function(a){return{a:a,r:rel(a)}}).sort(function(x,y){var sx=x.a.icao_address===sel?0:1,sy=y.a.icao_address===sel?0:1;return sx-sy||x.r.dist-y.r.dist});
   if(!list.length){$('list').innerHTML='<div class="empty">'+L('No traffic.','Sem tráfego.')+'</div>';return}
   $('list').innerHTML=list.map(function(o){var a=o.a,r=o.r,id=a.icao_address,tw=isTwr(a),isSel=id===sel;
@@ -518,6 +521,7 @@ function renderStrips(force){
     var ctl=isSel&&!tw?'<div class="ctl"><input id="sqin" inputmode="numeric" maxlength="4" placeholder="'+(asg||'0000')+'" value="'+esc(asg||'')+'">'+
       '<button data-act="set">'+L('Assign','Atribuir')+'</button><button data-act="auto">Auto</button><button data-act="clear">'+L('Clear','Limpar')+'</button></div>'+
       '<div class="ctl"><button class="ptt'+(voiceOn&&a.voice!==false?'':' off')+'" id="ptt" data-icao="'+esc(id)+'" data-cs="'+esc(a.callsign||id)+'" data-voice="'+(a.voice===false?'0':'1')+'">'+(a.voice===false?L('Pilot voice off','Voz do piloto desligada'):L('Hold to talk','Segure para falar'))+'</button></div>'+
+      clrCtl(a)+
       (a.phase==='air'?'':'<div class="ctl">'+(txMode===id?(txPrev&&txPrev.id===id?'<button data-act="txsend">'+L('Send route','Enviar rota')+'</button>':'<span class="m">'+L('Click the destination on the radar','Clique no destino no radar')+'</span>')+'<button data-act="txcancel">'+L('Cancel','Cancelar')+'</button>':'<button data-act="txr">'+L('Taxi route','Rota de táxi')+'</button>'+(a.has_taxi?'<button data-act="txclr">'+L('Clear route','Limpar rota')+'</button>':''))+'</div>')+
       '<div class="ctl hdg"><button data-act="hdgs" data-d="-10">&lsaquo;10</button><button data-act="hdgs" data-d="-5">&lsaquo;5</button><input id="hdgin" inputmode="numeric" maxlength="3" value="'+hdgVal(a)+'"><button data-act="hdgs" data-d="5">5&rsaquo;</button><button data-act="hdgs" data-d="10">10&rsaquo;</button></div>'+
       '<div class="ctl hdg"><button data-act="hdgsend" data-t="L">&larr; '+L('Left','Esq.')+'</button><button data-act="hdgsend" data-t="F">'+L('Fly heading','Voar proa')+'</button><button data-act="hdgsend" data-t="R">'+L('Right','Dir.')+' &rarr;</button></div>'+
@@ -525,10 +529,11 @@ function renderStrips(force){
     var ho=handUi(a,isSel&&!tw);
     var vc=vclips.filter(function(v){return v.icao_address===id&&isHeard(v.freq)}).slice(-3).map(function(v){return'<div class="mlog chat"><b>'+L('PILOT voice','PILOTO voz')+'</b> '+Math.round((v.ms||0)/1000)+' s <button data-act="vplay" data-clip="'+esc(v.id)+'">&#9654;</button></div>'}).join('');
     var ml=vc+msgs.filter(function(m){return m.icao_address===id&&(m.kind!=='chat'||isHeard(m.freq))}).slice(-3).map(function(m){return m.kind==='chat'?'<div class="mlog chat"><b>'+L('PILOT','PILOTO')+':</b> '+esc(m.text)+'</div>':'<div class="mlog">&rsaquo; '+esc(m.text)+' &mdash; <b class="'+esc(m.status)+'">'+esc(m.status.toUpperCase())+'</b></div>'}).join('');
-    return'<div class="strip'+(isSel?' sel':'')+(tw?' twr':(asg?'':' nocode'))+(a.no_clnc?' noclnc':'')+(a.emergency?' emerg':'')+(isDim(a)?' dim':'')+'" data-id="'+esc(id)+'">'+
-      '<div class="h"><span class="cs">'+esc(a.callsign||id)+(!tw&&a.nick?' <span class="m">'+esc(a.nick)+'</span>':'')+(tw?(isSel||isOwned(a)?' &#9660;':' &#9654;'):'')+(a.emergency?'<span class="mayday">MAYDAY</span>':'')+(a.no_clnc?'<span class="noc">NO CLNC</span>':'')+'</span><span class="m">'+Math.round(r.dist)+' nm / '+p3(r.brg)+'&deg;'+(tw?'':' &middot; '+(a.freq?esc(a.freq)+' ':'')+esc(ctrlOf(a)))+'</span></div>'+
+    return'<div class="strip'+(isSel?' sel':'')+(tw?' twr':(asg?'':' nocode'))+(a.no_clnc?' noclnc'+(a.clnc?' nc-'+a.clnc:''):'')+(a.emergency?' emerg':'')+(isDim(a)?' dim':'')+'" data-id="'+esc(id)+'">'+
+      '<div class="h"><span class="cs">'+esc(a.callsign||id)+(!tw&&a.nick?' <span class="m">'+esc(a.nick)+'</span>':'')+(tw?(isSel||isOwned(a)?' &#9660;':' &#9654;'):'')+(a.emergency?'<span class="mayday">MAYDAY</span>':'')+(a.no_clnc?'<span class="noc'+(a.clnc?' nc-'+a.clnc:'')+'">'+nocText(a.clnc)+'</span>':'')+'</span><span class="m">'+Math.round(r.dist)+' nm / '+p3(r.brg)+'&deg;'+(tw?'':' &middot; '+(a.freq?esc(a.freq)+' ':'')+esc(ctrlOf(a)))+'</span></div>'+
       (tw?'':'<div>'+altStr(a.altitude_ft)+' &middot; '+Math.round(Number(a.ground_speed)||0)+' kt &middot; HDG '+p3(Number(a.heading_mag!=null?a.heading_mag:a.heading_true)||0)+'&deg;'+(a.heading_mag==null?'T':'')+' &middot; '+(Number(a.vertical_speed_ft_min)>100?'&uarr;':Number(a.vertical_speed_ft_min)<-100?'&darr;':'&rarr;')+'</div>')+
       (tw?'':'<div>'+st+'</div>')+
+      (tw?'':clrLine(a))+
       (!tw&&(a.airplane_model||a.departure_runway||a.arrival_runway)?'<div class="m">'+(a.airplane_model?esc(a.airplane_model):'')+((a.departure_runway||a.arrival_runway)?(a.airplane_model?' &middot; ':'')+'RWY '+esc(a.departure_runway||'--')+' &rarr; '+esc(a.arrival_runway||'--'):'')+'</div>':'')+
       (route||cruise?'<div class="route">'+route+(cruise?' &middot; '+L('cruise ','cruzeiro ')+esc(cruise):'')+'</div>':'')+
       (nxt?'<div class="m">'+nxt+'</div>':'')+(a.flightplan_route?'<div class="m">'+esc(a.flightplan_route)+'</div>':'')+ho+ml+ctl+(tw&&(isSel||isOwned(a))?'<div class="twmount" data-mount="'+esc(String(a.callsign).replace(/^ATC_/,''))+'"></div>':'')+'</div>'}).join('');mountTowers()}
@@ -537,8 +542,8 @@ $('strips').addEventListener('click',function(e){
   var btn=e.target.closest('button'),strip=e.target.closest('.strip');if(!strip)return;var id=strip.getAttribute('data-id');
   if(btn){var act=btn.getAttribute('data-act'),v=($('sqin')||{}).value||'';
     if(act==='set'){if(!/^[0-7]{4}$/.test(v)){toast(L('4 digits, each 0-7','4 dígitos, cada um 0-7'));return}assign(id,v)}
-    else if(act==='vplay')playClip(btn.getAttribute('data-clip'));else if(act==='txr'){txMode=id;txPrev=null;renderStrips(true);draw()}else if(act==='txcancel'){txMode='';txPrev=null;renderStrips(true);draw()}else if(act==='txsend')txSend(id);else if(act==='txclr')txClear(id);else if(act==='msg')sendMsg(id);else if(act==='hdgs')hdgStep(id,Number(btn.getAttribute('data-d')));else if(act==='hdgsend')hdgSend(id,btn.getAttribute('data-t'));else if(act==='hosend')handoffSend(id);else if(act==='hoacc')handoffReply(id,true);else if(act==='hodec')handoffReply(id,false);else if(act==='auto')assign(id,'');else if(act==='clear')clearSq(id);return}
-  if(e.target.id==='sqin'||e.target.id==='msgin'||e.target.id==='hdgin'||e.target.id==='urg'||e.target.id==='ptt'||e.target.id==='hoto')return;
+    else if(act==='vplay')playClip(btn.getAttribute('data-clip'));else if(act==='txr'){txMode=id;txPrev=null;renderStrips(true);draw()}else if(act==='txcancel'){txMode='';txPrev=null;renderStrips(true);draw()}else if(act==='txsend')txSend(id);else if(act==='txclr')txClear(id);else if(act==='msg')sendMsg(id);else if(act==='clr'){var ca=ac.filter(function(x){return x.icao_address===id})[0];clrSend(id,btn.getAttribute('data-t'),!(ca&&ca.clr&&ca.clr[btn.getAttribute('data-t')]))}else if(act==='altset'){var av=($('altin')||{}).value||'';if(!av){toast(L('Type an altitude (100 = FL100, 5000 = ft)','Digite uma altitude (100 = FL100, 5000 = ft)'));return}clrSend(id,'alt',true,av)}else if(act==='altclr')clrSend(id,'alt',false);else if(act==='hdgs')hdgStep(id,Number(btn.getAttribute('data-d')));else if(act==='hdgsend')hdgSend(id,btn.getAttribute('data-t'));else if(act==='hosend')handoffSend(id);else if(act==='hoacc')handoffReply(id,true);else if(act==='hodec')handoffReply(id,false);else if(act==='auto')assign(id,'');else if(act==='clear')clearSq(id);return}
+  if(e.target.id==='sqin'||e.target.id==='msgin'||e.target.id==='altin'||e.target.id==='hdgin'||e.target.id==='urg'||e.target.id==='ptt'||e.target.id==='hoto')return;
   if(sel!==id){txMode='';txPrev=null}sel=(strip.classList.contains('twr')&&sel===id)?null:id;renderStrips(true);draw()});
 var group='';try{var gp=new URLSearchParams(location.search).get('group');group=gp!==null?gp:(localStorage.getItem('afc_group')||'');if(gp!==null){if(group)localStorage.setItem('afc_group',group);else localStorage.removeItem('afc_group')}}catch(e){}
 var atcCode='';try{var ap=new URLSearchParams(location.search).get('atc');atcCode=ap!==null?ap:(localStorage.getItem('afc_atc')||'');if(ap!==null){if(atcCode)localStorage.setItem('afc_atc',atcCode);else localStorage.removeItem('afc_atc')}}catch(e){}
@@ -559,6 +564,20 @@ function assign(id,sq){var body={icao_address:id,holder:holder,freq:talkFreq()};
    .then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j,s:r.status}})})
    .then(function(o){toast(o.ok?L('Assigned ','Atribuído ')+o.j.squawk:o.j.error==='not_tuned'?NOTTUNED(o.j):o.j.error==='division_required'?L('Claim a role first','Assuma uma função primeiro'):L('Error: ','Erro: ')+(o.j.error||o.s));poll(true)})
    .catch(function(){toast(L('Network error','Erro de rede'))})}
+function nocText(t){return t==='taxi'?L('NO TAXI CLNC','SEM AUT. TÁXI'):t==='runway'?L('NO T/O CLNC','SEM AUT. DECOLAGEM'):t==='landing'?L('NO LDG CLNC','SEM AUT. POUSO'):t==='alt'?L('NO ALT CLNC','SEM AUT. ALT'):L('NO CLNC','SEM AUT.')}
+function altTxt(ft){return ft>=TA?'FL'+p3(Math.round(ft/100)):ft+' ft'}
+function clrLine(a){var c=a.clr;if(!c)return'';var t=[];if(c.taxi)t.push(L('TAXI','TÁXI'));if(c.takeoff)t.push(L('T/O','DEC'));if(c.land)t.push(L('LDG','POUSO'));if(c.alt)t.push('ALT '+altTxt(c.alt));
+  return t.length?'<div class="m clr">'+L('CLR: ','AUT: ')+t.join(' &middot; ')+'</div>':''}
+function clrBtn(a,t,en,pt){var on=a.clr&&a.clr[t];return'<button data-act="clr" data-t="'+t+'" class="'+(on?'on':'')+'">'+(on?'&#10003; ':'')+L(en,pt)+'</button>'}
+function clrCtl(a){var air=a.phase==='air',any=!a.phase,h='<div class="ctl clrs">';
+  if(!air||any)h+=clrBtn(a,'taxi','Taxi OK','Táxi OK')+clrBtn(a,'takeoff','T/O OK','Dec. OK');
+  if(air||any)h+=clrBtn(a,'land','Landing OK','Pouso OK')+'<input id="altin" inputmode="numeric" maxlength="5" placeholder="ALT" value="'+esc(a.clr&&a.clr.alt?String(a.clr.alt>=TA?Math.round(a.clr.alt/100):a.clr.alt):'')+'"><button data-act="altset">'+L('Alt OK','Alt OK')+'</button>'+(a.clr&&a.clr.alt?'<button data-act="altclr">&times;</button>':'');
+  return h+'</div>'}
+function clrSend(id,t,on,alt){var body={icao_address:id,type:t,on:on,holder:holder,freq:talkFreq()};if(alt)body.altitude=alt;
+  api('/api/atc/clearance',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+   .then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j,s:r.status}})})
+   .then(function(o){toast(o.ok?L('Clearance updated','Autorização atualizada'):o.j.error==='not_tuned'?NOTTUNED(o.j):o.j.error==='division_required'?L('Claim a role first','Assuma uma função primeiro'):o.j.error==='bad_altitude'?L('Altitude: 100 = FL100, 5000 = ft','Altitude: 100 = FL100, 5000 = ft'):L('Error: ','Erro: ')+(o.j.error||o.s));poll(true)})
+   .catch(function(){toast(L('Network error','Erro de rede'))})}
 var hdgSel={};
 function hdgNorm(n){n=Math.round(n)%360;if(n<=0)n+=360;return n}
 function hdgVal(a){var id=a.icao_address;if(hdgSel[id]==null)hdgSel[id]=hdgNorm(Math.round((Number(a.heading_mag!=null?a.heading_mag:a.heading_true)||0)/5)*5);return p3(hdgSel[id])}
@@ -574,7 +593,7 @@ function postMsg(id,t,el){
    .catch(function(){toast(L('Network error','Erro de rede'))})}
 $('strips').addEventListener('input',function(e){if(e.target.id==='hdgin'&&sel){var v=parseInt(e.target.value,10);if(v>=0&&v<=360){hdgSel[sel]=hdgNorm(v);draw()}}});
 $('strips').addEventListener('change',function(e){if(e.target.id==='urg')urgent=e.target.checked});
-$('strips').addEventListener('keydown',function(e){if(e.key==='Enter'&&e.target.id==='msgin'){var s=e.target.closest('.strip');if(s)sendMsg(s.getAttribute('data-id'))}});
+$('strips').addEventListener('keydown',function(e){if(e.key==='Enter'&&e.target.id==='altin'){var s0=e.target.closest('.strip');if(s0&&e.target.value)clrSend(s0.getAttribute('data-id'),'alt',true,e.target.value)}if(e.key==='Enter'&&e.target.id==='msgin'){var s=e.target.closest('.strip');if(s)sendMsg(s.getAttribute('data-id'))}});
 function clearSq(id){api('/api/atc/squawk?icao_address='+encodeURIComponent(id)+'&holder='+encodeURIComponent(holder)+'&freq='+encodeURIComponent(talkFreq()),{method:'DELETE'}).then(function(r){return r.json().then(function(j){toast(r.ok?L('Cleared','Removido'):j.error==='not_tuned'?NOTTUNED(j):j.error==='division_required'?L('Claim a role first','Assuma uma função primeiro'):L('Error: ','Erro: ')+(j.error||r.status));poll(true)})})}
 
 /* ---------- virtual towers ---------- */

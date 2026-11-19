@@ -314,7 +314,7 @@ await call("DELETE", "/api/atc/tower?name=SBBR_TWR", null, "ctl");
   await call("PUT", "/api/flightplan", { callsign: "DDD4", departure_airport: "SBBR" }, "s4");
   await P("s4", { phase: "ground" }); free("s4");
   r = await P("s4", { phase: "ground", ground_speed: 20 });
-  T("human tower: no auto violation", r.messages.length === 0 && !hub.clients.get("s4").viol);
+  T("human tower: no auto violation call (only a tag for the controller)", r.messages.length === 0 && hub.clients.get("s4").viol?.type === "taxi");
   T("violations stored", hub.violations.length >= 3 && hub.violations[0].callsign === "AAA1");
 }
 
@@ -893,4 +893,39 @@ await call("DELETE", "/api/atc/tower?name=SBBR_TWR", null, "ctl");
   T("missing altitude refused", (await R({ type: "climb" }))[0] === "400");
   await P({ phase: "ground", altitude_ft: 3500, ground_speed: 0 });
   T("on the ground refused", (await R({ type: "climb", altitude: "100" }))[0] === "409");
+}
+// human controller clearances: tags without clearance, clearance endpoint
+{
+  const T = ok;
+  hub.towers.clear();
+  await call("PUT", "/api/atc/tower", { name: "SBBR_GND", latitude: -15.87, longitude: -47.92, holder: "hc1", freq: "121.900" }, "pchc1");
+  await call("PUT", "/api/flightplan", { callsign: "HCL1", departure_airport: "SBBR", arrival_airport: "SBBR" }, "hcl");
+  const P = o => call("PUT", "/api/position", { latitude: -15.871, longitude: -47.919, altitude_ft: 3500, ground_speed: 0, freq: "121.900", phase: "ground", ...o }, "hcl");
+  const me = async () => JSON.parse((await call("GET", "/api/traffic?lat=-15.87&lon=-47.92&radius_miles=100", null, "zzz")).slice(4)).aircraft.find(a => a.callsign === "HCL1");
+  const clr = async b => Number((await call("PUT", "/api/atc/clearance", { icao_address: hub.clients.get("hcl").pos.icao_address, holder: "hc1", freq: "121.900", ...b }, "x")).slice(0, 3));
+  await P();
+  const c = hub.clients.get("hcl"); c.st.grace = 0;
+  await P({ ground_speed: 20 });
+  let a = await me();
+  T("human: taxi without clearance tagged", a.no_clnc === true && a.clnc === "taxi" && a.clr.taxi === false);
+  T("human: no message to the pilot", JSON.parse((await P({ ground_speed: 20 })).slice(4)).messages.length === 0);
+  T("human: taxi clearance granted clears tag", await clr({ type: "taxi" }) === 200);
+  a = await me(); T("human: tag gone, clr.taxi", !a.no_clnc && a.clr.taxi === true);
+  await P({ ground_speed: 20 }); a = await me(); T("human: no new tag while cleared", !a.no_clnc);
+  await P({ phase: "runway", ground_speed: 30, on_rwy: "11R" }); a = await me();
+  T("human: runway without takeoff clearance", a.clnc === "runway");
+  T("human: takeoff clearance", await clr({ type: "takeoff" }) === 200 && !(await me()).no_clnc);
+  T("human: clearance can be revoked", await clr({ type: "takeoff", on: false }) === 200 && (await me()).clr.takeoff === false);
+  await P({ phase: "air", altitude_ft: 12000, ground_speed: 250, vertical_speed_ft_min: 1500 });
+  c.st.airAt = Date.now() - 200_000; c.st.altBad = Date.now() - 20_000;
+  await P({ phase: "air", altitude_ft: 12500, ground_speed: 250, vertical_speed_ft_min: 1500 }); a = await me();
+  T("human: climb without altitude clearance", a.clnc === "alt");
+  T("human: bad altitude refused", await clr({ type: "alt", altitude: "xx" }) === 400);
+  T("human: altitude assigned", await clr({ type: "alt", altitude: "200" }) === 200 && (await me()).clr.alt === 20000 && !(await me()).no_clnc);
+  await P({ phase: "air", altitude_ft: 13000, ground_speed: 250, vertical_speed_ft_min: 1500 }); T("human: climbing below assigned is fine", !(await me()).no_clnc);
+  c.st.altBad = Date.now() - 20_000;
+  await P({ phase: "air", altitude_ft: 20600, ground_speed: 250, vertical_speed_ft_min: 800 }); T("human: through the assigned altitude", (await me()).clnc === "alt");
+  await P({ phase: "ground", altitude_ft: 3500, ground_speed: 60, on_rwy: "11R" }); a = await me();
+  T("human: landing without clearance", a.clnc === "landing");
+  T("human: only the role holder can clear", Number((await call("PUT", "/api/atc/clearance", { icao_address: c.pos.icao_address, holder: "nobody", type: "taxi" }, "x")).slice(0, 3)) === 409);
 }

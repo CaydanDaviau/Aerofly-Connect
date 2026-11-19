@@ -197,6 +197,7 @@ const cleanRunway = v => {
 const oppRunway = r => { const m = /^(\d\d)([LRC]?)$/.exec(r); if (!m) return r; const n = ((Number(m[1]) + 17) % 36) + 1; return String(n).padStart(2, "0") + ({ L: "R", R: "L", C: "C", "": "" })[m[2]]; };
 const spokenRwy = r => String(r || "").replace(/^(\d)(?=\D|$)/, "0$1");
 const rwyKey = (apt, r) => (apt || "?") + "/" + [r, oppRunway(r)].sort()[0];
+const CLR_MS = { taxi: 30 * 60_000, takeoff: 10 * 60_000, land: 15 * 60_000 };   // how long a clearance given by a controller stays valid
 const GRACE_MS = 20_000, VIOL_SHOW_MS = 30_000, VIOL_RENEW_MS = 20_000, MAX_VIOL = 100;
 const PUSH_MS = 3000;
 const VOICE_TTL_MS = 5 * 60 * 1000, VOICE_MAX_CLIPS = 120, VOICE_MAX_B64 = 250_000, VOICE_LISTEN_MS = 60_000;
@@ -545,7 +546,11 @@ export class Hub {
     st.at = now; st.lat = p.latitude; st.lon = p.longitude; st.ph = cur;
     const say = (text, urgent, contact) => { const m = this.addMsg(c, text, "auto", { urgent: !!urgent }); m.status = "delivered"; out.push({ id: m.id, text: m.text, kind: "auto", urgent: !!urgent, at: m.at, ...(contact ? { contact } : {}) }); };
     const apt = up(p.rwy_apt) || (cur === "air" ? arr : dep);
-    if (this.humanCovers(c, apt || dep)) { c.viol = null; return out; }   // a human controller owns this airport
+    if (this.humanCovers(c, apt || dep)) {   // a human controller owns this airport: he gives the clearances, we only tag what happens without one
+      this.humanTrack(key, c, st, prev, cur, now, apt);
+      if (c.viol && now - c.viol.at > VIOL_SHOW_MS) c.viol = null;
+      return out;
+    }
 
     const gs = Number(p.ground_speed) || 0;
     if (cur === "ground" && /^[A-Z]{4}$/.test(dep) && !this.gfx.has(dep)) this.graphFor(dep, p.latitude, p.longitude);   // warm the taxiway cache before the first taxi request
@@ -607,6 +612,39 @@ export class Hub {
     return out;
   }
 
+  // Clearances as the strip shows them (set by a human controller, or by the auto-ATC's answers)
+  clrOf(c, now) {
+    const st = c.st, g = (st && st.gr) || {};
+    return { taxi: g.taxi > now, takeoff: g.takeoff > now, land: g.land > now, alt: st && st.alt ? st.alt.ft : null };
+  }
+  // Human-controlled airport: no calls to the pilot, only a tag for the controller (taxi / runway = takeoff / landing / altitude without clearance).
+  humanTrack(key, c, st, prev, cur, now, apt) {
+    const p = c.pos, g = st.gr, plan = c.plan || {}, gs = Number(p.ground_speed) || 0, quiet = () => {};
+    const onRwys = String(p.rwy_on || "").split("/").map(cleanRunway).filter(Boolean);
+    if (cur === "air") {
+      if (prev && prev !== "air") { st.airAt = now; g.taxi = 0; g.takeoff = 0; }
+      if (!st.airAt) st.airAt = now;
+      const vs = Number(p.vertical_speed_ft_min) || 0, alt = Number(p.altitude_ft) || 0, a = st.alt;
+      if (now > st.grace && p.terminal !== true && !(g.land > now)) {
+        // with an assigned altitude: going through it; without one: a sustained climb/descent after the first 3 minutes of flight
+        const bad = a ? ((vs > 300 && alt > a.ft + 300) || (vs < -300 && alt < a.ft - 300)) : (now - st.airAt > 180_000 && Math.abs(vs) > 500);
+        if (bad) { if (!st.altBad) st.altBad = now; if (now - st.altBad > 15_000) this.violate(key, c, st, "alt", apt, "", now, quiet); } else st.altBad = 0;
+      }
+    } else {
+      st.airAt = 0; st.altBad = 0;
+      if (prev === "air") {   // touchdown
+        st.landedAt = now;
+        const lr = onRwys[0] || cleanRunway(plan.arrival_runway) || "";
+        if (now > st.grace && !(g.land > now)) this.violate(key, c, st, "landing", apt, lr, now, quiet);
+        g.land = 0; g.taxi = now + 30 * 60_000; st.alt = null;   // like the auto-ATC: taxi to the gate is free after landing
+        c.emerg = null;
+      } else if (now > st.grace) {
+        if (cur === "ground" && gs >= 10 && !(g.taxi > now) && !(g.takeoff > now)) this.violate(key, c, st, "taxi", apt, "", now, quiet);
+        if (cur === "runway" && !(g.takeoff > now) && now - (st.landedAt || 0) > 120_000 && (p.on_rwy || gs >= 15)) this.violate(key, c, st, "runway", apt, onRwys[0] || "", now, quiet);
+      }
+    }
+  }
+
   violate(key, c, st, type, apt, rwy, now, notify) {
     if (c.emerg && now < c.emerg.until) return;   // declared emergency: no unauthorised-action calls
     const v = st.viol[type];
@@ -631,7 +669,7 @@ export class Hub {
       const d = haversineMi(lat, lon, pos.latitude, pos.longitude);
       if (d <= rad) {
         const callsign = normCallsign(c.plan.callsign ?? pos.callsign);
-        out.push({ ...pos, ...c.plan, callsign, ...towerFields(callsign), member: !!c.member, ...(!c.member && this.prof.get(ck)?.nick ? { nick: this.prof.get(ck).nick } : {}), has_route: !!c.route, has_taxi: !!(c.taxi && Date.now() < c.taxi.until), ...this.handFields(c), freq: c.pos.freq || "", assigned_squawk: c.assigned ? c.assigned.squawk : null, emergency: !!(c.emerg && Date.now() < c.emerg.until), no_clnc: !!(c.viol && Date.now() - c.viol.at < VIOL_SHOW_MS), ...(ck === key ? { self: true } : {}), distance_miles: Math.round(d * 10) / 10 });
+        out.push({ ...pos, ...c.plan, callsign, ...towerFields(callsign), member: !!c.member, ...(!c.member && this.prof.get(ck)?.nick ? { nick: this.prof.get(ck).nick } : {}), has_route: !!c.route, has_taxi: !!(c.taxi && Date.now() < c.taxi.until), ...this.handFields(c), freq: c.pos.freq || "", assigned_squawk: c.assigned ? c.assigned.squawk : null, emergency: !!(c.emerg && Date.now() < c.emerg.until), no_clnc: !!(c.viol && Date.now() - c.viol.at < VIOL_SHOW_MS), clnc: c.viol && Date.now() - c.viol.at < VIOL_SHOW_MS ? c.viol.type : "", clr: this.clrOf(c, Date.now()), ...(ck === key ? { self: true } : {}), distance_miles: Math.round(d * 10) / 10 });
       }
     }
     // one symbol per airport; its staffed roles are listed in `positions`
@@ -961,6 +999,25 @@ export class Hub {
       return json({ success: true });
     }
 
+    if ((m === "PUT" || m === "POST") && p === "/api/atc/clearance") {
+      if (this.noCred(request)) return json({ error: "atc_credential" }, 403);
+      const d = await request.json().catch(() => ({}));
+      if (!this.activeAtcHolder(String(d.holder || ""))) return json({ error: "division_required" }, 409);
+      const icao = String(d.icao_address || "").toUpperCase();
+      const target = [...this.clients.values()].find(c => c.pos && c.pos.icao_address === icao);
+      if (!target) return json({ error: "aircraft not found" }, 404);
+      if (!tunedTo(target.pos.freq, normFreq(d.freq))) return json({ error: "not_tuned", freq: target.pos.freq, callsign: normCallsign(target.plan.callsign ?? target.pos.callsign) }, 409);
+      const type = String(d.type || ""), now = Date.now(), on = d.on !== false;
+      if (!["taxi", "takeoff", "land", "alt"].includes(type)) return json({ error: "type must be taxi, takeoff, land or alt" }, 400);
+      const st = target.st || (target.st = { gr: {}, ph: null, at: 0, lat: 0, lon: 0, grace: now + GRACE_MS, calls: {}, viol: {}, landedAt: 0, landRwy: "" });
+      if (type === "alt") {
+        if (!on) st.alt = null;
+        else { const ft = parseAlt(d.altitude); if (!ft) return json({ error: "bad_altitude" }, 400); st.alt = { ft, at: now }; }
+      } else st.gr[type] = on ? now + CLR_MS[type] : 0;
+      if (on && target.viol) { const vt = target.viol.type; if ((type === "taxi" && vt === "taxi") || (type === "takeoff" && vt === "runway") || (type === "land" && vt === "landing") || (type === "alt" && vt === "alt")) target.viol = null; }
+      return json({ success: true, clr: this.clrOf(target, now) });
+    }
+
     if ((m === "PUT" || m === "POST") && p === "/api/atc/message") {
       if (this.noCred(request)) return json({ error: "atc_credential" }, 403);
       const d = await request.json().catch(() => ({}));
@@ -1106,7 +1163,7 @@ export class Hub {
       const holder = lockKey && this.rwy.get(lockKey);
       const st = c.st || (c.st = { gr: {}, ph: null, at: 0, lat: 0, lon: 0, grace: now + GRACE_MS, calls: {}, viol: {}, landedAt: 0, landRwy: "" });
       if (altFt) {
-        text = ph[type](altFt);
+        text = ph[type](altFt); st.alt = { ft: altFt, at: now };
       } else if (type === "clearance") {
         // The clearance carries the squawk: keep the one already assigned, else pick a free one.
         let sq = c.assigned ? c.assigned.squawk : this.pickSquawk();
