@@ -2,7 +2,7 @@
 const fs = require("fs"), path = require("path"), crypto = require("crypto");
 
 const DEFAULTS = {
-  key: "", group: "", lang: "", simSource: "udp", simIp: "", simbrief: "",
+  key: "", token: "", acctName: "", group: "", lang: "", simSource: "udp", simIp: "", simbrief: "",
   flight: { callsign: "", dep: "", arr: "", deprwy: "", arrrwy: "", model: "", livery: "", cruise: "", route: "" },
   sbRoute: null, crashUntil: 0, cache: {}, overlay: true, ov: null, browser: false,
 };
@@ -35,4 +35,7 @@ function simHostProblem(h) {
   return "";
 }
 
-module.exports = { Store, DEFAULTS, simHostProblem };
+// Signed in: the account token replaces the device key everywhere.
+const effKey = c => c.token || c.key;
+
+module.exports = { effKey, Store, DEFAULTS, simHostProblem };

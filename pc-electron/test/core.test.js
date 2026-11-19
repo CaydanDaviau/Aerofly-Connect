@@ -1,6 +1,6 @@
 const assert = require("assert"), os = require("os"), fs = require("fs"), path = require("path");
 const { toPosition, UdpLink } = require("../core/sim");
-const { Store, simHostProblem } = require("../core/config");
+const { Store, simHostProblem, effKey } = require("../core/config");
 const simbrief = require("../core/simbrief");
 const { Api } = require("../core/api");
 const { Flight } = require("../core/flight");
@@ -44,3 +44,5 @@ let pass = 0; const T = (n, f) => { try { const r = f(); if (r && r.then) return
   });
   console.log(pass + " passed"); 
 })();
+
+T("account: token replaces the device key, signed out falls back", () => { assert.strictEqual(effKey({ key: "rvabc", token: "" }), "rvabc"); assert.strictEqual(effKey({ key: "rvabc", token: "afa_1" }), "afa_1"); });

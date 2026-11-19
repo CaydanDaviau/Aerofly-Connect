@@ -146,8 +146,26 @@
     const simNote = h("div", { class: "note" }, cfg.simSource === "udp" ? t("In Aerofly on this PC set the address to 127.0.0.1, port 49002.", "No Aerofly deste PC use o endereço 127.0.0.1, porta 49002.") : "");
     const grp = h("input", { value: cfg.group || "", placeholder: t("Network code (from Discord)", "Código da rede (do Discord)"), autocomplete: "off", spellcheck: "false", oninput: () => { cfg.group = grp.value.trim(); window.afc.set({ group: cfg.group }); } });
     const sb = h("input", { value: cfg.simbrief || "", placeholder: t("Username or ID", "Usuário ou ID"), autocomplete: "off", spellcheck: "false", oninput: () => { cfg.simbrief = sb.value.trim(); window.afc.set({ simbrief: cfg.simbrief }); } });
+    const aErr = { bad_name: t("Name: 3-20 letters, digits, . _ -", "Nome: 3-20 letras, números, . _ -"), bad_password: t("Password: 6-100 characters", "Senha: 6-100 caracteres"), name_taken: t("Name already taken", "Nome já em uso"), bad_login: t("Wrong name or password", "Nome ou senha incorretos"), too_many_attempts: t("Too many attempts, wait 10 min", "Muitas tentativas, espere 10 min"), flight: t("Stop the flight first", "Pare o voo primeiro"), net: t("No connection", "Sem conexão") };
+    const aMsg = h("div", { class: "note" });
+    let acct;
+    if (cfg.token) {
+      acct = card(t("Account", "Conta"), h("div", {}, t("Signed in as ", "Conectado como ") + (cfg.acctName || "")),
+        h("button", { class: "wide", onclick: async () => { await window.afc.account("logout"); cfg.token = ""; cfg.acctName = ""; render(); } }, t("Sign out", "Sair")));
+    } else {
+      const an = h("input", { placeholder: t("Name", "Nome"), autocomplete: "off", spellcheck: "false" });
+      const ap = h("input", { type: "password", placeholder: t("Password", "Senha"), autocomplete: "off" });
+      const go2 = op => async () => {
+        const r = await window.afc.account(op, an.value.trim(), ap.value);
+        if (r.error) { aMsg.textContent = aErr[r.error] || r.error; return; }
+        cfg.token = "x"; cfg.acctName = r.name; render();
+      };
+      acct = card(t("Account", "Conta"), an, ap, h("button", { class: "wide", onclick: go2("login") }, t("Log in", "Entrar")), h("button", { class: "wide", onclick: go2("register") }, t("Create account", "Criar conta")), aMsg,
+        h("div", { class: "note" }, t("Optional. Your flight time and flights follow the account on any device.", "Opcional. Seu tempo de voo e voos acompanham a conta em qualquer dispositivo.")));
+    }
     root.append(
       h("button", { class: "back", onclick: () => go("start") }, "← " + t("Back", "Voltar")),
+      acct,
       card(t("Sim link", "Link do simulador"),
         seg(cfg.simSource, [["udp", t("Aerofly on this PC", "Aerofly neste PC")], ["tcp", t("Aerofly on another device", "Aerofly em outro dispositivo")]], v => { cfg.simSource = v; window.afc.set({ simSource: v }); render(); }),
         simNote, ipBox),

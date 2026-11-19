@@ -1,7 +1,7 @@
 const { app, BrowserWindow, ipcMain, shell, screen } = require("electron");
 const path = require("path");
 const WebSocket = require("ws");
-const { Store, simHostProblem } = require("./core/config");
+const { Store, simHostProblem, effKey } = require("./core/config");
 const { Api, SERVER } = require("./core/api");
 const { Flight } = require("./core/flight");
 const { Airports } = require("./core/airports");
@@ -31,7 +31,7 @@ function sendOv(s) { if (ov && !ov.isDestroyed()) ov.webContents.send("overlay:s
 // ---- map and controller radar in their own windows (or the browser, Settings switch) ----
 function webUrl(what) {
   const c = store.data;
-  return SERVER + (what === "map" ? "/map" : "/atc") + "?key=" + encodeURIComponent(c.key) + (c.group ? "&group=" + encodeURIComponent(c.group) : "") + (c.lang ? "&lang=" + c.lang : "");
+  return SERVER + (what === "map" ? "/map" : "/atc") + "?key=" + encodeURIComponent(effKey(c)) + (c.group ? "&group=" + encodeURIComponent(c.group) : "") + (c.lang ? "&lang=" + c.lang : "");
 }
 const isSmall = w => { const b = w.getBounds(); return b.width < 420 && b.height < 420; };
 function openWeb(what) {
@@ -98,7 +98,7 @@ app.whenReady().then(() => {
       if (!c.simIp.trim()) return { error: "noip" };
       if (pr) return { error: pr };
     }
-    const api = new Api({ key: c.key, group: c.group, WebSocket });
+    const api = new Api({ key: effKey(c), group: c.group, WebSocket });
     flight = new Flight({
       api, store, airports: new Airports({ fetchFn: async u => { const r = await fetch(u); if (!r.ok) throw new Error("HTTP " + r.status); return r.text(); }, cache: { get: k => store.cacheGet(k), put: (k, v) => store.cachePut(k, v) } }), onState: onFlightState,
       makeLink: () => (store.data.simSource === "tcp" ? new TcpLink(store.data.simIp.trim()) : new UdpLink()),
@@ -136,18 +136,34 @@ app.whenReady().then(() => {
   ipcMain.handle("latest", () => latestPc);
   ipcMain.handle("health", async () => {
     try {
-      const h = { "X-API-Key": store.data.key }; if (store.data.group) h["X-Group"] = store.data.group;
+      const h = { "X-API-Key": effKey(store.data) }; if (store.data.group) h["X-Group"] = store.data.group;
       const r = await fetch(SERVER + "/api/health", { headers: h });
+      if (r.status === 401 && store.data.token) store.set({ token: "", acctName: "" });   // token revoked or unknown: back to the device key
       const j = await r.json(); latestPc = j.latest_pc || ""; return j.pilots !== undefined ? j.pilots : j.active_clients;
     } catch (e) { return null; }
   });
   ipcMain.handle("profile", async (e, nick) => {
     try {
-      const h = { "X-API-Key": store.data.key, "Content-Type": "application/json" }; if (store.data.group) h["X-Group"] = store.data.group;
+      const h = { "X-API-Key": effKey(store.data), "Content-Type": "application/json" }; if (store.data.group) h["X-Group"] = store.data.group;
       const r = await fetch(SERVER + "/api/profile", nick == null ? { headers: h } : { method: "PUT", headers: h, body: JSON.stringify({ nick }) });
       const b = await r.text();
       if (r.status >= 400) return { error: "HTTP " + r.status + " " + b.slice(0, 80) };
       return JSON.parse(b);
+    } catch (err) { return { error: "net" }; }
+  });
+  ipcMain.handle("account", async (e, op, name, pw) => {
+    const c = store.data, base = SERVER + "/api/account/";
+    const hd = k => { const h = { "X-API-Key": k, "Content-Type": "application/json" }; if (c.group) h["X-Group"] = c.group; return h; };
+    try {
+      if (op === "logout") {
+        if (c.token) { try { await fetch(base + "logout", { method: "POST", headers: hd(c.token), body: "{}" }); } catch (err) {} }
+        store.set({ token: "", acctName: "" }); return { ok: true };
+      }
+      if (flight && flight.state().running) return { error: "flight" };
+      const r = await fetch(base + (op === "register" ? "register" : "login"), { method: "POST", headers: hd(c.key), body: JSON.stringify({ name, password: pw }) });
+      const j = await r.json().catch(() => ({}));
+      if (r.status >= 400 || !j.token) return { error: j.error || ("http" + r.status) };
+      store.set({ token: j.token, acctName: j.name || name }); return { ok: true, name: j.name || name };
     } catch (err) { return { error: "net" }; }
   });
   ipcMain.handle("simbrief", async (e, u) => {

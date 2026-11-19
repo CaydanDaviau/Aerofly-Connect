@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld("afc", {
   health: () => ipcRenderer.invoke("health"),
   latest: () => ipcRenderer.invoke("latest"),
   profile: n => ipcRenderer.invoke("profile", n),
+  account: (op, n, p) => ipcRenderer.invoke("account", op, n, p),
   simbrief: u => ipcRenderer.invoke("simbrief", u),
   open: w => ipcRenderer.invoke("open", w),
   onState: cb => ipcRenderer.on("flight:state", (e, s) => cb(s)),
