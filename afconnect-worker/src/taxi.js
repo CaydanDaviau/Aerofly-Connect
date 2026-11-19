@@ -274,17 +274,43 @@ export function runwayEnds(g, ident) {
   const h = bearing(rw.a.lat, rw.a.lon, rw.b.lat, rw.b.lon);
   return angDiff(h, num) < 90 ? { thr: rw.a, far: rw.b } : { thr: rw.b, far: rw.a };
 }
-// taxiway node to hold short at: 25-110 m off the runway centre line, nearest the threshold
-export function holdNode(g, ident) {
+// taxiway nodes to hold short at: 25-110 m off the runway centre line, nearest the threshold, ONE PER SIDE of the runway (nearest first)
+export function holdNodes(g, ident) {
   const e = runwayEnds(g, ident);
-  if (!e) return null;
-  let best = null, bd = 1e9;
+  if (!e) return [];
+  const k = Math.cos(e.thr.lat * rad), bx = (e.far.lon - e.thr.lon) * k, by = e.far.lat - e.thr.lat, side = {};
   for (const n of g.nodes.values()) {
     if (!n.adj.some(i => g.edges[i].kind === "twy") || n.adj.some(i => g.edges[i].kind === "rwy")) continue;
     const off = distSeg(n.lat, n.lon, e.thr, e.far);
     if (off < 25 || off > 110) continue;
-    const d = dist(n.lat, n.lon, e.thr.lat, e.thr.lon);
-    if (d < bd) { bd = d; best = n; }
+    const d = dist(n.lat, n.lon, e.thr.lat, e.thr.lon), sd = bx * (n.lat - e.thr.lat) - by * (n.lon - e.thr.lon) * k > 0 ? 1 : -1;
+    if (!side[sd] || d < side[sd].d) side[sd] = { n, d };
+  }
+  return Object.values(side).sort((a, b) => a.d - b.d).map(x => x.n);
+}
+export const holdNode = (g, ident) => holdNodes(g, ident)[0] || null;
+// does the path cross or use the runway `ident` (after its leading rollout part)?
+function crossesRunway(g, path, ident) {
+  const z = x => String(x).replace(/^0+(?=\d)/, "").toUpperCase(), want = new Set((runwayEnds(g, ident) ? g.runways.find(r => r.refs.some(x => z(x) === z(ident))).refs : [ident]).map(z));
+  const isT = e => e.kind === "rwy" && String(e.name).split(/[\/;]/).some(x => want.has(z(x.trim())));
+  let lead = true;
+  for (let i = 0; i < path.length; i++) {
+    const e = path[i].e;
+    if (e.kind !== "rwy") lead = false;
+    else if (!lead && isT(e)) return true;
+    const nx = path[i + 1];
+    if (nx && e.kind === "twy" && nx.e.kind === "twy" && g.nodes.get(path[i].to).adj.some(k => isT(g.edges[k]))) return true;
+  }
+  return false;
+}
+// hold-short point of a runway for an aircraft at fromId: the side it reaches WITHOUT crossing that runway (crossing it would end in a 180 deg turn back onto it)
+export function pickHold(g, ident, fromId, extra) {
+  let best = null;
+  for (const n of holdNodes(g, ident)) {
+    const path = n.id === fromId ? [] : route(g, fromId, n.id, extra);
+    if (!path) continue;
+    const cost = path.reduce((a, s) => a + s.e.len * (s.e.kind === "rwy" ? 15 : 1), 0) + (crossesRunway(g, path, ident) ? 5000 : 0);
+    if (!best || cost < best.cost) best = { node: n, path, cost };
   }
   return best;
 }

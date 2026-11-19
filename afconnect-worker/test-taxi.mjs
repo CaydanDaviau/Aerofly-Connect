@@ -1,5 +1,5 @@
 import worker, { Hub } from "./src/index.js";
-import { buildGraph, nearest, holdNode, route, legs, spokenName } from "./src/taxi.js";
+import { buildGraph, nearest, holdNode, holdNodes, pickHold, route, legs, spokenName } from "./src/taxi.js";
 const T = (n, v) => console.log("taxi " + n + ":", v ? "PASS" : "FAIL");
 // synthetic airport: runway 09/27 along lat 0, parallel taxiway A (north), connectors B (east), C (west), crossing D to taxiway S (south)
 const B0 = [-15.87, -47.92], P = (la, lo) => ({ lat: B0[0] + la, lon: B0[1] + lo });
@@ -33,6 +33,24 @@ lg = legs(path, g);
 T("route to S9 crosses the runway via D", lg.some(l => l.kind === "rwy" && l.cross) && lg.map(l => l.name).join(",") === "A,D,09/27,D,S");
 // conflict avoidance: with A reserved, penalty makes no difference here (only path), but extra cost is honoured
 let used = 0; route(g, a1.id, h.id, e => { used++; return 0; }); T("extra cost callback used", used > 0);
+
+// hold-short side: aircraft on the south side must not be sent across the runway to the nearer north hold point (180 deg turn back onto it)
+{
+  const q = (name, la, lo) => { N[name] = { id: 100 + Object.keys(N).length, ...P(la, lo) }; };
+  q("TR1", 0, -.01); q("TX", 0, -.005); q("TR3", 0, .01); q("TNa", .0008, -.005); q("TNb", .0008, .0101); q("THn", .0004, .0101);
+  q("TSa", -.0008, -.005); q("TSb", -.0008, .0103); q("THs", -.0004, .0103);
+  const g2 = buildGraph({ elements: [
+    W({ aeroway: "runway", ref: "09/27" }, ["TR1", "TX", "TR3"]),
+    W({ aeroway: "taxiway", ref: "N" }, ["TNa", "TNb", "THn"]),
+    W({ aeroway: "taxiway", ref: "D" }, ["TNa", "TX", "TSa"]),
+    W({ aeroway: "taxiway", ref: "S" }, ["TSa", "TSb", "THs"]),
+  ] });
+  const hs = holdNodes(g2, "27");
+  T("two hold candidates, one per side", hs.length === 2 && hs[0].id === N.THn.id && hs[1].id === N.THs.id);
+  const south = nearest(g2, N.TSa.lat, N.TSa.lon), north = nearest(g2, N.TNa.lat, N.TNa.lon);
+  T("south aircraft holds on the south side (no runway crossing)", pickHold(g2, "27", south.id).node.id === N.THs.id);
+  T("north aircraft holds on the north side", pickHold(g2, "27", north.id).node.id === N.THn.id);
+}
 
 // ---- integration: Hub with mocked Overpass
 const store = new Map();

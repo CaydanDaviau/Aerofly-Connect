@@ -1,6 +1,6 @@
 import { parseMetar, wxSig, nextLetter } from "./atis.js";
 import { distSeg } from "./taxi.js";
-import { fetchGraph, diag as taxiDiag, nearest, startFor, noUturn, holdNode, route as taxiRoute, legs as taxiLegs, spokenName, dist as gDist } from "./taxi.js";
+import { fetchGraph, diag as taxiDiag, nearest, startFor, noUturn, holdNode, holdNodes, pickHold, route as taxiRoute, legs as taxiLegs, spokenName, dist as gDist } from "./taxi.js";
 // Community backend for the Abflug Android client (v1.5.0) on Cloudflare Workers.
 // All state lives in one Durable Object (in memory, TTL-based).
 import ATC_HTML from "./atc.js";
@@ -351,7 +351,7 @@ export class Hub {
     const hdg = Number(p.heading_true), gs0 = Number(p.ground_speed), from = startFor(g, p.latitude, p.longitude, hdg, gs0, 500);
     if (!from) return null;
     let toId = null, gate = "";
-    if (kind === "out") { const h = rwy && holdNode(g, rwy); if (!h) return null; toId = h.id; }
+    if (kind === "out") { const h = rwy && holdNode(g, rwy); if (!h) return null; toId = h.id; }   // refined below by pickHold (side without crossing the runway)
     // other ground traffic: occupied nodes and reserved edges cost extra so routes avoid meeting head on
     const occ = new Set();
     for (const [k2, o] of this.clients) {
@@ -372,7 +372,7 @@ export class Hub {
       const taken = new Set([...this.stands].filter(([k, r]) => r.key !== key && now < r.until).map(([k]) => k));
       const cand = g.stands.filter(s => !taken.has(apt + ":" + (s.ref || s.lat + "," + s.lon))).map(s => ({ s, d: gDist(p.latitude, p.longitude, s.lat, s.lon) })).sort((a, b) => a.d - b.d).slice(0, 4);
       for (const { s } of cand) { path = taxiRoute(g, from.id, s.node, extra2); if (path) { gate = s.ref; this.stands.set(apt + ":" + (s.ref || s.lat + "," + s.lon), { key, until: now + 15 * 60_000 }); break; } }
-    } else path = taxiRoute(g, from.id, toId, extra2);
+    } else { const ph2 = kind === "out" && pickHold(g, rwy, from.id, extra2); path = ph2 ? ph2.path : taxiRoute(g, from.id, toId, extra2); }
     if (!path) return null;
     // legs -> words; a crossing of a busy runway ends the instruction ("hold short")
     const lg = taxiLegs(path, g), parts = []; let held = "", heldFrom = null, cutAt = -1, rwyIdx = 0;
@@ -964,7 +964,7 @@ export class Hub {
       let label = "STOP";
       const st = g.stands.filter(s => s.node === to.id || gDist(s.lat, s.lon, to.lat, to.lon) < 80).sort((a, b) => gDist(a.lat, a.lon, lat, lon) - gDist(b.lat, b.lon, lat, lon))[0];
       if (st) label = st.ref ? "GATE " + st.ref : "GATE";
-      else for (const r of g.runways) { const id0 = (r.refs || []).find(x => { const h = holdNode(g, x); return h && h.id === to.id; }); if (id0) { label = "HOLD " + id0; break; } }
+      else for (const r of g.runways) { const id0 = (r.refs || []).find(x => { return holdNodes(g, x).some(h => h.id === to.id); }); if (id0) { label = "HOLD " + id0; break; } }
       const taxi = { kind: "ctl", apt: role.apt, points: pts.map(q => [Math.round(q[0] * 1e6) / 1e6, Math.round(q[1] * 1e6) / 1e6]), end: { lat: to.lat, lon: to.lon, label }, held: false, by: role.name || role.apt, at: Date.now(), until: Date.now() + 20 * 60_000 };
       if (!d.preview) target.taxi = taxi;
       return json({ success: true, preview: !!d.preview, ...taxi });
