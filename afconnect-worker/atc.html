@@ -399,6 +399,17 @@ function navFor(a,p){
 }
 function navText(a){var c=routeCache[a.icao_address],nv=c&&c.d&&c.d.points?navFor(a,c.d.points):null;if(!nv)return'';
   return'NEXT '+nv.id+' '+(nv.d<10?nv.d.toFixed(1):Math.round(nv.d))+' nm'+(nv.min!=null?' &middot; '+(nv.min>=60?Math.floor(nv.min/60)+'h'+String(nv.min%60).padStart(2,'0'):nv.min+' min'):'')}
+function drawHdgBug(){   /* heading the controller is giving the selected aircraft: dashed ray + triangle + number, well away from the plane's own labels */
+  var a=null;for(var i=0;i<ac.length;i++)if(ac[i].icao_address===sel&&!isTwr(ac[i])){a=ac[i];break}
+  if(!a||hdgSel[sel]==null)return;
+  var v=Number(a.heading_mag!=null&&a.heading_true!=null?a.heading_true-a.heading_mag:0)||0,t=(hdgSel[sel]+v)*Math.PI/180,p=proj(a),ux=Math.sin(t),uy=-Math.cos(t),r0=44,r1=92;
+  g.save();g.strokeStyle='#ffe66d';g.fillStyle='#ffe66d';g.lineWidth=1.5;g.setLineDash([4,4]);
+  g.beginPath();g.moveTo(p[0]+ux*r0,p[1]+uy*r0);g.lineTo(p[0]+ux*r1,p[1]+uy*r1);g.stroke();g.setLineDash([]);
+  var bx=p[0]+ux*r1,by=p[1]+uy*r1,nx=-uy,ny=ux;
+  g.beginPath();g.moveTo(bx+ux*9,by+uy*9);g.lineTo(bx+nx*5,by+ny*5);g.lineTo(bx-nx*5,by-ny*5);g.closePath();g.fill();
+  g.font='bold 11px ui-monospace,monospace';g.textAlign='center';g.textBaseline='middle';g.lineWidth=3;g.strokeStyle='rgba(0,0,0,.7)';
+  var tx=bx+ux*26,ty=by+uy*26,lab=p3(hdgSel[sel])+'\u00b0';g.strokeText(lab,tx,ty);g.fillText(lab,tx,ty);
+  g.restore()}
 function draw(){
   syncBg();if(bgOK)g.clearRect(0,0,W,H);else{g.fillStyle='#2b2b2b';g.fillRect(0,0,W,H)}
   var maxR=Math.hypot(W,H)/2*nmpp,steps=[1,2,5,10,20,25,50,100,200,500,1000],step=steps[steps.length-1];
@@ -412,7 +423,7 @@ function draw(){
   g.fillText(step+' nm rings',6,H-14);
   var gM=g;if(bgOK){g=gR;gR.clearRect(0,0,W,H)}try{drawRunways(maxR)}finally{g=gM}   /* no map underlay: runways stay on the radar canvas */
   drawFixes(maxR);
-  drawRoute(maxR);drawTaxi(maxR);
+  drawRoute(maxR);drawTaxi(maxR);drawHdgBug();
   var blinkOn=Math.floor(Date.now()/450)%2===0;
   for(var k=0;k<ac.length;k++){var cf0=confl[ac[k].icao_address];if(!cf0)continue;
     var cxy=proj(ac[k]),cr=Math.max(16,cf0.r/nmpp);
@@ -528,7 +539,7 @@ $('strips').addEventListener('click',function(e){
     if(act==='set'){if(!/^[0-7]{4}$/.test(v)){toast(L('4 digits, each 0-7','4 dígitos, cada um 0-7'));return}assign(id,v)}
     else if(act==='vplay')playClip(btn.getAttribute('data-clip'));else if(act==='txr'){txMode=id;txPrev=null;renderStrips(true);draw()}else if(act==='txcancel'){txMode='';txPrev=null;renderStrips(true);draw()}else if(act==='txsend')txSend(id);else if(act==='txclr')txClear(id);else if(act==='msg')sendMsg(id);else if(act==='hdgs')hdgStep(id,Number(btn.getAttribute('data-d')));else if(act==='hdgsend')hdgSend(id,btn.getAttribute('data-t'));else if(act==='hosend')handoffSend(id);else if(act==='hoacc')handoffReply(id,true);else if(act==='hodec')handoffReply(id,false);else if(act==='auto')assign(id,'');else if(act==='clear')clearSq(id);return}
   if(e.target.id==='sqin'||e.target.id==='msgin'||e.target.id==='hdgin'||e.target.id==='urg'||e.target.id==='ptt'||e.target.id==='hoto')return;
-  if(sel!==id){txMode='';txPrev=null}sel=(strip.classList.contains('twr')&&sel===id)?null:id;draw();renderStrips(true)});
+  if(sel!==id){txMode='';txPrev=null}sel=(strip.classList.contains('twr')&&sel===id)?null:id;renderStrips(true);draw()});
 var group='';try{var gp=new URLSearchParams(location.search).get('group');group=gp!==null?gp:(localStorage.getItem('afc_group')||'');if(gp!==null){if(group)localStorage.setItem('afc_group',group);else localStorage.removeItem('afc_group')}}catch(e){}
 var atcCode='';try{var ap=new URLSearchParams(location.search).get('atc');atcCode=ap!==null?ap:(localStorage.getItem('afc_atc')||'');if(ap!==null){if(atcCode)localStorage.setItem('afc_atc',atcCode);else localStorage.removeItem('afc_atc')}}catch(e){}
 function httpApi(path,opt){opt=opt||{};opt.headers=Object.assign({'X-API-Key':key},group?{'X-Group':group}:{},atcCode?{'X-Atc':atcCode}:{},opt.headers||{});return fetch(path,opt)}
@@ -552,7 +563,7 @@ var hdgSel={};
 function hdgNorm(n){n=Math.round(n)%360;if(n<=0)n+=360;return n}
 function hdgVal(a){var id=a.icao_address;if(hdgSel[id]==null)hdgSel[id]=hdgNorm(Math.round((Number(a.heading_mag!=null?a.heading_mag:a.heading_true)||0)/5)*5);return p3(hdgSel[id])}
 function hdgCur(id){var el=$('hdgin'),v=el?parseInt(el.value,10):NaN;if(!(v>=0))v=hdgSel[id]||360;return hdgNorm(v)}
-function hdgStep(id,d){var v=hdgNorm(hdgCur(id)+d);hdgSel[id]=v;var el=$('hdgin');if(el)el.value=p3(v)}
+function hdgStep(id,d){var v=hdgNorm(hdgCur(id)+d);hdgSel[id]=v;var el=$('hdgin');if(el)el.value=p3(v);draw()}
 function hdgSend(id,t){var v=hdgCur(id);hdgSel[id]=v;var h=p3(v),el=$('hdgin');if(el)el.value=h;
   postMsg(id,t==='L'?L('Turn left heading ','Vire à esquerda proa ')+h:t==='R'?L('Turn right heading ','Vire à direita proa ')+h:L('Fly heading ','Voe proa ')+h,null)}
 function sendMsg(id){var el=$('msgin'),t=(el.value||'').trim();if(!t){toast(L('Type a message','Digite uma mensagem'));return}
@@ -561,6 +572,7 @@ function postMsg(id,t,el){
   api('/api/atc/message',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({icao_address:id,text:t,urgent:urgent,freq:talkFreq(),holder:holder})})
    .then(function(r){return r.json().then(function(j){if(!r.ok){toast(j.error==='not_tuned'?NOTTUNED(j):L('Error: ','Erro: ')+(j.error||r.status));return}if(el)el.value='';toast(L('Sent','Enviado'));poll(true)})})
    .catch(function(){toast(L('Network error','Erro de rede'))})}
+$('strips').addEventListener('input',function(e){if(e.target.id==='hdgin'&&sel){var v=parseInt(e.target.value,10);if(v>=0&&v<=360){hdgSel[sel]=hdgNorm(v);draw()}}});
 $('strips').addEventListener('change',function(e){if(e.target.id==='urg')urgent=e.target.checked});
 $('strips').addEventListener('keydown',function(e){if(e.key==='Enter'&&e.target.id==='msgin'){var s=e.target.closest('.strip');if(s)sendMsg(s.getAttribute('data-id'))}});
 function clearSq(id){api('/api/atc/squawk?icao_address='+encodeURIComponent(id)+'&holder='+encodeURIComponent(holder)+'&freq='+encodeURIComponent(talkFreq()),{method:'DELETE'}).then(function(r){return r.json().then(function(j){toast(r.ok?L('Cleared','Removido'):j.error==='not_tuned'?NOTTUNED(j):j.error==='division_required'?L('Claim a role first','Assuma uma função primeiro'):L('Error: ','Erro: ')+(j.error||r.status));poll(true)})})}
