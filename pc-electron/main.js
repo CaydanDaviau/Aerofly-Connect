@@ -159,6 +159,12 @@ app.whenReady().then(() => {
         if (c.token) { try { await fetch(base + "logout", { method: "POST", headers: hd(c.token), body: "{}" }); } catch (err) {} }
         store.set({ token: "", acctName: "" }); return { ok: true };
       }
+      if (op === "password") {
+        if (!c.token) return { error: "bad_login" };
+        const r = await fetch(base + "password", { method: "POST", headers: hd(c.token), body: JSON.stringify({ old: name, new: pw }) });
+        const j = await r.json().catch(() => ({}));
+        return r.status >= 400 ? { error: j.error || ("http" + r.status) } : { ok: true };
+      }
       if (flight && flight.state().running) return { error: "flight" };
       const r = await fetch(base + (op === "register" ? "register" : "login"), { method: "POST", headers: hd(c.key), body: JSON.stringify({ name, password: pw }) });
       const j = await r.json().catch(() => ({}));

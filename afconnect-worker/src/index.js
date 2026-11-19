@@ -268,11 +268,12 @@ export default {
   },
 };
 
+const TOK_TTL_MS = 90 * 86_400_000;
 export class Hub {
   constructor(ctx) {
     this.towers = new Map(); this.creds = new Map(); this.credOn = false; this.wx = new Map(); this.crashes = new Map(); this.ta = new Map();
     this.voiceStreams = new Map(); this.latestVoiceByPeer = new Map();
-    this.prof = new Map(); this.accts = new Map(); this.toks = new Map(); this.loginFail = new Map(); this.lastClaim = new Map(); this.clients = new Map(); this.msgs = new Map(); this.rwy = new Map(); this.rwyQ = new Map(); this.gfx = new Map(); this.tres = new Map(); this.stands = new Map(); this.violations = []; this.clips = new Map(); this.listeners = new Map(); this.msgSeq = 0; this.since = Date.now(); this.counts = {};
+    this.prof = new Map(); this.accts = new Map(); this.toks = new Map(); this.loginFail = new Map(); this.regLog = new Map(); this.lastClaim = new Map(); this.clients = new Map(); this.msgs = new Map(); this.rwy = new Map(); this.rwyQ = new Map(); this.gfx = new Map(); this.tres = new Map(); this.stands = new Map(); this.violations = []; this.clips = new Map(); this.listeners = new Map(); this.msgSeq = 0; this.since = Date.now(); this.counts = {};
     ctx.blockConcurrencyWhile(async () => {
       for (const [k, v] of await ctx.storage.list({ prefix: "tower:" })) this.towers.set(k.slice(6), v);
       for (const [k, v] of await ctx.storage.list({ prefix: "cred:" })) this.creds.set(k.slice(5), v);
@@ -439,6 +440,8 @@ export class Hub {
     pr.flight_s += o.flight_s || 0; pr.atc_s += o.atc_s || 0; pr.flights += o.flights || 0; if (!pr.nick) pr.nick = o.nick || "";
     pr.saved = Date.now(); this.ctx.storage.put("prof:" + pk, pr);
   }
+  // Label shown on radar/map for public pilots and controllers: profile nickname, else the account name.
+  nickOf(key) { const p = this.profPeek(key); if (p && p.nick) return p.nick; const t = this.toks.get(key); const a = t && this.accts.get(t.acct); return a ? a.display : ""; }
   mkTok(acct) { const t = "afa_" + this.hex(16); const rec = { acct: acct.id, at: Date.now() }; this.toks.set(t, rec); this.ctx.storage.put("tok:" + t, rec); return t; }
   async accountApi(request, key, m, p) {
     const d = (m === "POST" || m === "PUT") ? await request.json().catch(() => ({})) : {};
@@ -453,6 +456,8 @@ export class Hub {
       if (!/^[A-Za-z0-9_.-]{3,20}$/.test(name)) return json({ error: "bad_name" }, 400);
       if (pw.length < 6 || pw.length > 100) return json({ error: "bad_password" }, 400);
       const id = name.toLowerCase(); if (this.accts.has(id)) return json({ error: "name_taken" }, 409);
+      const ipk = request.headers.get("X-IP") || "", nowR = Date.now();   // max 3 new accounts per hour per IP
+      if (ipk) { const L = (this.regLog.get(ipk) || []).filter(x => nowR - x < 3_600_000); if (L.length >= 3) return json({ error: "too_many_accounts" }, 429); L.push(nowR); this.regLog.set(ipk, L); }
       const salt = this.hex(16), acct = { id, display: name, salt, hash: await this.hashPw(pw, new TextEncoder().encode(salt)), created: Date.now(), linked: [] };
       if (this.accts.has(id)) return json({ error: "name_taken" }, 409);
       this.accts.set(id, acct);
@@ -730,7 +735,7 @@ export class Hub {
       const d = haversineMi(lat, lon, pos.latitude, pos.longitude);
       if (d <= rad) {
         const callsign = normCallsign(c.plan.callsign ?? pos.callsign);
-        out.push({ ...pos, ...c.plan, callsign, ...towerFields(callsign), member: !!c.member, ...(!c.member && this.profPeek(ck)?.nick ? { nick: this.profPeek(ck).nick } : {}), has_route: !!c.route, has_taxi: !!(c.taxi && Date.now() < c.taxi.until), ...this.handFields(c), freq: c.pos.freq || "", assigned_squawk: c.assigned ? c.assigned.squawk : null, emergency: !!(c.emerg && Date.now() < c.emerg.until), no_clnc: !!(c.viol && Date.now() - c.viol.at < VIOL_SHOW_MS), clnc: c.viol && Date.now() - c.viol.at < VIOL_SHOW_MS ? c.viol.type : "", clr: this.clrOf(c, Date.now()), ...(ck === key ? { self: true } : {}), distance_miles: Math.round(d * 10) / 10 });
+        out.push({ ...pos, ...c.plan, callsign, ...towerFields(callsign), member: !!c.member, ...(!c.member && this.nickOf(ck) ? { nick: this.nickOf(ck) } : {}), has_route: !!c.route, has_taxi: !!(c.taxi && Date.now() < c.taxi.until), ...this.handFields(c), freq: c.pos.freq || "", assigned_squawk: c.assigned ? c.assigned.squawk : null, emergency: !!(c.emerg && Date.now() < c.emerg.until), no_clnc: !!(c.viol && Date.now() - c.viol.at < VIOL_SHOW_MS), clnc: c.viol && Date.now() - c.viol.at < VIOL_SHOW_MS ? c.viol.type : "", clr: this.clrOf(c, Date.now()), ...(ck === key ? { self: true } : {}), distance_miles: Math.round(d * 10) / 10 });
       }
     }
     // one symbol per airport; its staffed roles are listed in `positions`
@@ -978,6 +983,11 @@ export class Hub {
     const url = new URL(request.url);
     const key = (request.headers.get("X-API-Key") || "").trim();
     const m = request.method, p = url.pathname;
+    if (key.startsWith("afa_")) {   // 90 days sliding expiry
+      const tr = this.toks.get(key), now0 = Date.now();
+      if (tr && now0 - tr.at > TOK_TTL_MS) { this.toks.delete(key); this.ctx.storage.delete("tok:" + key); }
+      else if (tr && now0 - tr.at > 86_400_000) { tr.at = now0; this.ctx.storage.put("tok:" + key, tr); }
+    }
     if (key.startsWith("afa_") && !this.toks.has(key) && p !== "/api/health" && p !== "/api/stats") return json({ error: "invalid_token" }, 401);
     if (p === "/ws" && request.headers.get("Upgrade") === "websocket") return this.acceptSocket(request);
     this.purge();
@@ -1308,7 +1318,7 @@ export class Hub {
           && aptRec.owner !== holder && request.headers.get("X-Member") !== "1" && !(aptRec.ok && aptRec.ok[holder])) {
         aptRec.pend = aptRec.pend || {};
         const isNew = !aptRec.pend[holder];
-        aptRec.pend[holder] = { hid: hid(holder), pos: pn.pos, at: now, name: this.ctlName(request) || this.profPeek(key)?.nick || "" };
+        aptRec.pend[holder] = { hid: hid(holder), pos: pn.pos, at: now, name: this.ctlName(request) || this.nickOf(key) };
         if (isNew) await this.ctx.storage.put("tower:" + pn.apt, aptRec);
         return json({ error: "approval_required", airport: pn.apt, position: pn.pos }, 409);
       }
@@ -1321,7 +1331,7 @@ export class Hub {
         }
       }
       const atis = old && old.atis;
-      const t = { name, apt: pn.apt, pos: pn.pos, freq, holder: holder || undefined, ctl: holder ? (this.ctlName(request) || undefined) : undefined, nick: holder && request.headers.get("X-Member") !== "1" ? (this.profPeek(key)?.nick || undefined) : undefined, oip: (old && old.oip) || ipt || undefined, latitude: lat, longitude: lon, altitude_ft: Number(d.altitude_ft) || 0, at: now, member: request.headers.get("X-Member") === "1", atis };
+      const t = { name, apt: pn.apt, pos: pn.pos, freq, holder: holder || undefined, ctl: holder ? (this.ctlName(request) || undefined) : undefined, nick: holder && request.headers.get("X-Member") !== "1" ? (this.nickOf(key) || undefined) : undefined, oip: (old && old.oip) || ipt || undefined, latitude: lat, longitude: lon, altitude_ft: Number(d.altitude_ft) || 0, at: now, member: request.headers.get("X-Member") === "1", atis };
       if (pn.pos === "APT") {   // the creator owns the airport (kept across re-PUTs); bans live on the airport record
         const ow = (old && old.owner) || String(d.owner || "").slice(0, 40);
         if (ow) t.owner = ow;

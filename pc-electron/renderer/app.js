@@ -146,11 +146,17 @@
     const simNote = h("div", { class: "note" }, cfg.simSource === "udp" ? t("In Aerofly on this PC set the address to 127.0.0.1, port 49002.", "No Aerofly deste PC use o endereço 127.0.0.1, porta 49002.") : "");
     const grp = h("input", { value: cfg.group || "", placeholder: t("Network code (from Discord)", "Código da rede (do Discord)"), autocomplete: "off", spellcheck: "false", oninput: () => { cfg.group = grp.value.trim(); window.afc.set({ group: cfg.group }); } });
     const sb = h("input", { value: cfg.simbrief || "", placeholder: t("Username or ID", "Usuário ou ID"), autocomplete: "off", spellcheck: "false", oninput: () => { cfg.simbrief = sb.value.trim(); window.afc.set({ simbrief: cfg.simbrief }); } });
-    const aErr = { bad_name: t("Name: 3-20 letters, digits, . _ -", "Nome: 3-20 letras, números, . _ -"), bad_password: t("Password: 6-100 characters", "Senha: 6-100 caracteres"), name_taken: t("Name already taken", "Nome já em uso"), bad_login: t("Wrong name or password", "Nome ou senha incorretos"), too_many_attempts: t("Too many attempts, wait 10 min", "Muitas tentativas, espere 10 min"), flight: t("Stop the flight first", "Pare o voo primeiro"), net: t("No connection", "Sem conexão") };
+    const aErr = { bad_name: t("Name: 3-20 letters, digits, . _ -", "Nome: 3-20 letras, números, . _ -"), bad_password: t("Password: 6-100 characters", "Senha: 6-100 caracteres"), name_taken: t("Name already taken", "Nome já em uso"), bad_login: t("Wrong name or password", "Nome ou senha incorretos"), too_many_attempts: t("Too many attempts, wait 10 min", "Muitas tentativas, espere 10 min"), flight: t("Stop the flight first", "Pare o voo primeiro"), net: t("No connection", "Sem conexão"), too_many_accounts: t("Too many new accounts from this network, try later", "Muitas contas novas desta rede, tente depois") };
     const aMsg = h("div", { class: "note" });
     let acct;
     if (cfg.token) {
+      const po = h("input", { type: "password", placeholder: t("Current password", "Senha atual"), autocomplete: "off" });
+      const pn = h("input", { type: "password", placeholder: t("New password (6+)", "Nova senha (6+)"), autocomplete: "off" });
       acct = card(t("Account", "Conta"), h("div", {}, t("Signed in as ", "Conectado como ") + (cfg.acctName || "")),
+        po, pn, h("button", { class: "wide", onclick: async () => {
+          const r = await window.afc.account("password", po.value, pn.value);
+          if (r.error) aMsg.textContent = aErr[r.error] || r.error; else { aMsg.textContent = t("Password changed. Other devices were signed out.", "Senha alterada. Outros aparelhos foram desconectados."); po.value = ""; pn.value = ""; }
+        } }, t("Change password", "Alterar senha")), aMsg,
         h("button", { class: "wide", onclick: async () => { await window.afc.account("logout"); cfg.token = ""; cfg.acctName = ""; render(); } }, t("Sign out", "Sair")));
     } else {
       const an = h("input", { placeholder: t("Name", "Nome"), autocomplete: "off", spellcheck: "false" });

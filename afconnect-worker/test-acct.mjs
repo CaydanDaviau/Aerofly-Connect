@@ -42,4 +42,17 @@ r = await call("GET", "/api/account", null, tok2); t("other token revoked", r.s 
 r = await call("POST", "/api/account/login", { name: "pedro", password: "newpass1" }); t("login new password", r.s === 200);
 r = await call("POST", "/api/account/logout", {}, tok); t("logout", r.s === 200);
 r = await call("GET", "/api/account", null, tok); t("token dead after logout", r.s === 401);
+// stage 4: label, expiry, register rate limit
+r = await call("POST", "/api/account/login", { name: "pedro", password: "newpass1" }); const tk2 = r.j.token;
+hub.prof.delete("a:pedro");
+t("label falls back to account name", hub.nickOf(tk2) === "Pedro");
+hub.profGet(tk2).nick = "Capt"; t("nickname wins over account name", hub.nickOf(tk2) === "Capt");
+hub.toks.get(tk2).at = Date.now() - 91 * 86400000;
+r = await call("GET", "/api/account", null, tk2); t("token expires after 90 days", r.s === 401);
+r = await call("POST", "/api/account/login", { name: "pedro", password: "newpass1" }); const tk3 = r.j.token;
+hub.toks.get(tk3).at = Date.now() - 2 * 86400000;
+r = await call("GET", "/api/account", null, tk3); t("used token still valid", r.s === 200 && Date.now() - hub.toks.get(tk3).at < 5000);
+const reg = async n => { const q = await hub.fetch(new Request("https://x/api/account/register", { method: "POST", body: JSON.stringify({ name: n, password: "secret1" }), headers: { "X-API-Key": "k9", "X-IP": "ip1" } })); return q.status; };
+const st = [await reg("rate1"), await reg("rate2"), await reg("rate3"), await reg("rate4")];
+t("4th registration from one IP refused", st.join() === "200,200,200,429");
 console.log(fails ? "FAILS: " + fails : "all pass"); process.exit(fails ? 1 : 0);
