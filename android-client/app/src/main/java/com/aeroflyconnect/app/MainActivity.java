@@ -214,7 +214,7 @@ public class MainActivity extends Activity {
                 if (menuOnline == null || menuTick != this) return;
                 long left = Api.crashLeftMs(MainActivity.this);
                 if (left > 0) {
-                    menuCrash.setText(Api.t(MainActivity.this, "Crash timeout - you can fly again in ", "Tempo de espera após o acidente - você poderá voar em ") + Api.mmss(left));
+                    menuCrash.setText(Api.t(MainActivity.this, "Timeout - you can fly again in ", "Tempo de espera - você poderá voar em ") + Api.mmss(left));
                     menuCrash.setVisibility(View.VISIBLE);
                 } else menuCrash.setVisibility(View.GONE);
                 // the online count goes through the WebSocket (one connection instead of a request every 15 s); during a flight the service owns the socket
@@ -310,6 +310,16 @@ public class MainActivity extends Activity {
         card.addView(flights);
         card.addView(dim(Api.t(this, "ATC time (holding a division)", "Tempo de ATC (com uma divisão)"), 13));
         card.addView(atc);
+        final TextView lands = text("--", 18, true), viols = text("--", 18, true), pgrade = text("--", 18, true), agrade = text("--", 18, true), nextReq = dim("", 13);
+        card.addView(dim(Api.t(this, "Landings", "Pousos"), 13));
+        card.addView(lands);
+        card.addView(dim(Api.t(this, "Violations / penalty points", "Infrações / pontos de penalidade"), 13));
+        card.addView(viols);
+        card.addView(dim(Api.t(this, "Pilot grade", "Nível de piloto"), 13));
+        card.addView(pgrade);
+        card.addView(dim(Api.t(this, "Controller grade", "Nível de controlador"), 13));
+        card.addView(agrade);
+        card.addView(nextReq);
         flight.setText("--"); atc.setText("--"); flights.setText("--");
         final Button save = Ui.button(this, Api.t(this, "Save nickname", "Salvar apelido"), Ui.PRIMARY);
         root.addView(save, Ui.lp(this, 12));
@@ -330,6 +340,27 @@ public class MainActivity extends Activity {
                                 flight.setText(hm(j.optLong("flight_s", 0)));
                                 atc.setText(hm(j.optLong("atc_s", 0)));
                                 flights.setText(String.valueOf(j.optLong("flights", 0)));
+                                lands.setText(String.valueOf(j.optLong("landings", 0)));
+                                viols.setText(j.optLong("violations", 0) + " / " + j.optLong("penalty_points", 0) + " pts");
+                                pgrade.setText(j.optString("pilot_grade", "--"));
+                                boolean allRoles = j.optBoolean("all_roles", false);
+                                agrade.setText(allRoles ? Api.t(MainActivity.this, "All roles (Network)", "Todas as funções (Network)") : j.optString("atc_grade_name", "--"));
+                                String ng = j.optString("next_grade", "");
+                                org.json.JSONArray rq = j.optJSONArray("next_req");
+                                if (!ng.isEmpty() && !allRoles && rq != null) {
+                                    StringBuilder sb = new StringBuilder(Api.t(MainActivity.this, "Next grade: ", "Próximo nível: ") + ng + " - ");
+                                    for (int i = 0; i < rq.length(); i++) {
+                                        org.json.JSONObject q = rq.optJSONObject(i); if (q == null) continue;
+                                        String k = q.optString("k"); long have = q.optLong("have"), need = q.optLong("need");
+                                        String nm = k.equals("atc_s") ? Api.t(MainActivity.this, "ATC time", "Tempo de ATC")
+                                                : k.equals("gw") ? Api.t(MainActivity.this, "ground work actions", "ações de solo")
+                                                : k.equals("ops") ? Api.t(MainActivity.this, "takeoffs/landings at your airport", "decolagens/pousos no seu aeroporto")
+                                                : Api.t(MainActivity.this, "APP time", "Tempo de APP");
+                                        boolean isTime = k.endsWith("_s");
+                                        sb.append(i > 0 ? ", " : "").append(nm).append(' ').append(isTime ? (have / 360) / 10.0 + "/" + (need / 3600) + " h" : have + "/" + need);
+                                    }
+                                    nextReq.setText(sb.toString());
+                                }
                             }
                         });
                     }
@@ -383,6 +414,32 @@ public class MainActivity extends Activity {
                     "Suas horas e perfil acompanham você em qualquer aparelho em que entrar."), 13);
             ah.setPadding(0, pad / 4, 0, pad / 2);
             acc.addView(ah);
+            final EditText po = addField(acc, Api.t(this, "Current password", "Senha atual"), "", false, false);
+            po.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD);
+            final EditText pn = addField(acc, Api.t(this, "New password (6+ characters)", "Nova senha (6+ caracteres)"), "", false, false);
+            pn.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD);
+            Button chg = Ui.button(this, Api.t(this, "Change password", "Alterar senha"), Ui.SECONDARY);
+            acc.addView(chg, Ui.lp(this, 8));
+            chg.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View v) {
+                    final String o0 = po.getText().toString(), n0 = pn.getText().toString();
+                    final String tk0 = Api.token(MainActivity.this);
+                    new Thread(new Runnable() { @Override public void run() {
+                        String msg;
+                        try {
+                            Api.Resp r = Api.request("POST", "/api/account/password", new org.json.JSONObject().put("old", o0).put("new", n0).toString(), tk0);
+                            String er = ""; try { er = new org.json.JSONObject(r.body).optString("error", ""); } catch (Exception ignored) { }
+                            msg = r.code < 400 ? Api.t(MainActivity.this, "Password changed. Other devices were signed out.", "Senha alterada. Outros aparelhos foram desconectados.")
+                                    : er.equals("bad_password") ? Api.t(MainActivity.this, "Password must have 6+ characters", "A senha deve ter 6+ caracteres")
+                                    : er.equals("bad_login") ? Api.t(MainActivity.this, "Wrong current password", "Senha atual incorreta")
+                                    : er.equals("too_many_attempts") ? Api.t(MainActivity.this, "Too many attempts, wait 10 min", "Muitas tentativas, espere 10 min")
+                                    : "HTTP " + r.code;
+                        } catch (Exception e) { msg = Api.t(MainActivity.this, "No connection", "Sem conexão"); }
+                        final String m2 = msg;
+                        ui.post(new Runnable() { @Override public void run() { Toast.makeText(MainActivity.this, m2, Toast.LENGTH_LONG).show(); po.setText(""); pn.setText(""); } });
+                    } }).start();
+                }
+            });
             Button out = Ui.button(this, Api.t(this, "Sign out", "Sair"), Ui.SECONDARY);
             acc.addView(out, Ui.lp(this, 8));
             out.setOnClickListener(new View.OnClickListener() {
@@ -1001,7 +1058,7 @@ public class MainActivity extends Activity {
         } else {
             long crashLeft = Api.crashLeftMs(this);
             if (crashLeft > 0) {   // hard-landing timeout
-                Toast.makeText(this, Api.t(this, "Crash timeout - you can fly again in ", "Tempo de espera após o acidente - você poderá voar em ") + Api.mmss(crashLeft), Toast.LENGTH_LONG).show();
+                Toast.makeText(this, Api.t(this, "Timeout - you can fly again in ", "Tempo de espera - você poderá voar em ") + Api.mmss(crashLeft), Toast.LENGTH_LONG).show();
                 return;
             }
             if (Build.VERSION.SDK_INT >= 33

@@ -428,7 +428,7 @@ public class PilotService extends Service {
         stopFlag = true;
         try {
             NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-            String text = Api.t(this, "Hard landing", "Pouso forte") + (fpm != 0 ? " (" + fpm + " ft/min)" : "") + ". "
+            String text = (fpm != 0 ? Api.t(this, "Hard landing", "Pouso forte") + " (" + fpm + " ft/min)" : Api.t(this, "Timeout", "Castigo")) + ". "
                     + Api.t(this, "You can fly again in ", "Você poderá voar de novo em ") + Api.mmss(rem * 1000);
             nm.notify(900, new Notification.Builder(this, "atc_urgent")
                     .setContentTitle(Api.t(this, "CRASH", "ACIDENTE"))
