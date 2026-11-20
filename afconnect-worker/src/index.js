@@ -6,6 +6,7 @@ import { fetchGraph, diag as taxiDiag, nearest, startFor, noUturn, holdNode, hol
 import ATC_HTML from "./atc.js";
 import MAP_HTML from "./map.js";
 import MANAGER_HTML from "./manager.js";
+import PLAYERS_HTML from "./players.js";
 const ROUTE_MAX = 200;   // SimBrief route points kept per flight
 const TTL_MS = 60_000;
 const ASSIGN_TTL_MS = 12 * 3600_000;
@@ -38,7 +39,7 @@ const GRADE_NAMES = ["Ground", "Tower", "Approach", "Center"];
 const GRADE_REQ = [null, { atc_s: 3 * 3600, gw: 50 }, { atc_s: 10 * 3600, ops: 50 }, { app_s: 30 * 3600 }];
 const PILOT_GRADES = [["Captain", 100 * 3600, 100], ["Commercial", 25 * 3600, 25], ["Private", 5 * 3600, 5], ["Student", 0, 0]];
 export const TEST = { skipGrades: false };   // tests turn the role gate off
-function atcGrade(p) { let g = 0; while (g < 3) { const r = GRADE_REQ[g + 1]; if (!p || Object.keys(r).some(k => (p[k] || 0) < r[k])) break; g++; } return g; }
+function atcGrade(p) { if (p && Number.isInteger(p.gov)) return p.gov; let g = 0; while (g < 3) { const r = GRADE_REQ[g + 1]; if (!p || Object.keys(r).some(k => (p[k] || 0) < r[k])) break; g++; } return g; }
 function pilotGrade(p) { const f = p ? p.flight_s || 0 : 0, n = p ? p.flights || 0 : 0; return (PILOT_GRADES.find(x => f >= x[1] && n >= x[2]) || PILOT_GRADES[3])[0]; }
 const CRASH_SHOW_MS = 10 * 60_000;     // the X stays on the maps this long
 const HARD_LANDING_FPM = -1500;        // landing_fpm at or below this = crash
@@ -220,6 +221,7 @@ const VOICE_TTL_MS = 5 * 60 * 1000, VOICE_MAX_CLIPS = 120, VOICE_MAX_B64 = 250_0
 const up =v => String(v || "").trim().toUpperCase();
 
 // Hash of the caller's IP (never stored or sent in clear); used to keep one person from opening many airports with fresh browser ids.
+const pid = pk => pk.startsWith("a:") ? pk : "k:" + hid(pk) + hid(pk + "x");
 const ipTag = request => { const ip = request.headers.get("CF-Connecting-IP"); return ip ? "ip" + hid(ip) + hid(ip + "x") : ""; };
 // Group code: Worker var GROUP_CODE; clients send it as X-Group header (or ?group=). The Hub only ever sees X-Member 1/0, never the code.
 function memberFlag(request, env, url) {
@@ -259,6 +261,8 @@ export default {
       return new Response(ATC_HTML, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
     if (url.pathname === "/map" || url.pathname === "/map/")
       return new Response(MAP_HTML, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+    if (url.pathname === "/players" || url.pathname === "/players/")
+      return new Response(PLAYERS_HTML, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
     if (url.pathname === "/manager" || url.pathname === "/manager/")
       return new Response(MANAGER_HTML, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
     if (url.pathname === "/ws") {
@@ -612,7 +616,8 @@ export class Hub {
     this.locks.set(pk, lk); this.ctx.storage.put("lock:" + pk, lk); return lk;
   }
   crashBlock(key) {
-    const now = Date.now(), lk = this.locks.get(this.pkey(key));
+    const now = Date.now(), lk = this.locks.get(this.pkey(key)), bp = this.profPeek(key);
+    if (bp && bp.banned) return json({ error: "banned", banned: true, reason: bp.banned.reason || "" }, 403);
     if (lk && now < lk.until) {
       const cr0 = this.crashes.get(key);
       return json({ error: lk.reason === "crash" || lk.reason === "midair" ? "crashed" : "timeout", crashed: true, reason: lk.reason, until: lk.until, remaining_s: Math.ceil((lk.until - now) / 1000), latitude: cr0 ? cr0.latitude : lk.latitude, longitude: cr0 ? cr0.longitude : lk.longitude, landing_fpm: cr0 ? cr0.landing_fpm : lk.landing_fpm }, 423);
@@ -1487,6 +1492,7 @@ export class Hub {
       // one controller per position: a live claim by someone else blocks (heartbeats keep it alive)
       if (old && old.holder && holder && old.holder !== holder && now - old.at <= POS_TTL_MS) return json({ error: "position_taken", position: pn.pos, airport: pn.apt }, 409);
       if (old && old.holder && !holder && now - old.at <= POS_TTL_MS) return json({ error: "position_taken", position: pn.pos, airport: pn.apt }, 409);
+      { const bp0 = holder && pn.pos !== "APT" ? this.profPeek(key) : null; if (bp0 && bp0.banned) return json({ error: "banned", reason: bp0.banned.reason || "" }, 403); }
       // airport lead approval: with approval on, only the owner, members and approved people may take a NEW role
       if (holder && pn.pos !== "APT" && aptRec && aptRec.pos === "APT" && aptRec.approval && !(old && old.holder === holder)
           && aptRec.owner !== holder && request.headers.get("X-Member") !== "1" && !(aptRec.ok && aptRec.ok[holder])) {
@@ -1654,6 +1660,44 @@ export class Hub {
       if (change) { a.letter = nextLetter(a.letter); a.at = Date.now(); }
       await this.ctx.storage.put("tower:" + name, t);
       return json(await this.atisFor(t.apt || name));
+    }
+
+    if (p === "/api/manager/players" || p === "/api/manager/player") {
+      if (request.headers.get("X-Mgr") !== "1") return json({ error: "not_manager" }, 403);
+      const now = Date.now();
+      const summary = pk => {
+        const pr = this.prof.get(pk) || {}, ac = pk.startsWith("a:") ? this.accts.get(pk.slice(2)) : null;
+        let online = null; for (const [k, c] of this.clients) if (c.pos && this.pkey(k) === pk) { online = c; break; }
+        const lk = this.locks.get(pk), g = atcGrade(pr);
+        return { id: pid(pk), name: ac ? ac.display : "", nick: pr.nick || "", account: !!ac, online: !!online, callsign: online && online.plan ? online.plan.callsign || "" : "", flight_s: Math.round(pr.flight_s || 0), atc_s: Math.round(pr.atc_s || 0), flights: pr.flights || 0, landings: pr.landings || 0, violations: pr.violations || 0, vpts: pr.vpts || 0, timeouts: pr.timeouts || 0, cviol: pr.cviol || 0, atc_grade: g, atc_grade_name: GRADE_NAMES[g], grade_manual: Number.isInteger(pr.gov), pilot_grade: pilotGrade(pr), banned: !!pr.banned, ban_reason: pr.banned ? pr.banned.reason || "" : "", timeout_s: lk && lk.until > now ? Math.ceil((lk.until - now) / 1000) : 0, timeout_reason: lk && lk.until > now ? lk.note || lk.reason : "" };
+      };
+      const find = id => { id = String(id || ""); if (id.startsWith("a:")) return this.prof.has(id) || this.accts.has(id.slice(2)) ? id : null; for (const k of this.prof.keys()) if (!k.startsWith("a:") && pid(k) === id) return k; return null; };
+      if (m === "GET") {
+        const q = new URL(request.url).searchParams, term = String(q.get("q") || "").trim().toLowerCase(), lim = Math.min(Math.max(parseInt(q.get("limit")) || 50, 1), 100);
+        const keys = new Set(this.prof.keys()); for (const id of this.accts.keys()) keys.add("a:" + id);
+        let list = [...keys].map(summary);
+        if (term) list = list.filter(x => x.name.toLowerCase().includes(term) || x.nick.toLowerCase().includes(term) || x.callsign.toLowerCase().includes(term) || x.id.toLowerCase().includes(term));
+        list.sort((a, b) => (b.online - a.online) || (b.flight_s - a.flight_s));
+        return json({ total: list.length, players: list.slice(0, lim) });
+      }
+      if (m === "POST") {
+        let d = {}; try { d = await request.json(); } catch (e) {}
+        const pk = find(d.id); if (!pk) return json({ error: "not_found" }, 404);
+        const pr = this.profGet(pk), a = d.action, reason = String(d.reason || "").replace(/[\u0000-\u001f<>]/g, "").trim().slice(0, 120);
+        const drop = () => { for (const k of [...this.clients.keys()]) if (this.pkey(k) === pk) this.clients.delete(k); };
+        if (a === "promote" || a === "demote") { const g = atcGrade(pr), n = a === "promote" ? g + 1 : g - 1; if (n < 0 || n > 3) return json({ error: "grade_limit", grade: GRADE_NAMES[g] }, 400); pr.gov = n; }
+        else if (a === "grade_auto") delete pr.gov;
+        else if (a === "timeout") {
+          const mins = Math.round(Number(d.minutes)); if (!(mins >= 1 && mins <= 43200)) return json({ error: "bad_minutes" }, 400);
+          const lk = { until: now + mins * 60_000, reason: "manager", at: now, note: reason }; this.locks.set(pk, lk); await this.ctx.storage.put("lock:" + pk, lk); drop();
+        }
+        else if (a === "untimeout") { this.locks.delete(pk); await this.ctx.storage.delete("lock:" + pk); }
+        else if (a === "ban") { pr.banned = { at: now, reason }; drop(); }
+        else if (a === "unban") delete pr.banned;
+        else return json({ error: "bad_action" }, 400);
+        pr.saved = now; await this.ctx.storage.put("prof:" + pk, pr);
+        return json({ success: true, player: summary(pk) });
+      }
     }
 
     if (p === "/api/manager/creds") {
