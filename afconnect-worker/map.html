@@ -130,7 +130,7 @@ function render(){
   }
   map.getSource('ownsrc').setData({type:'FeatureCollection',features:ow});
   map.getSource('trails').setData({type:'FeatureCollection',features:tr});
-  if(map.getSource('crashes'))map.getSource('crashes').setData({type:'FeatureCollection',features:lastCrashes.map(function(c){return pt(c.longitude,c.latitude,{label:'CRASH '+(c.callsign||'')})})});
+  if(map.getSource('crashes'))map.getSource('crashes').setData({type:'FeatureCollection',features:lastCrashes.map(function(c){return pt(c.longitude,c.latitude,{label:(c.reason==='midair'?'MIDAIR ':'CRASH ')+(c.callsign||'')})})});
 }
 function pushTrail(id,lon,lat){
   var now=Date.now(),t=trails[id]||(trails[id]=[]),ts=ttimes[id]||(ttimes[id]=[]),n=t.length,l=t[n-1];

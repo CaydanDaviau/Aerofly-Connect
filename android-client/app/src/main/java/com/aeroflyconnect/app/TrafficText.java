@@ -54,5 +54,17 @@ final class TrafficText {
         return sb.toString();
     }
 
+    /** Resolution advisory: spoken "Climb, climb." / "Descend, descend." */
+    static String raSpeech(boolean pt, boolean climb) {
+        return pt ? (climb ? "Suba, suba." : "Desça, desça.") : (climb ? "Climb, climb." : "Descend, descend.");
+    }
+
+    /** Overlay / notification text of a resolution advisory. */
+    static String raShown(boolean pt, boolean climb) {
+        return pt ? (climb ? "RA  SUBA - suba agora" : "RA  DESÇA - desça agora") : (climb ? "RA  CLIMB - climb now" : "RA  DESCEND - descend now");
+    }
+
+    static String clearText(boolean pt) { return pt ? "Livre de conflito." : "Clear of conflict."; }
+
     private static String cap(String s) { return s.isEmpty() ? s : Character.toUpperCase(s.charAt(0)) + s.substring(1); }
 }

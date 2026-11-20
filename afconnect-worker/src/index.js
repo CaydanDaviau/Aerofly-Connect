@@ -43,6 +43,7 @@ function pilotGrade(p) { const f = p ? p.flight_s || 0 : 0, n = p ? p.flights ||
 const CRASH_SHOW_MS = 10 * 60_000;     // the X stays on the maps this long
 const HARD_LANDING_FPM = -1500;        // landing_fpm at or below this = crash
 const TA_COOLDOWN_MS = 30_000;         // per viewer + other aircraft
+const RA_REPEAT_MS = 8_000;           // an RA is repeated this often while it lasts
 const TA_MIN_GS = 60;                  // both aircraft must be airborne-fast
 
 // The Android app refuses callsigns starting with "ATC_". Controllers can use
@@ -97,7 +98,8 @@ function haversineMi(lat1, lon1, lat2, lon2) {
 }
 
 
-// ---- Traffic advisory (TA only): is aircraft b a threat to aircraft a? Null or {clock, rel_alt_ft, vs_trend, range_nm, tau_s} ----
+// ---- TA/RA: is aircraft b a threat to aircraft a? Null or {level:"ta"|"ra", dz_cpa, clock, rel_alt_ft, vs_trend, range_nm, tau_s} ----
+// RA (resolution advisory) = the same conflict but tighter: closest approach within 25 s, < 0.5 nm, < 600 ft (relaxed 12 s, 0.25 nm, 400 ft).
 // Normal: closest approach within 40 s, < 1.0 nm, < 1000 ft vertical. Relaxed (either plane near its airport): 20 s, 0.4 nm, 600 ft.
 // Formation flying (relative speed < 20 kt) and diverging traffic never alert.
 function computeTA(a, b) {
@@ -116,12 +118,14 @@ function computeTA(a, b) {
   if (dot >= 0) return null;
   const t = -dot / v2;
   if (t > (relaxed ? 20 : 40)) return null;
-  if (Math.hypot(x + rvx * t, y + rvy * t) > (relaxed ? 0.4 : 1.0)) return null;
-  const dz = B.z - A.z, dzAt = Math.abs(dz + (B.v - A.v) / 60 * t);
+  const miss = Math.hypot(x + rvx * t, y + rvy * t);
+  if (miss > (relaxed ? 0.4 : 1.0)) return null;
+  const dz = B.z - A.z, dzCpa = dz + (B.v - A.v) / 60 * t, dzAt = Math.abs(dzCpa);
   if (dzAt > (relaxed ? 600 : 1000) || Math.abs(dz) > (relaxed ? 1000 : 1500)) return null;
   const rel = ((Math.atan2(x, y) / rad - A.h) % 360 + 360) % 360;
   let clock = Math.round(rel / 30); if (clock === 0) clock = 12;
-  return { clock, rel_alt_ft: Math.round(dz / 100) * 100, vs_trend: B.v > 300 ? 1 : B.v < -300 ? -1 : 0, range_nm: Math.round(Math.hypot(x, y) * 10) / 10, tau_s: Math.round(t) };
+  const ra = t <= (relaxed ? 12 : 25) && miss <= (relaxed ? 0.25 : 0.5) && dzAt <= (relaxed ? 400 : 600);
+  return { level: ra ? "ra" : "ta", dz_cpa: dzCpa, clock, rel_alt_ft: Math.round(dz / 100) * 100, vs_trend: B.v > 300 ? 1 : B.v < -300 ? -1 : 0, range_nm: Math.round(Math.hypot(x, y) * 10) / 10, tau_s: Math.round(t) };
 }
 
 // ---- Auto-ATC (basic clearances for pilots when no human controller covers the airport) ----
@@ -282,7 +286,7 @@ const AIRSPACE_NM = { DEL: 5, GND: 5, TWR: 15, APP: 50 };
 const TOK_TTL_MS = 90 * 86_400_000;
 export class Hub {
   constructor(ctx) {
-    this.towers = new Map(); this.creds = new Map(); this.credOn = false; this.wx = new Map(); this.crashes = new Map(); this.ta = new Map();
+    this.towers = new Map(); this.creds = new Map(); this.credOn = false; this.wx = new Map(); this.crashes = new Map(); this.ta = new Map(); this.ra = new Map(); this.sepV = new Map();
     this.voiceStreams = new Map(); this.latestVoiceByPeer = new Map();
     this.prof = new Map(); this.accts = new Map(); this.toks = new Map(); this.loginFail = new Map(); this.regLog = new Map(); this.locks = new Map(); this.holderKey = new Map(); this.gwLast = new Map(); this.lastClaim = new Map(); this.clients = new Map(); this.msgs = new Map(); this.rwy = new Map(); this.rwyQ = new Map(); this.gfx = new Map(); this.tres = new Map(); this.stands = new Map(); this.violations = []; this.clips = new Map(); this.listeners = new Map(); this.msgSeq = 0; this.since = Date.now(); this.counts = {};
     ctx.blockConcurrencyWhile(async () => {
@@ -309,6 +313,8 @@ export class Hub {
     for (const [k, v] of this.voiceStreams) if (now - v.at > 90_000) this.voiceStreams.delete(k);
     for (const [k, q] of this.rwyQ) { const f = q.filter(x => this.clients.has(x)); if (f.length) this.rwyQ.set(k, f); else this.rwyQ.delete(k); }
     for (const [k, t] of this.ta) if (now - t > 120_000) this.ta.delete(k);
+    for (const [k, r] of this.ra) if (now - r.last > 60_000) this.ra.delete(k);
+    for (const [k, v] of this.sepV) if (now - v.last > 600_000) this.sepV.delete(k);
     for (const [k, l] of this.locks) if (now > l.until + 60_000) { this.locks.delete(k); this.ctx.storage.delete("lock:" + k); }
     for (const [k, cr] of this.crashes) if (now - cr.at > CRASH_SHOW_MS) { this.crashes.delete(k); this.ctx.storage.delete("crash:" + k); }
     for (const [k, t] of this.towers) if (now - t.at > (t.holder ? POS_TTL_MS : TOWER_TTL_MS)) { this.towers.delete(k); this.ctx.storage.delete("tower:" + k); }
@@ -432,7 +438,7 @@ export class Hub {
   // Profile: nickname + flight time (airborne) + ATC time (holding a role), per app key. Saved at most once a minute.
   pkey(key) { const t = this.toks.get(key); return t ? "a:" + t.acct : key; }
   profPeek(key) { return this.prof.get(this.pkey(key)); }
-  profGet(key) { key = this.pkey(key); let p = this.prof.get(key); if (!p) { p = { nick: "", flight_s: 0, atc_s: 0, flights: 0, saved: 0 }; this.prof.set(key, p); } if (!p.flights) p.flights = 0; for (const f of ["landings", "violations", "vpts", "timeouts", "gw", "ops", "app_s"]) if (!p[f]) p[f] = 0; return p; }
+  profGet(key) { key = this.pkey(key); let p = this.prof.get(key); if (!p) { p = { nick: "", flight_s: 0, atc_s: 0, flights: 0, saved: 0 }; this.prof.set(key, p); } if (!p.flights) p.flights = 0; for (const f of ["landings", "violations", "vpts", "timeouts", "gw", "ops", "app_s", "cviol"]) if (!p[f]) p[f] = 0; return p; }
   profAdd(key, field, secs, now) {
     if (!key || !(secs > 0)) return;
     const p = this.profGet(key); p[field] += secs;
@@ -450,7 +456,7 @@ export class Hub {
     acct.linked.push(oldKey); if (acct.linked.length > 20) acct.linked.shift();
     const o = this.prof.get(oldKey); if (!o) return;
     const pk = "a:" + acct.id; let pr = this.prof.get(pk); if (!pr) { pr = { nick: "", flight_s: 0, atc_s: 0, flights: 0, saved: 0 }; this.prof.set(pk, pr); }
-    pr.flight_s += o.flight_s || 0; pr.atc_s += o.atc_s || 0; pr.flights += o.flights || 0; for (const f of ["landings", "violations", "vpts", "timeouts", "gw", "ops", "app_s"]) pr[f] = (pr[f] || 0) + (o[f] || 0); if (!pr.nick) pr.nick = o.nick || "";
+    pr.flight_s += o.flight_s || 0; pr.atc_s += o.atc_s || 0; pr.flights += o.flights || 0; for (const f of ["landings", "violations", "vpts", "timeouts", "gw", "ops", "app_s", "cviol"]) pr[f] = (pr[f] || 0) + (o[f] || 0); if (!pr.nick) pr.nick = o.nick || "";
     pr.saved = Date.now(); this.ctx.storage.put("prof:" + pk, pr);
   }
   // "Ground work actions": taxi clearances / taxi routes by a human controller, once per aircraft per 10 min
@@ -609,7 +615,7 @@ export class Hub {
     const now = Date.now(), lk = this.locks.get(this.pkey(key));
     if (lk && now < lk.until) {
       const cr0 = this.crashes.get(key);
-      return json({ error: lk.reason === "crash" ? "crashed" : "timeout", crashed: true, reason: lk.reason, until: lk.until, remaining_s: Math.ceil((lk.until - now) / 1000), latitude: cr0 ? cr0.latitude : lk.latitude, longitude: cr0 ? cr0.longitude : lk.longitude, landing_fpm: cr0 ? cr0.landing_fpm : lk.landing_fpm }, 423);
+      return json({ error: lk.reason === "crash" || lk.reason === "midair" ? "crashed" : "timeout", crashed: true, reason: lk.reason, until: lk.until, remaining_s: Math.ceil((lk.until - now) / 1000), latitude: cr0 ? cr0.latitude : lk.latitude, longitude: cr0 ? cr0.longitude : lk.longitude, landing_fpm: cr0 ? cr0.landing_fpm : lk.landing_fpm }, 423);
     }
     const cr = this.crashes.get(key);
     if (!cr || now >= cr.until) return null;
@@ -836,21 +842,111 @@ export class Hub {
   }
 
   crashList(vm) {
-    return [...this.crashes.values()].filter(x => !!x.member === !!vm).map(x => ({ callsign: x.callsign, icao_address: x.icao, latitude: x.latitude, longitude: x.longitude, landing_fpm: x.landing_fpm, at: x.at, until: x.until }));
+    return [...this.crashes.values()].filter(x => !!x.member === !!vm).map(x => ({ callsign: x.callsign, icao_address: x.icao, latitude: x.latitude, longitude: x.longitude, landing_fpm: x.landing_fpm, reason: x.reason || "hard_landing", at: x.at, until: x.until }));
   }
 
   trafficAlerts(key, c) {
-    const now = Date.now(), out = [];
+    const now = Date.now(), out = [], hit = new Set();
     for (const [k2, o] of this.clients) {
       if (k2 === key || !o.pos || now - o.seen > 15_000 || !!o.member !== !!c.member) continue;
       const al = computeTA(c.pos, o.pos);
       if (!al) continue;
-      const pk = key + "|" + k2;
+      const pk = key + "|" + k2, pair = key < k2 ? pk : k2 + "|" + key, who = { callsign: normCallsign(o.plan.callsign ?? o.pos.callsign), icao_address: o.pos.icao_address };
+      const { dz_cpa, ...f } = al;
+      if (al.level === "ra") {   // both aircraft get opposite senses: decided once per pair, kept while the RA lasts
+        let r = this.ra.get(pair);
+        if (!r || now - r.last > 20_000) { r = { last: now, lowClimbs: key < k2 ? dz_cpa <= 0 : dz_cpa >= 0, sent: {} }; this.ra.set(pair, r); }
+        r.last = now; hit.add(pair);
+        if (now - (r.sent[key] || 0) < RA_REPEAT_MS) continue;
+        r.sent[key] = now;
+        out.push({ ...f, sense: (key < k2) === r.lowClimbs ? "climb" : "descend", ...who });
+        continue;
+      }
+      const r = this.ra.get(pair);
+      if (r && now - r.last < 20_000) continue;   // RA just ended: "clear of conflict" instead of a new TA
       if (now - (this.ta.get(pk) || 0) < TA_COOLDOWN_MS) continue;
       this.ta.set(pk, now);
-      out.push({ ...al, callsign: normCallsign(o.plan.callsign ?? o.pos.callsign), icao_address: o.pos.icao_address });
+      out.push({ ...f, ...who });
     }
-    return out.sort((x, y) => x.tau_s - y.tau_s).slice(0, 2);
+    return out.sort((x, y) => (x.level === "ra" ? 0 : 1) - (y.level === "ra" ? 0 : 1) || x.tau_s - y.tau_s).slice(0, 2);
+  }
+  // RA no longer needed for this aircraft: [{callsign, icao_address}] (once per RA)
+  raClear(key, c) {
+    const now = Date.now(), out = [];
+    for (const [pair, r] of this.ra) {
+      if (!r.sent[key] || now - r.last < 3_000) continue;   // still (recently) in conflict
+      const [a, b] = pair.split("|"), k2 = a === key ? b : a;
+      if (a !== key && b !== key) continue;
+      const hitNow = this.clients.get(k2) && c.pos && computeTA(c.pos, this.clients.get(k2).pos);
+      if (hitNow && hitNow.level === "ra") continue;
+      delete r.sent[key];
+      const o = this.clients.get(k2);
+      out.push({ callsign: o ? normCallsign(o.plan.callsign ?? (o.pos && o.pos.callsign)) : "", icao_address: o && o.pos ? o.pos.icao_address : "" });
+    }
+    return out;
+  }
+
+  // Mid-air collision: two airborne aircraft of the same section touch (< 0.03 nm = 180 ft, < 100 ft vertical, swept between uploads).
+  // Formation flying (relative speed < 20 kt) is exempt. Both crash: removed from traffic, X on the radar, timeout (strike rules) for both.
+  midair(key, c, now) {
+    const air = q => q && q.phase !== "ground" && q.phase !== "runway";
+    if (!air(c.pos)) return false;
+    const A = { la: Number(c.pos.latitude), lo: Number(c.pos.longitude), h: Number(c.pos.heading_true), g: Number(c.pos.ground_speed), z: Number(c.pos.altitude_ft), v: Number(c.pos.vertical_speed_ft_min) || 0 };
+    if (![A.la, A.lo, A.h, A.g, A.z].every(Number.isFinite) || A.g < 40) return false;
+    for (const [k2, o] of this.clients) {
+      if (k2 === key || !air(o.pos) || now - o.seen > 5_000 || !!o.member !== !!c.member) continue;
+      const B = { la: Number(o.pos.latitude), lo: Number(o.pos.longitude), h: Number(o.pos.heading_true), g: Number(o.pos.ground_speed), z: Number(o.pos.altitude_ft), v: Number(o.pos.vertical_speed_ft_min) || 0 };
+      if (![B.la, B.lo, B.h, B.g, B.z].every(Number.isFinite) || B.g < 40) continue;
+      const rad = Math.PI / 180, x = (B.lo - A.lo) * 60 * Math.cos((A.la + B.la) / 2 * rad), y = (B.la - A.la) * 60;
+      if (Math.abs(x) > 1 || Math.abs(y) > 1 || Math.abs(B.z - A.z) > 500) continue;
+      const rvx = (B.g * Math.sin(B.h * rad) - A.g * Math.sin(A.h * rad)) / 3600, rvy = (B.g * Math.cos(B.h * rad) - A.g * Math.cos(A.h * rad)) / 3600, v2 = rvx * rvx + rvy * rvy;
+      if (Math.sqrt(v2) * 3600 < 20) continue;
+      const t = Math.max(-3, Math.min(1.5, -(x * rvx + y * rvy) / v2));
+      if (Math.hypot(x + rvx * t, y + rvy * t) > 0.03 || Math.abs(B.z - A.z + (B.v - A.v) / 60 * t) > 100) continue;
+      for (const [k, q] of [[key, c], [k2, o]]) {
+        const lat = Number(q.pos.latitude), lon = Number(q.pos.longitude);
+        const lk = this.lockFor(k, "midair", now, { latitude: lat, longitude: lon });
+        const cr = { key: k, icao: q.pos.icao_address, callsign: normCallsign(q.plan.callsign ?? q.pos.callsign), latitude: lat, longitude: lon, member: !!q.member, landing_fpm: 0, reason: "midair", at: now, until: lk.until };
+        this.crashes.set(k, cr); this.ctx.storage.put("crash:" + k, cr);
+        this.clients.delete(k);
+      }
+      return true;
+    }
+    return false;
+  }
+
+  // Controllers handling an aircraft: its accepted handler, else the live roles whose airspace holds it (airborne: TWR/APP, ground: DEL/GND/TWR), else CTR. -> Set of holder ids
+  handlersOf(c, now) {
+    const h = this.handlerOf(c);
+    if (h) return new Set([h.holder]);
+    const air = c.pos.phase !== "ground" && c.pos.phase !== "runway", ok = air ? ["TWR", "APP", "CTR"] : ["DEL", "GND", "TWR"];
+    const roles = [...this.towers.values()].filter(t => t.holder && ok.includes(t.pos) && now - t.at <= POS_TTL_MS && !!t.member === !!c.member);
+    const la = Number(c.pos.latitude), lo = Number(c.pos.longitude);
+    const cover = roles.filter(r => { if (r.pos === "CTR") return false; const a = this.towers.get(r.apt) || r; return haversineMi(Number(a.latitude), Number(a.longitude), la, lo) / 1.15078 <= (AIRSPACE_NM[r.pos] || 50); });
+    return new Set((cover.length ? cover : roles.filter(r => r.pos === "CTR")).map(r => r.holder));
+  }
+  // Loss of separation (the red blinking circle on the radar: < 3 nm and < 1000 ft; < 1 nm / 500 ft near an airport): 1 ATC violation on the account of
+  // every controller handling either aircraft (once per controller per pair episode; a new episode after 5 min apart).
+  separation(key, c, now) {
+    const ok = q => q && q.phase !== "ground" && q.phase !== "runway" && Number(q.ground_speed) >= 60 && Number.isFinite(Number(q.altitude_ft)) && Number.isFinite(Number(q.heading_true));
+    if (!ok(c.pos)) return;
+    const A = c.pos, rad = Math.PI / 180;
+    for (const [k2, o] of this.clients) {
+      if (k2 === key || !ok(o.pos) || now - o.seen > 15_000 || !!o.member !== !!c.member) continue;
+      const B = o.pos, x = (B.longitude - A.longitude) * 60 * Math.cos((A.latitude + B.latitude) / 2 * rad), y = (B.latitude - A.latitude) * 60;
+      const rvx = B.ground_speed * Math.sin(B.heading_true * rad) - A.ground_speed * Math.sin(A.heading_true * rad), rvy = B.ground_speed * Math.cos(B.heading_true * rad) - A.ground_speed * Math.cos(A.heading_true * rad);
+      if (Math.hypot(rvx, rvy) < 20) continue;
+      const t = A.terminal === true || B.terminal === true;
+      if (Math.hypot(x, y) >= (t ? 1 : 3) || Math.abs(A.altitude_ft - B.altitude_ft) >= (t ? 500 : 1000)) continue;
+      const pair = key < k2 ? key + "|" + k2 : k2 + "|" + key, e = this.sepV.get(pair);
+      if (e && now - e.last <= 300_000) { e.last = now; continue; }
+      this.sepV.set(pair, { last: now });
+      const hs = new Set([...this.handlersOf(c, now), ...this.handlersOf(o, now)]);
+      for (const hd of hs) {
+        const ck = this.holderKey.get(hd); if (!ck) continue;
+        const pf = this.profGet(ck); pf.cviol += 1; pf.saved = now; this.ctx.storage.put("prof:" + this.pkey(ck), pf);
+      }
+    }
   }
 
   // ---- WebSocket (Hibernation API). Message in: {id, method, path, body} -> same handlers as HTTP, reply {id, status, body}.
@@ -1435,7 +1531,7 @@ export class Hub {
         pr.nick = String(d.nick ?? "").replace(/[\u0000-\u001f<>]/g, "").trim().slice(0, 20); pr.saved = Date.now();
         this.ctx.storage.put("prof:" + this.pkey(key), pr);
       }
-      if (m === "GET" || m === "PUT" || m === "POST") return json({ nick: pr.nick, flight_s: Math.round(pr.flight_s), atc_s: Math.round(pr.atc_s), flights: pr.flights || 0, landings: pr.landings || 0, violations: pr.violations || 0, penalty_points: pr.vpts || 0, timeouts: pr.timeouts || 0, gw_actions: pr.gw || 0, own_ops: pr.ops || 0, app_s: Math.round(pr.app_s || 0), all_roles: request.headers.get("X-Member") === "1", ...this.gradeInfo(pr) });
+      if (m === "GET" || m === "PUT" || m === "POST") return json({ nick: pr.nick, flight_s: Math.round(pr.flight_s), atc_s: Math.round(pr.atc_s), flights: pr.flights || 0, landings: pr.landings || 0, violations: pr.violations || 0, penalty_points: pr.vpts || 0, timeouts: pr.timeouts || 0, atc_violations: pr.cviol || 0, gw_actions: pr.gw || 0, own_ops: pr.ops || 0, app_s: Math.round(pr.app_s || 0), all_roles: request.headers.get("X-Member") === "1", ...this.gradeInfo(pr) });
     }
     if (m === "DELETE" && p === "/api/atc/tower") {
       if (this.noCred(request)) return json({ error: "atc_credential" }, 403);
@@ -1650,10 +1746,13 @@ export class Hub {
         return this.crashBlock(key);
       }
       this.clients.set(key, c);
+      if (this.midair(key, c, Date.now())) return this.crashBlock(key);
+      this.separation(key, c, Date.now());
       const messages = [];
       for (const x of this.msgs.values()) if (x.icao === icao && x.status === "sent") { x.status = "delivered"; messages.push({ id: x.id, text: x.text, kind: x.kind, urgent: !!x.urgent, at: x.at }); }
       messages.push(...this.track(key, c, Date.now()));
       const reply = { success: true, messages, traffic_alerts: this.trafficAlerts(key, c) };
+      { const cl = this.raClear(key, c); if (cl.length) reply.traffic_clear = cl; }
       const sApt = up(c.pos.phase === "air" ? c.plan.arrival_airport : c.plan.departure_airport);
       const stations = sApt ? [...this.towers.values()].filter(t => t.freq && !!t.member === !!c.member && (t.apt || t.name) === sApt).map(t => ({ pos: t.pos || "TWR", freq: t.freq, airport: sApt })) : [];
       if (stations.length) reply.stations = stations;

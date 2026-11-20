@@ -244,6 +244,7 @@ public class PilotService extends Service {
                             showVoice(r.body);
                             showStations(r.body);
                             showTraffic(r.body);
+                            showClear(r.body);
                             if (mapShown && r.body.contains("\"aircraft\"")) { trafficJson = r.body; trafficAt = System.currentTimeMillis(); }
                         }
                         else { failCount++; serverState = "HTTP " + code; }
@@ -419,16 +420,16 @@ public class PilotService extends Service {
 
     /** Hard landing: remember the timeout, tell the pilot, and end the flight (the loop stops right after). */
     private void onCrashed(String body) {
-        long rem = 300; int fpm = 0;
+        long rem = 300; int fpm = 0; boolean midair = false;
         try {
             JSONObject j = new JSONObject(body);
-            rem = j.optLong("remaining_s", 300); fpm = j.optInt("landing_fpm", 0);
+            rem = j.optLong("remaining_s", 300); fpm = j.optInt("landing_fpm", 0); midair = "midair".equals(j.optString("reason"));
         } catch (Exception ignored) { }
         Api.setCrashUntil(this, System.currentTimeMillis() + rem * 1000);
         stopFlag = true;
         try {
             NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-            String text = (fpm != 0 ? Api.t(this, "Hard landing", "Pouso forte") + " (" + fpm + " ft/min)" : Api.t(this, "Timeout", "Castigo")) + ". "
+            String text = (midair ? Api.t(this, "Mid-air collision", "Colisão no ar") : fpm != 0 ? Api.t(this, "Hard landing", "Pouso forte") + " (" + fpm + " ft/min)" : Api.t(this, "Timeout", "Castigo")) + ". "
                     + Api.t(this, "You can fly again in ", "Você poderá voar de novo em ") + Api.mmss(rem * 1000);
             nm.notify(900, new Notification.Builder(this, "atc_urgent")
                     .setContentTitle(Api.t(this, "CRASH", "ACIDENTE"))
@@ -444,20 +445,32 @@ public class PilotService extends Service {
         try {
             JSONArray arr = new JSONObject(body).optJSONArray("traffic_alerts");
             if (arr == null || arr.length() == 0) return;
-            JSONObject a = arr.getJSONObject(0);   // most urgent first
+            JSONObject a = arr.getJSONObject(0);   // most urgent first (an RA comes before a TA)
             int clock = a.optInt("clock", 12), dz = a.optInt("rel_alt_ft", 0), tr = a.optInt("vs_trend", 0);
-            String shown = TrafficText.shown(Api.uiLang(this).equals("pt"), clock, dz, tr);
+            boolean isRa = "ra".equals(a.optString("level")), climb = "climb".equals(a.optString("sense"));
+            String shown = isRa ? TrafficText.raShown(Api.uiLang(this).equals("pt"), climb) : TrafficText.shown(Api.uiLang(this).equals("pt"), clock, dz, tr);
             Overlay.alert(shown);
             boolean speakOn = Api.speakOn(this);
             if (!Overlay.active || !speakOn) {   // no overlay or no voice: a heads-up notification makes sure it is seen
                 NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
                 nm.notify(901, new Notification.Builder(this, "atc_urgent")
-                        .setContentTitle(Api.t(this, "Traffic advisory", "Alerta de tráfego"))
+                        .setContentTitle(isRa ? Api.t(this, "Resolution advisory", "Alerta de resolução") : Api.t(this, "Traffic advisory", "Alerta de tráfego"))
                         .setContentText(shown)
                         .setSmallIcon(android.R.drawable.ic_dialog_alert)
                         .setTimeoutAfter(10000).build());
             }
-            if (speakOn) speak(TrafficText.speech(Api.voiceLang(this).equals("pt"), clock, dz, tr), new Runnable() { @Override public void run() { } });
+            if (speakOn) speak(isRa ? TrafficText.raSpeech(Api.voiceLang(this).equals("pt"), climb) : TrafficText.speech(Api.voiceLang(this).equals("pt"), clock, dz, tr), new Runnable() { @Override public void run() { } });
+        } catch (Exception ignored) {
+        }
+    }
+
+    /** "Clear of conflict" after an RA (position response field traffic_clear). */
+    private void showClear(String body) {
+        try {
+            JSONArray arr = new JSONObject(body).optJSONArray("traffic_clear");
+            if (arr == null || arr.length() == 0) return;
+            Overlay.alert(TrafficText.clearText(Api.uiLang(this).equals("pt")));
+            if (Api.speakOn(this)) speak(TrafficText.clearText(Api.voiceLang(this).equals("pt")), new Runnable() { @Override public void run() { } });
         } catch (Exception ignored) {
         }
     }

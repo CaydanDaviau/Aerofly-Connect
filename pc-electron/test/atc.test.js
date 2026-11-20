@@ -1,5 +1,5 @@
 const assert = require("assert");
-const { AtcPanel, normFreq, stepFreq, trafficText, atisText } = require("../core/atc");
+const { AtcPanel, normFreq, stepFreq, trafficText, raText, atisText } = require("../core/atc");
 let pass = 0; const T = async (n, f) => { try { await f(); pass++; console.log("PASS", n); } catch (e) { console.log("FAIL", n, e.message); process.exitCode = 1; } };
 
 function mk(reply) {
@@ -22,6 +22,7 @@ const ok = body => ({ code: 200, body: JSON.stringify(body || {}) });
     assert.strictEqual(a.ingest({ messages: [{ id: "m1", text: "dup" }] }).length, 0);
     const v = a.view(["taxi"], "TWR=118.3;GND=121.9"); assert.strictEqual(v.more, 1); assert.ok(/TRAFFIC/.test(v.alert)); assert.deepStrictEqual(v.quick.map(q => q.pos), ["TWR", "GND"]);
   });
+  await T("RA + clear of conflict", () => { const { a } = mk(() => ok()); a.ingest({ traffic_alerts: [{ level: "ra", sense: "climb" }] }); assert.ok(/CLIMB/.test(a.view().alert)); assert.strictEqual(raText(true, false), "RA  DESÇA - desça agora"); a.ingest({ traffic_clear: [{ callsign: "X" }] }); assert.ok(/Clear of conflict/.test(a.view().alert)); });
   await T("queue timeout 60 s, alert 10 s", () => { const { a, adv } = mk(() => ok()); a.ingest({ messages: [{ id: "m1", text: "x" }], traffic_alerts: [{ clock: 1 }] }); adv(11000); assert.strictEqual(a.view().alert, ""); assert.ok(a.pending()); adv(50000); assert.strictEqual(a.view().pending, null); });
   await T("reply wilco removes message", async () => {
     const { a, calls } = mk(() => ok({ success: true })); a.ingest({ messages: [{ id: "m1", text: "x" }] });

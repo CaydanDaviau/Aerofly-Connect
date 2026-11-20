@@ -239,6 +239,61 @@ await call("DELETE", "/api/atc/tower?name=SBBR_TWR", null, "ctl");
   console.log("health pilots:", typeof h.pilots === "number" && h.pilots > 0 ? "PASS " + JSON.stringify(h) : "FAIL");
 }
 
+// ---- RA, mid-air collision, controller separation violations ----
+{
+  const T = (name, v) => console.log(name + ":", v ? "PASS" : "FAIL");
+  const up = (k, o) => call("PUT", "/api/position", o, k).then(r => ({ code: Number(r.slice(0, 3)), j: (() => { try { return JSON.parse(r.slice(4)); } catch (e) { return {}; } })() }));
+  const P = (lat, lon, hdg, gs, alt, vs = 0, extra = {}) => ({ latitude: lat, longitude: lon, heading_true: hdg, ground_speed: gs, altitude_ft: alt, vertical_speed_ft_min: vs, ...extra });
+  // RA: head-on 2 nm apart (tau 14 s), 200 ft apart vertically -> RA, opposite senses (higher one climbs)
+  await up("ra2", P(30, 20.0333, 270, 250, 10000));
+  let r = await up("ra1", P(30, 20, 90, 250, 10200));
+  const a1 = r.j.traffic_alerts && r.j.traffic_alerts[0];
+  r = await up("ra2", P(30, 20.0333, 270, 250, 10000));
+  const a2 = r.j.traffic_alerts && r.j.traffic_alerts[0];
+  T("RA level + opposite senses", a1 && a1.level === "ra" && a1.sense === "climb" && a2 && a2.level === "ra" && a2.sense === "descend");
+  r = await up("ra1", P(30, 20, 90, 250, 10200));
+  T("RA not repeated within 8 s", !(r.j.traffic_alerts || []).length);
+  // pilots comply: separated by 1500 ft -> clear of conflict
+  hub.ra.forEach(x => { x.last -= 5000; });
+  r = await up("ra1", P(30, 20, 90, 250, 11500, 1500));
+  T("RA clear of conflict", Array.isArray(r.j.traffic_clear) && r.j.traffic_clear.length === 1);
+  // TA only (5 nm, 0 ft): level ta, no sense
+  await up("ra4", P(31, 20.0833, 270, 250, 10000));
+  r = await up("ra3", P(31, 20, 90, 250, 10000));
+  T("TA level only", r.j.traffic_alerts && r.j.traffic_alerts[0].level === "ta" && r.j.traffic_alerts[0].sense === undefined);
+
+  // mid-air collision: head-on, 0.1 nm apart, same altitude -> both crash, 423, X listed with reason, timeout on both
+  await call("PUT", "/api/flightplan", { callsign: "MID1" }, "mc1"); await call("PUT", "/api/flightplan", { callsign: "MID2" }, "mc2");
+  await up("mc2", P(32, 20.0014, 270, 250, 9000));
+  r = await up("mc1", P(32, 20, 90, 250, 9000));
+  T("midair: viewer gets 423", r.code === 423 && r.j.crashed === true);
+  r = await up("mc2", P(32, 20.0014, 270, 250, 9000));
+  T("midair: other plane crashed too", r.code === 423);
+  const tr = JSON.parse((await call("GET", "/api/traffic?lat=32&lon=20&radius_miles=50")).slice(4));
+  T("midair: X with reason, planes gone", tr.crashes.filter(x => x.reason === "midair").length === 2 && !tr.aircraft.some(a => /^MID/.test(a.callsign)));
+  // near miss (500 ft vertical) and formation: no crash
+  await up("mc4", P(33, 20.0014, 270, 250, 9500));
+  r = await up("mc3", P(33, 20, 90, 250, 9000));
+  T("midair: 500 ft apart is not a collision", r.code === 200);
+  await up("mc6", P(34, 20.0003, 90, 250, 9000));
+  r = await up("mc5", P(34, 20, 90, 250, 9000));
+  T("midair: formation is exempt", r.code === 200);
+
+  // controller violation: TWR holder covering both aircraft gets 1 (not 2, not again in the same episode); outside the circle gets none
+  await call("PUT", "/api/atc/tower", { name: "SBXX_TWR", holder: "sv-h", owner: "sv-h", latitude: 40, longitude: 20 }, "svc");
+  await call("PUT", "/api/atc/tower", { name: "SBXX_APP", holder: "sv-h", latitude: 40, longitude: 20 }, "svc");
+  await call("PUT", "/api/atc/tower", { name: "SBYY_TWR", holder: "sv-far", owner: "sv-far", latitude: 45, longitude: 30 }, "svf");
+  const viol = async k => JSON.parse((await call("GET", "/api/profile", null, k)).slice(4)).atc_violations;
+  await up("sv2", P(40.01, 20.02, 270, 250, 6000));
+  await up("sv1", P(40.01, 20, 90, 250, 6600));    // 1.5 nm, 600 ft: loss of separation
+  T("controller violation counted once", (await viol("svc")) === 1 && (await viol("svf")) === 0);
+  await up("sv1", P(40.01, 20, 90, 250, 6600)); await up("sv2", P(40.01, 20.02, 270, 250, 6000));
+  T("same episode not counted again", (await viol("svc")) === 1);
+  await up("sv4", P(40.1, 20.1, 270, 250, 6000));
+  await up("sv3", P(40.1, 20.0, 90, 250, 8000));   // 2000 ft apart: fine
+  T("no violation when separated", (await viol("svc")) === 1);
+}
+
 // traffic in the position reply (opt-in)
 {
   await call("PUT", "/api/position", { latitude: 10, longitude: 10, altitude_ft: 3000 }, "tp2");

@@ -62,6 +62,7 @@
       pg.textContent = p.pilot_grade || "--"; ag.textContent = p.all_roles ? t("All roles (Network)", "Todas as funções (Network)") : (p.atc_grade_name || "--");
       const nm = { atc_s: t("ATC time", "Tempo de ATC"), gw: t("ground work actions", "ações de solo"), ops: t("takeoffs/landings at your airport", "decolagens/pousos no seu aeroporto"), app_s: t("APP time", "Tempo de APP") };
       nx.textContent = p.next_grade && !p.all_roles ? t("Next grade: ", "Próximo nível: ") + p.next_grade + " - " + (p.next_req || []).map(q => nm[q.k] + " " + (/_s$/.test(q.k) ? (Math.floor(q.have / 360) / 10) + "/" + (q.need / 3600) + " h" : q.have + "/" + q.need)).join(", ") : "";
+      if (p.atc_violations) nx.textContent += (nx.textContent ? "  ·  " : "") + t("ATC violations: ", "Violações de ATC: ") + p.atc_violations;
     });
     const save = h("button", { class: "wide primary", onclick: async () => {
       const p = await window.afc.profile(nick.value.trim());

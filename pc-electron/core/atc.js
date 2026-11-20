@@ -33,6 +33,9 @@ function trafficText(pt, clock, dz, trend) {
   return s;
 }
 
+// RA wording (port of TrafficText.raShown)
+function raText(pt, climb) { return pt ? (climb ? "RA  SUBA - suba agora" : "RA  DESÇA - desça agora") : (climb ? "RA  CLIMB - climb now" : "RA  DESCEND - descend now"); }
+
 // ---- ATIS text (port of Atis.java, without the best-runway hint) ----
 function zulu(ms) { const d = new Date(ms > 0 ? ms : Date.now()); return String(d.getUTCHours()).padStart(2, "0") + ":" + String(d.getUTCMinutes()).padStart(2, "0") + "Z"; }
 function wxText(w, pt) {
@@ -81,9 +84,10 @@ class AtcPanel {
       if (m.contact) this.contact = String(m.contact);
     }
     if (Array.isArray(j.stations)) this.stations = j.stations.filter(s => s && s.pos).map(s => ({ pos: String(s.pos), freq: String(s.freq || "") }));
-    const ta = (j.traffic_alerts || [])[0];
-    if (ta) this.alert = { text: trafficText(this.lang() === "pt", ta.clock || 12, ta.rel_alt_ft || 0, ta.vs_trend || 0), until: now + ALERT_MS };
-    if (fresh.length || ta) this.onChange();
+    const ta = (j.traffic_alerts || [])[0], clr = (j.traffic_clear || [])[0];
+    if (ta) this.alert = { text: ta.level === "ra" ? raText(this.lang() === "pt", ta.sense === "climb") : trafficText(this.lang() === "pt", ta.clock || 12, ta.rel_alt_ft || 0, ta.vs_trend || 0), until: now + ALERT_MS };
+    else if (clr) this.alert = { text: this.lang() === "pt" ? "Livre de conflito." : "Clear of conflict.", until: now + ALERT_MS };
+    if (fresh.length || ta || clr) this.onChange();
     return fresh;
   }
 
@@ -188,4 +192,4 @@ class AtcPanel {
   }
 }
 
-module.exports = { AtcPanel, normFreq, stepFreq, trafficText, atisText, MSG_TIMEOUT_MS };
+module.exports = { AtcPanel, normFreq, stepFreq, trafficText, raText, atisText, MSG_TIMEOUT_MS };

@@ -475,7 +475,7 @@ function draw(){
     [['#fff',6],['#ff3b30',3.5]].forEach(function(o){g.strokeStyle=o[0];g.lineWidth=o[1];g.lineCap='round';
       g.beginPath();g.moveTo(x-9,y-9);g.lineTo(x+9,y+9);g.moveTo(x+9,y-9);g.lineTo(x-9,y+9);g.stroke()});
     g.lineCap='butt';g.fillStyle='#ff3b30';g.font='bold 11px ui-monospace,monospace';g.textBaseline='top';
-    g.fillText(L('CRASH ','ACIDENTE ')+(c.callsign||''),x+13,y-6)});
+    g.fillText((c.reason==='midair'?L('MIDAIR ','COLISÃO '):L('CRASH ','ACIDENTE '))+(c.callsign||''),x+13,y-6)});
 }
 
 /* ---------- pan / zoom / select ---------- */
