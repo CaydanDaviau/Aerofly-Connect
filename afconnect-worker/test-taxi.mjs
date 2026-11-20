@@ -129,3 +129,34 @@ globalThis.fetch = realFetch;
   const hl = await worker.fetch(new Request("https://x/api/health"), env2); const hj = await hl.json();
   W("health carries latest versions", typeof hj.latest_android === "string" && typeof hj.latest_pc === "string");
 }
+
+// ---- the auto message carries the taxi route (controller's taxi clearance, and a drawn route)
+{
+  const gc = (path, body) => call("PUT", path, { holder: "hg", freq: "118.000", ...body }, "gc");
+  await gc("/api/atc/tower", { name: "SBBR_GND", latitude: B0[0], longitude: B0[1] });
+  const c2 = hub.clients.get("t2"), c1 = hub.clients.get("t1"), i2 = c2.pos.icao_address, i1 = c1.pos.icao_address;
+  const texts = icao => [...hub.msgs.values()].filter(m => m.icao === icao).map(m => m.text);
+  hub.msgs.clear(); if (c2.st) c2.st.landedAt = 0;
+  await gc("/api/atc/clearance", { icao_address: i2, type: "taxi", on: true, msg: false });
+  T("auto msg off: no text", texts(i2).length === 0);
+  hub.clients.get("t2").taxi = null; hub.msgs.clear();
+  await gc("/api/atc/clearance", { icao_address: i2, type: "taxi", on: true, msg: true });
+  const t2 = texts(i2).find(x => /^Taxi/.test(x));
+  T("taxi clearance auto msg = route to the runway", /^Taxi to runway 27 via .+, hold short runway 27$/.test(t2 || ""));
+  // drawn route
+  c1.lang = "en";
+  const dr = (b) => gc("/api/atc/taxiroute", { icao_address: i1, lat: N.S2.lat, lon: N.S2.lon, ...b });
+  hub.msgs.clear(); let r = await dr({ preview: true, msg: true });
+  T("drawn route: preview sends nothing", r.success && r.text && texts(i1).length === 0);
+  hub.msgs.clear(); r = await dr({ preview: false, msg: false });
+  T("drawn route, auto msg off: no text", r.success && texts(i1).length === 0);
+  hub.msgs.clear(); r = await dr({ preview: false, msg: true });
+  const t1 = texts(i1)[0] || "";
+  T("drawn route, auto msg on: text with the taxiways and the gate", /^Taxi to gate S9 via /.test(t1) && /Alpha/.test(t1) && /cross runway 09/.test(t1));
+  hub.msgs.clear();
+  await gc("/api/atc/clearance", { icao_address: i1, type: "taxi", on: true, msg: true });
+  T("taxi clearance after a drawn route repeats that route", texts(i1)[0] === t1);
+  // Portuguese
+  hub.msgs.clear(); c1.lang = "pt"; await dr({ preview: false, msg: true });
+  T("Portuguese phrase", /^Táxi para o portão S9 via /.test(texts(i1)[0] || ""));
+}

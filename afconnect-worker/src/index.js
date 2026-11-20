@@ -152,6 +152,7 @@ const PHRASE = {
     gTaxiOut: (r, via) => `Taxi to runway ${r}${via ? " via " + via : ""}, hold short runway ${r}`,
     gTaxiGate: (g, via) => `Taxi to ${g ? "gate " + g : "the gate"}${via ? " via " + via : ""}`,
     gHold: (via, r) => `Taxi${via ? " via " + via : ""}, hold short of runway ${r}`,
+    gVia: via => `Taxi via ${via}`,
     gCross: r => `cross runway ${r}`, gGive: cs => `give way to ${cs}`, gWord: "Runway", gVacate: "vacate via",
     takeoff: r => r ? `Runway ${r}, cleared for takeoff` : "Cleared for takeoff",
     land: r => r ? `Runway ${r}, cleared to land` : "Cleared to land",
@@ -179,6 +180,7 @@ const PHRASE = {
     gTaxiOut: (r, via) => `Táxi para a pista ${r}${via ? " via " + via : ""}, aguarde antes da pista ${r}`,
     gTaxiGate: (g, via) => `Táxi para ${g ? "o portão " + g : "o portão"}${via ? " via " + via : ""}`,
     gHold: (via, r) => `Táxi${via ? " via " + via : ""}, aguarde antes da pista ${r}`,
+    gVia: via => `Táxi via ${via}`,
     gCross: r => `cruze a pista ${r}`, gGive: cs => `dê passagem a ${cs}`, gWord: "Pista", gVacate: "livre via",
     takeoff: r => r ? `Pista ${r}, autorizado a decolar` : "Autorizado a decolar",
     land: r => r ? `Pista ${r}, autorizado a pousar` : "Autorizado a pousar",
@@ -526,6 +528,28 @@ export class Hub {
     }
     return json({ error: "not_found" }, 404);
   }
+  // does this controller hold a live role on this frequency?
+  holderOnFreq(holder, f) {
+    if (!holder || !f) return false;
+    const now = Date.now();
+    return [...this.towers.values()].some(t => t.holder === holder && t.freq === f && POS_NAMES.includes(t.pos) && now - t.at <= POS_TTL_MS);
+  }
+  // who is tuned to a frequency right now (same group: members and public never mix)
+  freqRoster(f, member) {
+    const now = Date.now(), ctl = new Set(); let pilots = 0;
+    for (const o of this.clients.values()) if (o.pos && o.pos.freq === f && !!o.member === !!member && now - o.seen <= 30_000) pilots++;
+    for (const t of this.towers.values()) if (t.freq === f && t.holder && POS_NAMES.includes(t.pos) && !!t.member === !!member && now - t.at <= POS_TTL_MS) ctl.add(t.holder);
+    return { pilots, ctls: ctl.size };
+  }
+  // taxiway path -> "A, B, cross runway 27, C"
+  pathWords(path, g, ph) {
+    const parts = []; let lead = true;
+    for (const l of taxiLegs(path, g)) {
+      if (l.kind === "rwy") { if (lead) continue; const id0 = String(l.name).split(/[\/;]/).map(x => x.trim().toUpperCase()).filter(Boolean)[0] || ""; parts.push(ph.gCross(spokenRwy(id0))); }
+      else { lead = false; if (l.name) parts.push(spokenName(l.name)); }
+    }
+    return parts.join(", ");
+  }
   activeAtcHolder(holder) {
     if (!holder) return false;
     const now = Date.now();
@@ -833,7 +857,7 @@ export class Hub {
       const d = haversineMi(lat, lon, base.latitude, base.longitude);
       if (d > rad) continue;
       const e = towerAircraft({ ...base, name: a, pos: "APT", holder: undefined, freq: "" }, d);
-      e.positions = g.roles.map(r => ({ pos: r.pos || "TWR", freq: r.freq || "", claimed: !!r.holder, hid: r.holder ? hid(r.holder) : "", ctl: r.holder ? (r.ctl || "") : "", nick: r.holder && !r.member ? (r.nick || "") : "" }));
+      e.positions = g.roles.map(r => ({ pos: r.pos || "TWR", freq: r.freq || "", ...(r.freq ? this.freqRoster(r.freq, vm) : {}), claimed: !!r.holder, hid: r.holder ? hid(r.holder) : "", ctl: r.holder ? (r.ctl || "") : "", nick: r.holder && !r.member ? (r.nick || "") : "" }));
       e.owner_hid = g.anchor && g.anchor.owner ? hid(g.anchor.owner) : "";
       e.bans = g.anchor && g.anchor.bans ? Object.values(g.anchor.bans).map(b => ({ hid: b.hid, pos: b.pos })) : [];
       e.claimed = g.roles.some(r => r.holder);
@@ -988,7 +1012,7 @@ export class Hub {
     const { out, truncated } = this.trafficList(key, lat, lon, rad, Math.max(1, Math.min(MAX_TRAFFIC, Number(max) || MAX_TRAFFIC)), vm);
     const grp = new Map(); for (const c of this.clients.values()) if (c.pos) grp.set(c.pos.icao_address, !!c.member);
     const same = icao => grp.has(icao) ? grp.get(icao) === !!vm : !vm;
-    const atc_messages = [...this.msgs.values()].filter(x => same(x.icao)).map(x => ({ id: x.id, icao_address: x.icao, text: x.text, kind: x.kind, urgent: !!x.urgent, status: x.status, at: x.at, freq: x.freq || "" }));
+    const atc_messages = [...this.msgs.values()].filter(x => !x.bc && (x.kind === "freq" ? !!x.member === !!vm : same(x.icao))).map(x => ({ id: x.id, icao_address: x.icao, text: x.text, kind: x.kind, urgent: !!x.urgent, status: x.status, at: x.at, freq: x.freq || "", ...(x.kind === "freq" ? { n: x.n || 0 } : {}) }));
     const voice_clips = [...this.clips.values()].filter(v => v.dir === "up" && same(v.icao)).map(v => ({ id: v.id, icao_address: v.icao, callsign: v.callsign, ms: v.ms, at: v.at, freq: v.freq || "" }));
     return { aircraft: out, traffic: out, truncated, active_clients: [...this.clients.values()].filter(c => !!c.member === !!vm).length, atc_messages, crashes: this.crashList(vm), voice_clips };
   }
@@ -1052,6 +1076,9 @@ export class Hub {
       if (meta.direction === "up") {
         if (this.activeAtcHolder(oa.holder) && (!oa.member || oa.atc === "1" || oa.atc === "n" || this.creds.has(oa.atcRaw || ""))) peers.push(other);
         else if (pilot && pilot.pos && pilot.pos.freq === meta.freq && pilot.pos.voice !== false) peers.push(other);
+      } else if (meta.bcast) {   // controller speaks on a frequency: every pilot tuned to it, and the other controllers on it
+        if (pilot && pilot.pos && pilot.pos.freq === meta.freq && pilot.pos.voice !== false) peers.push(other);
+        else if (oa.holder && oa.holder !== meta.holder && this.holderOnFreq(oa.holder, meta.freq)) peers.push(other);
       } else if (pilot && pilot.pos && pilot.pos.icao_address === meta.icao && pilot.pos.voice !== false && tunedTo(pilot.pos.freq, meta.freq)) peers.push(other);
     }
     return peers;
@@ -1063,10 +1090,11 @@ export class Hub {
       const direction = d.direction === "down" ? "down" : "up";
       const holder = String(d.holder || "");
       if (direction === "up" && (!pilot || !pilot.pos || !pilot.pos.freq)) return;
-      if (direction === "down" && (!this.activeAtcHolder(holder) || !d.icao_address)) return;
+      const bcast = direction === "down" && !d.icao_address;   // no aircraft named = speak on the frequency
+      if (direction === "down" && (!this.activeAtcHolder(holder) || (bcast && !this.holderOnFreq(holder, normFreq(d.freq))))) return;
       const meta = direction === "up"
         ? { direction, member: !!a.member, freq: pilot.pos.freq, icao: pilot.pos.icao_address, callsign: normCallsign(pilot.plan.callsign ?? pilot.pos.callsign), sender: a.key }
-        : { direction, member: !!a.member, freq: normFreq(d.freq), icao: String(d.icao_address).toUpperCase(), holder, callsign: this.ctlName({ headers: new Headers({ "X-Member": a.member ? "1" : "0", "X-Atc": a.atc || "n", "X-Atc-Raw": a.atcRaw || "", "X-Atc-Name": a.atcName || "" }) }), sender: a.key };
+        : { direction, member: !!a.member, freq: normFreq(d.freq), icao: String(d.icao_address || "").toUpperCase(), bcast, holder, callsign: this.ctlName({ headers: new Headers({ "X-Member": a.member ? "1" : "0", "X-Atc": a.atc || "n", "X-Atc-Raw": a.atcRaw || "", "X-Atc-Name": a.atcName || "" }) }), sender: a.key };
       const peers = [...new Map(this.voicePeers(ws, meta).map(x => [(x.deserializeAttachment() || {}).key, x])).values()];
       const id = String(d.id || ("s" + Date.now().toString(36) + (++this.msgSeq).toString(36))).slice(0, 80);
       const stream = { id, meta, peers: peers.map(x => (x.deserializeAttachment() || {}).key).filter(Boolean), chunks: [], bytes: 0, at: Date.now(), ended: false };
@@ -1208,8 +1236,10 @@ export class Hub {
       const st = g.stands.filter(s => s.node === to.id || gDist(s.lat, s.lon, to.lat, to.lon) < 80).sort((a, b) => gDist(a.lat, a.lon, lat, lon) - gDist(b.lat, b.lon, lat, lon))[0];
       if (st) label = st.ref ? "GATE " + st.ref : "GATE";
       else for (const r of g.runways) { const id0 = (r.refs || []).find(x => { return holdNodes(g, x).some(h => h.id === to.id); }); if (id0) { label = "HOLD " + id0; break; } }
-      const taxi = { kind: "ctl", apt: role.apt, points: pts.map(q => [Math.round(q[0] * 1e6) / 1e6, Math.round(q[1] * 1e6) / 1e6]), end: { lat: to.lat, lon: to.lon, label }, held: false, by: role.name || role.apt, at: Date.now(), until: Date.now() + 20 * 60_000 };
-      if (!d.preview) { target.taxi = taxi; this.gwCredit(key, icao, Date.now()); }
+      const phd = PHRASE[target.lang === "pt" ? "pt" : "en"], viaD = this.pathWords(path, g, phd), endId = label.startsWith("HOLD ") ? label.slice(5) : "";
+      const ttext = !viaD && label === "STOP" ? "" : label.startsWith("HOLD ") ? phd.gHold(viaD, spokenRwy(endId)) : label.startsWith("GATE") ? phd.gTaxiGate(label.slice(5), viaD) : phd.gVia(viaD);
+      const taxi = { text: ttext, kind: "ctl", apt: role.apt, points: pts.map(q => [Math.round(q[0] * 1e6) / 1e6, Math.round(q[1] * 1e6) / 1e6]), end: { lat: to.lat, lon: to.lon, label }, held: false, by: role.name || role.apt, at: Date.now(), until: Date.now() + 20 * 60_000 };
+      if (!d.preview) { target.taxi = taxi; this.gwCredit(key, icao, Date.now()); if (d.msg === true && ttext) this.addMsg(target, ttext, "msg", {}); }
       return json({ success: true, preview: !!d.preview, ...taxi });
     }
     if ((m === "PUT" || m === "POST") && p === "/api/atc/squawk") {
@@ -1267,13 +1297,49 @@ export class Hub {
       if (on && d.msg === true) {   // controller's "Auto msg" switch: tell the pilot in text too
         const ph = PHRASE[target.lang === "pt" ? "pt" : "en"], tp = target.plan || {};
         let text;
-        if (type === "taxi") text = ph.taxiClr;
+        if (type === "taxi") {
+          text = ph.taxiClr;
+          const tk = [...this.clients].find(([, x]) => x === target)?.[0], tst = target.st;
+          if (target.pos.phase === "air") { /* airborne: nothing to route */ }
+          else if (target.taxi && target.taxi.text && now < target.taxi.until) text = target.taxi.text;   // the controller already drew a route: say that one
+          else if (tk) {   // otherwise the automatic route: to the departure runway, or to a stand after landing
+            const arrived = !!tst.landedAt, a2 = String(tp[arrived ? "arrival_airport" : "departure_airport"] || "").trim().toUpperCase(), rw2 = cleanRunway(tp.departure_runway);
+            if (/^[A-Z]{4}$/.test(a2) && (arrived || rw2)) {
+              const kind = arrived ? "gate" : "out", r = await this.groundRoute(tk, target, kind, a2, rw2, 3500);
+              if (r) text = r.text;
+              else if (r === undefined) this.groundRoute(tk, target, kind, a2, rw2, 25_000).then(r2 => { if (r2) this.addMsg(target, r2.text, "auto", {}); }, () => {});
+            }
+          }
+        }
         else if (type === "takeoff") text = ph.takeoff(cleanRunway(tp.departure_runway));
         else if (type === "land") text = ph.land(cleanRunway(tp.arrival_runway));
         else { const ft = target.st.alt.ft, cur = Number(target.pos.altitude_ft) || 0; text = Math.abs(ft - cur) < 200 ? (target.lang === "pt" ? "Mantenha " : "Maintain ") + altSay(ft) : ph[ft > cur ? "climb" : "descent"](ft); }
         this.addMsg(target, text, "msg", {});
       }
       return json({ success: true, clr: this.clrOf(target, now) });
+    }
+
+    // controller text to a whole frequency: every pilot tuned to it gets the message; the controller keeps one log line
+    if ((m === "PUT" || m === "POST") && p === "/api/atc/freqmsg") {
+      if (this.noCred(request)) return json({ error: "atc_credential" }, 403);
+      const d = await request.json().catch(() => ({}));
+      const holder = String(d.holder || "");
+      if (!this.activeAtcHolder(holder)) return json({ error: "division_required" }, 409);
+      const text = String(d.text || "").trim().slice(0, 300);
+      if (!text) return json({ error: "empty message" }, 400);
+      const f = normFreq(d.freq);
+      if (!f) return json({ error: "frequency_required" }, 409);
+      if (!this.holderOnFreq(holder, f)) return json({ error: "not_your_frequency", freq: f }, 409);
+      const member = request.headers.get("X-Member") === "1", now = Date.now();
+      let n = 0;
+      for (const c of this.clients.values()) {
+        if (!c.pos || c.pos.freq !== f || !!c.member !== member || now - c.seen > 30_000) continue;
+        this.addMsg(c, text, "msg", { urgent: d.urgent === true, freq: f, bc: true }); n++;
+      }
+      const id = "f" + now.toString(36) + (++this.msgSeq).toString(36);
+      this.msgs.set(id, { id, icao: "", callsign: "", text, kind: "freq", at: now, status: "sent", freq: f, n, member });
+      if (this.msgs.size > 300) this.msgs.delete(this.msgs.keys().next().value);
+      return json({ success: true, id, heard_by: n });
     }
 
     if ((m === "PUT" || m === "POST") && p === "/api/atc/message") {
