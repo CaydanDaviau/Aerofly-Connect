@@ -128,7 +128,7 @@ class AtcPanel {
       else if (r.code === 400 && /bad_altitude/.test(r.body)) fb = /"above"/.test(r.body) ? this.t("Altitude must be above you", "Altitude deve ser acima de você") : /"below"/.test(r.body) ? this.t("Altitude must be below you", "Altitude deve ser abaixo de você") : this.t("Invalid altitude (e.g. 100 or 5000)", "Altitude inválida (ex.: 100 ou 5000)");
       else if (r.code === 409 && /not_airborne/.test(r.body)) fb = this.t("Only available in flight", "Só disponível em voo");
       else if (r.code === 409 && /frequency_required/.test(r.body)) fb = this.noFreq();
-      else fb = this.t("Request failed", "Falha no pedido");
+      else fb = this.t("Request failed", "Falha no pedido") + " (" + r.code + ")";
     } catch (e) { fb = this.t("No connection", "Sem conexão"); }
     this.say(fb); return fb;
   }

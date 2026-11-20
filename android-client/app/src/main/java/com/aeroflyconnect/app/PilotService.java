@@ -516,7 +516,7 @@ public class PilotService extends Service {
                     else if (r.code == 409 && r.body.contains("frequency_required")) fb = Api.t(app, "Tune a frequency first", "Sintonize uma frequência primeiro");
                     else if (r.code == 429) fb = Api.t(app, "Wait a moment", "Aguarde um momento");
                     else if (r.code == 404) fb = Api.t(app, "Not flying yet", "Voo ainda não iniciado");
-                    else fb = Api.t(app, "Request failed", "Falha no pedido");
+                    else fb = Api.t(app, "Request failed", "Falha no pedido") + " (" + r.code + ")";
                 } catch (Exception e) {
                     fb = Api.t(app, "No connection", "Sem conexão");
                 }

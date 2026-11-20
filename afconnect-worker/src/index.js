@@ -1076,8 +1076,8 @@ export class Hub {
       if (meta.direction === "up") {
         if (this.activeAtcHolder(oa.holder) && (!oa.member || oa.atc === "1" || oa.atc === "n" || this.creds.has(oa.atcRaw || ""))) peers.push(other);
         else if (pilot && pilot.pos && pilot.pos.freq === meta.freq && pilot.pos.voice !== false) peers.push(other);
-      } else if (meta.bcast) {   // controller speaks on a frequency: every pilot tuned to it, and the other controllers on it
-        if (pilot && pilot.pos && pilot.pos.freq === meta.freq && pilot.pos.voice !== false) peers.push(other);
+      } else if (meta.bcast) {   // controller speaks on a frequency: every pilot tuned to it (inside his airspace), and the other controllers on it
+        if (pilot && pilot.pos && pilot.pos.freq === meta.freq && pilot.pos.voice !== false) { if (!this.airspaceBlock(meta.holder, pilot)) peers.push(other); }
         else if (oa.holder && oa.holder !== meta.holder && this.holderOnFreq(oa.holder, meta.freq)) peers.push(other);
       } else if (pilot && pilot.pos && pilot.pos.icao_address === meta.icao && pilot.pos.voice !== false && tunedTo(pilot.pos.freq, meta.freq)) peers.push(other);
     }
@@ -1175,6 +1175,8 @@ export class Hub {
     const c = this.creds.get(request.headers.get("X-Atc-Raw") || "");
     return c ? c.name : (request.headers.get("X-Atc-Name") || "");
   }
+  // Name shown before a controller's text: credential label, else the role's name/nick, else the profile nickname.
+  ctlLabel(request, holder, key) { const r = this.roleOf(String(holder || "")); return this.ctlName(request) || (r && (r.ctl || r.nick)) || this.nickOf(key) || ""; }
   noCred(request) { return request.headers.get("X-Member") === "1" && this.atcState(request) === "0"; }
   webSocketClose(ws) { try { ws.close(); } catch (e) {} }
   webSocketError() {}
@@ -1332,9 +1334,11 @@ export class Hub {
       if (!this.holderOnFreq(holder, f)) return json({ error: "not_your_frequency", freq: f }, 409);
       const member = request.headers.get("X-Member") === "1", now = Date.now();
       let n = 0;
+      const who = this.ctlLabel(request, holder, key), out = who ? who + ": " + text : text;
       for (const c of this.clients.values()) {
         if (!c.pos || c.pos.freq !== f || !!c.member !== member || now - c.seen > 30_000) continue;
-        this.addMsg(c, text, "msg", { urgent: d.urgent === true, freq: f, bc: true }); n++;
+        if (this.airspaceBlock(holder, c)) continue;   // pilots outside the controller's airspace are not reached
+        this.addMsg(c, out, "msg", { urgent: d.urgent === true, freq: f, bc: true }); n++;
       }
       const id = "f" + now.toString(36) + (++this.msgSeq).toString(36);
       this.msgs.set(id, { id, icao: "", callsign: "", text, kind: "freq", at: now, status: "sent", freq: f, n, member });
@@ -1353,7 +1357,8 @@ export class Hub {
       if (!text) return json({ error: "empty message" }, 400);
       if (!tunedTo(target.pos.freq, normFreq(d.freq))) return json({ error: "not_tuned", freq: target.pos.freq, callsign: normCallsign(target.plan.callsign ?? target.pos.callsign) }, 409);
       { const ob = this.airspaceBlock(String(d.holder || ""), target); if (ob) return json(ob, 409); }
-      return json({ success: true, id: this.addMsg(target, text, "msg", { urgent: d.urgent === true }).id });
+      const who = this.ctlLabel(request, d.holder, key);
+      return json({ success: true, id: this.addMsg(target, who ? who + ": " + text : text, "msg", { urgent: d.urgent === true }).id });
     }
     if ((m === "PUT" || m === "POST") && p === "/api/messages/reply") {
       const d = await request.json().catch(() => ({}));
@@ -1419,6 +1424,12 @@ export class Hub {
       c.lastChat = now;
       const msg = this.addMsg(c, text, "chat", { freq: c.pos.freq || "" });
       msg.status = "request";
+      // everyone else tuned to the same frequency (same group) reads it too, headed by the sender's callsign
+      const cs = normCallsign(c.plan.callsign ?? c.pos.callsign), line = (cs ? cs + ": " : "") + text;
+      for (const [k2, o] of this.clients) {
+        if (k2 === key || !o.pos || o.pos.freq !== c.pos.freq || !!o.member !== !!c.member || now - o.seen > 30_000) continue;
+        this.addMsg(o, line, "msg", { freq: c.pos.freq, bc: true });
+      }
       return json({ success: true, id: msg.id, mode: this.towers.size > 0 ? "controller" : "none" });
     }
 

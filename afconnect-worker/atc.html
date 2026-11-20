@@ -634,7 +634,7 @@ var myHid=hidOf(holder),isMember=false,dimOn=false;try{dimOn=localStorage.getIte
 /* who controls an aircraft: the live human role on its frequency, AUTO when none, ALL when untuned */
 function ctrlOf(a){if(!a.freq)return'ALL';
   for(var i=0;i<ac.length;i++){var t=ac[i];if(!t.virtual_tower)continue;var ps=t.positions||[];
-    for(var k=0;k<ps.length;k++)if(ps[k].claimed&&ps[k].freq===a.freq)return String(t.callsign).replace(/^ATC_/,'')+'_'+ps[k].pos+((ps[k].ctl||ps[k].nick)?' ('+(ps[k].ctl||ps[k].nick)+')':'')}
+    for(var k=0;k<ps.length;k++)if(ps[k].claimed&&ps[k].freq===a.freq&&(ps[k].pos==='CTR'||nmBetween(t.latitude,t.longitude,a.latitude,a.longitude)<=(AS[ps[k].pos]||50)))return String(t.callsign).replace(/^ATC_/,'')+'_'+ps[k].pos+((ps[k].ctl||ps[k].nick)?' ('+(ps[k].ctl||ps[k].nick)+')':'')}
   return'AUTO'}
 /* dimmed = tuned to a frequency none of my roles use (never an emergency, tower, or when I talk on All) */
 function isDim(a){return!a.virtual_tower&&!a.emergency&&((dimOn&&!!a.freq&&!isHeard(a.freq))||outsideAsp(a))}
