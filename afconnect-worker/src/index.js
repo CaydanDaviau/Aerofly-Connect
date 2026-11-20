@@ -29,7 +29,17 @@ const parseTowerName = s => {
 // short public id for a holder id (ids themselves are secrets: they are what proves you own a role)
 const hid = h => { let x = 2166136261; for (const ch of String(h || "")) x = Math.imul(x ^ ch.charCodeAt(0), 16777619) >>> 0; return x.toString(36).slice(0, 6); };
 const MAX_TRAFFIC = 500;
-const CRASH_TIMEOUT_MS = 5 * 60_000;   // a pilot who crashes is locked out this long
+const TIMEOUT_MS = 5 * 60_000;           // crash or landing without clearance: first time that day
+const TIMEOUT_REPEAT_MS = 60 * 60_000;   // repeated the same (UTC) day
+const VIOL_PTS = { taxi: 1, alt: 1, runway: 3, landing: 5 };   // penalty points per unauthorised action (landing also = timeout)
+// Controller grades: everyone starts at Ground (DEL/GND); Network members have every role. Stats never go down, so grades never drop.
+const ROLE_GRADE = { DEL: 0, GND: 0, TWR: 1, APP: 2, CTR: 3 };
+const GRADE_NAMES = ["Ground", "Tower", "Approach", "Center"];
+const GRADE_REQ = [null, { atc_s: 3 * 3600, gw: 50 }, { atc_s: 10 * 3600, ops: 50 }, { app_s: 30 * 3600 }];
+const PILOT_GRADES = [["Captain", 100 * 3600, 100], ["Commercial", 25 * 3600, 25], ["Private", 5 * 3600, 5], ["Student", 0, 0]];
+export const TEST = { skipGrades: false };   // tests turn the role gate off
+function atcGrade(p) { let g = 0; while (g < 3) { const r = GRADE_REQ[g + 1]; if (!p || Object.keys(r).some(k => (p[k] || 0) < r[k])) break; g++; } return g; }
+function pilotGrade(p) { const f = p ? p.flight_s || 0 : 0, n = p ? p.flights || 0 : 0; return (PILOT_GRADES.find(x => f >= x[1] && n >= x[2]) || PILOT_GRADES[3])[0]; }
 const CRASH_SHOW_MS = 10 * 60_000;     // the X stays on the maps this long
 const HARD_LANDING_FPM = -1500;        // landing_fpm at or below this = crash
 const TA_COOLDOWN_MS = 30_000;         // per viewer + other aircraft
@@ -274,12 +284,13 @@ export class Hub {
   constructor(ctx) {
     this.towers = new Map(); this.creds = new Map(); this.credOn = false; this.wx = new Map(); this.crashes = new Map(); this.ta = new Map();
     this.voiceStreams = new Map(); this.latestVoiceByPeer = new Map();
-    this.prof = new Map(); this.accts = new Map(); this.toks = new Map(); this.loginFail = new Map(); this.regLog = new Map(); this.lastClaim = new Map(); this.clients = new Map(); this.msgs = new Map(); this.rwy = new Map(); this.rwyQ = new Map(); this.gfx = new Map(); this.tres = new Map(); this.stands = new Map(); this.violations = []; this.clips = new Map(); this.listeners = new Map(); this.msgSeq = 0; this.since = Date.now(); this.counts = {};
+    this.prof = new Map(); this.accts = new Map(); this.toks = new Map(); this.loginFail = new Map(); this.regLog = new Map(); this.locks = new Map(); this.holderKey = new Map(); this.gwLast = new Map(); this.lastClaim = new Map(); this.clients = new Map(); this.msgs = new Map(); this.rwy = new Map(); this.rwyQ = new Map(); this.gfx = new Map(); this.tres = new Map(); this.stands = new Map(); this.violations = []; this.clips = new Map(); this.listeners = new Map(); this.msgSeq = 0; this.since = Date.now(); this.counts = {};
     ctx.blockConcurrencyWhile(async () => {
       for (const [k, v] of await ctx.storage.list({ prefix: "tower:" })) this.towers.set(k.slice(6), v);
       for (const [k, v] of await ctx.storage.list({ prefix: "cred:" })) this.creds.set(k.slice(5), v);
       this.credOn = !!(await ctx.storage.get("credon")) || this.creds.size > 0;
       for (const [k, v] of await ctx.storage.list({ prefix: "crash:" })) this.crashes.set(k.slice(6), v);
+      for (const [k, v] of await ctx.storage.list({ prefix: "lock:" })) this.locks.set(k.slice(5), v);
       for (const [k, v] of await ctx.storage.list({ prefix: "prof:" })) this.prof.set(k.slice(5), v);
       for (const [k, v] of await ctx.storage.list({ prefix: "acct:" })) this.accts.set(k.slice(5), v);
       for (const [k, v] of await ctx.storage.list({ prefix: "tok:" })) this.toks.set(k.slice(4), v);
@@ -298,6 +309,7 @@ export class Hub {
     for (const [k, v] of this.voiceStreams) if (now - v.at > 90_000) this.voiceStreams.delete(k);
     for (const [k, q] of this.rwyQ) { const f = q.filter(x => this.clients.has(x)); if (f.length) this.rwyQ.set(k, f); else this.rwyQ.delete(k); }
     for (const [k, t] of this.ta) if (now - t > 120_000) this.ta.delete(k);
+    for (const [k, l] of this.locks) if (now > l.until + 60_000) { this.locks.delete(k); this.ctx.storage.delete("lock:" + k); }
     for (const [k, cr] of this.crashes) if (now - cr.at > CRASH_SHOW_MS) { this.crashes.delete(k); this.ctx.storage.delete("crash:" + k); }
     for (const [k, t] of this.towers) if (now - t.at > (t.holder ? POS_TTL_MS : TOWER_TTL_MS)) { this.towers.delete(k); this.ctx.storage.delete("tower:" + k); }
   }
@@ -420,7 +432,7 @@ export class Hub {
   // Profile: nickname + flight time (airborne) + ATC time (holding a role), per app key. Saved at most once a minute.
   pkey(key) { const t = this.toks.get(key); return t ? "a:" + t.acct : key; }
   profPeek(key) { return this.prof.get(this.pkey(key)); }
-  profGet(key) { key = this.pkey(key); let p = this.prof.get(key); if (!p) { p = { nick: "", flight_s: 0, atc_s: 0, flights: 0, saved: 0 }; this.prof.set(key, p); } if (!p.flights) p.flights = 0; return p; }
+  profGet(key) { key = this.pkey(key); let p = this.prof.get(key); if (!p) { p = { nick: "", flight_s: 0, atc_s: 0, flights: 0, saved: 0 }; this.prof.set(key, p); } if (!p.flights) p.flights = 0; for (const f of ["landings", "violations", "vpts", "timeouts", "gw", "ops", "app_s"]) if (!p[f]) p[f] = 0; return p; }
   profAdd(key, field, secs, now) {
     if (!key || !(secs > 0)) return;
     const p = this.profGet(key); p[field] += secs;
@@ -438,8 +450,27 @@ export class Hub {
     acct.linked.push(oldKey); if (acct.linked.length > 20) acct.linked.shift();
     const o = this.prof.get(oldKey); if (!o) return;
     const pk = "a:" + acct.id; let pr = this.prof.get(pk); if (!pr) { pr = { nick: "", flight_s: 0, atc_s: 0, flights: 0, saved: 0 }; this.prof.set(pk, pr); }
-    pr.flight_s += o.flight_s || 0; pr.atc_s += o.atc_s || 0; pr.flights += o.flights || 0; if (!pr.nick) pr.nick = o.nick || "";
+    pr.flight_s += o.flight_s || 0; pr.atc_s += o.atc_s || 0; pr.flights += o.flights || 0; for (const f of ["landings", "violations", "vpts", "timeouts", "gw", "ops", "app_s"]) pr[f] = (pr[f] || 0) + (o[f] || 0); if (!pr.nick) pr.nick = o.nick || "";
     pr.saved = Date.now(); this.ctx.storage.put("prof:" + pk, pr);
+  }
+  // "Ground work actions": taxi clearances / taxi routes by a human controller, once per aircraft per 10 min
+  gwCredit(key, icao, now) {
+    const k = key + "|" + icao; if (now - (this.gwLast.get(k) || 0) < 600_000) return;
+    this.gwLast.set(k, now); if (this.gwLast.size > 500) this.gwLast.delete(this.gwLast.keys().next().value);
+    const pf = this.profGet(key); pf.gw += 1; pf.saved = now; this.ctx.storage.put("prof:" + this.pkey(key), pf);
+  }
+  // Successful takeoff/landing at an airport that a human TWR or APP covers: credited to those controllers
+  opsCredit(apt, now) {
+    for (const t of this.towers.values()) {
+      if (t.apt !== apt || !t.holder || (t.pos !== "TWR" && t.pos !== "APP") || now - t.at > POS_TTL_MS) continue;
+      const hk = this.holderKey.get(t.holder); if (!hk) continue;
+      const pf = this.profGet(hk); pf.ops += 1; pf.saved = now; this.ctx.storage.put("prof:" + this.pkey(hk), pf);
+    }
+  }
+  // Grades + progress for /api/profile and the role gate
+  gradeInfo(p) {
+    const g = atcGrade(p), nx = g < 3 ? GRADE_REQ[g + 1] : null;
+    return { atc_grade: g, atc_grade_name: GRADE_NAMES[g], pilot_grade: pilotGrade(p), next_grade: g < 3 ? GRADE_NAMES[g + 1] : "", next_req: nx ? Object.keys(nx).map(k => ({ k, have: Math.floor((p && p[k]) || 0), need: nx[k] })) : [] };
   }
   // Label shown on radar/map for public pilots and controllers: profile nickname, else the account name.
   nickOf(key) { const p = this.profPeek(key); if (p && p.nick) return p.nick; const t = this.toks.get(key); const a = t && this.accts.get(t.acct); return a ? a.display : ""; }
@@ -562,8 +593,25 @@ export class Hub {
     return null;
   }
 
+  // Timeout (crash or landing without clearance): kept per account/profile, so a second device cannot skip it. First one a (UTC) day = 5 min, repeats = 1 h.
+  strike(key) {
+    const p = this.profGet(key), day = new Date().toISOString().slice(0, 10);
+    if (p.sday !== day) { p.sday = day; p.sn = 0; }
+    const dur = p.sn > 0 ? TIMEOUT_REPEAT_MS : TIMEOUT_MS;
+    p.sn++; p.timeouts = (p.timeouts || 0) + 1; p.saved = Date.now(); this.ctx.storage.put("prof:" + this.pkey(key), p);
+    return dur;
+  }
+  lockFor(key, reason, now, extra) {
+    const lk = { until: now + this.strike(key), reason, at: now, ...(extra || {}) }, pk = this.pkey(key);
+    this.locks.set(pk, lk); this.ctx.storage.put("lock:" + pk, lk); return lk;
+  }
   crashBlock(key) {
-    const cr = this.crashes.get(key), now = Date.now();
+    const now = Date.now(), lk = this.locks.get(this.pkey(key));
+    if (lk && now < lk.until) {
+      const cr0 = this.crashes.get(key);
+      return json({ error: lk.reason === "crash" ? "crashed" : "timeout", crashed: true, reason: lk.reason, until: lk.until, remaining_s: Math.ceil((lk.until - now) / 1000), latitude: cr0 ? cr0.latitude : lk.latitude, longitude: cr0 ? cr0.longitude : lk.longitude, landing_fpm: cr0 ? cr0.landing_fpm : lk.landing_fpm }, 423);
+    }
+    const cr = this.crashes.get(key);
     if (!cr || now >= cr.until) return null;
     return json({ error: "crashed", crashed: true, until: cr.until, remaining_s: Math.ceil((cr.until - now) / 1000), latitude: cr.latitude, longitude: cr.longitude, landing_fpm: cr.landing_fpm }, 423);
   }
@@ -706,7 +754,7 @@ export class Hub {
     const p = c.pos, g = st.gr, plan = c.plan || {}, gs = Number(p.ground_speed) || 0, quiet = () => {};
     const onRwys = String(p.rwy_on || "").split("/").map(cleanRunway).filter(Boolean);
     if (cur === "air") {
-      if (prev && prev !== "air") { st.airAt = now; g.taxi = 0; g.takeoff = 0; }
+      if (prev && prev !== "air") { st.airAt = now; if (g.takeoff > now) this.opsCredit(apt, now); g.taxi = 0; g.takeoff = 0; }
       if (!st.airAt) st.airAt = now;
       const vs = Number(p.vertical_speed_ft_min) || 0, alt = Number(p.altitude_ft) || 0, a = st.alt;
       if (now > st.grace && p.terminal !== true && !(g.land > now)) {
@@ -720,6 +768,7 @@ export class Hub {
         st.landedAt = now;
         const lr = onRwys[0] || cleanRunway(plan.arrival_runway) || "";
         if (now > st.grace && !(g.land > now)) this.violate(key, c, st, "landing", apt, lr, now, quiet);
+        else if (g.land > now && !(Number(p.landing_fpm) <= HARD_LANDING_FPM)) this.opsCredit(apt, now);
         g.land = 0; g.taxi = now + 30 * 60_000; st.alt = null;   // like the auto-ATC: taxi to the gate is free after landing
         c.emerg = null;
       } else if (now > st.grace) {
@@ -731,12 +780,16 @@ export class Hub {
 
   violate(key, c, st, type, apt, rwy, now, notify) {
     if (c.emerg && now < c.emerg.until) return;   // declared emergency: no unauthorised-action calls
-    const v = st.viol[type];
+    const v = st.viol[type], firstOne = !v || now - (v.logged || 0) > 300_000;   // a new episode (not the same one still going on)
     if (!v || now - v.said > VIOL_RENEW_MS) { st.viol[type] = { said: now }; notify(); }
     if (!v || now - v.logged > 60_000) {
       st.viol[type] = { said: st.viol[type].said, logged: now };
       this.violations.push({ at: now, callsign: normCallsign(c.plan.callsign ?? c.pos.callsign), icao: c.pos.icao_address, type, airport: apt, runway: rwy });
       if (this.violations.length > MAX_VIOL) this.violations.shift();
+      if (firstOne) {   // stats + penalty points; landing without clearance = timeout
+        const pf = this.profGet(key); pf.violations += 1; pf.vpts += VIOL_PTS[type] || 0; pf.saved = now; this.ctx.storage.put("prof:" + this.pkey(key), pf);
+        if (type === "landing") { this.lockFor(key, "landing_no_clnc", now, { latitude: c.pos.latitude, longitude: c.pos.longitude }); this.clients.delete(key); }
+      }
     }
     c.viol = { type, at: now };
     if (rwy && (type === "runway" || type === "landing")) {   // the runway counts as occupied for everybody else
@@ -1055,7 +1108,7 @@ export class Hub {
       if (st) label = st.ref ? "GATE " + st.ref : "GATE";
       else for (const r of g.runways) { const id0 = (r.refs || []).find(x => { return holdNodes(g, x).some(h => h.id === to.id); }); if (id0) { label = "HOLD " + id0; break; } }
       const taxi = { kind: "ctl", apt: role.apt, points: pts.map(q => [Math.round(q[0] * 1e6) / 1e6, Math.round(q[1] * 1e6) / 1e6]), end: { lat: to.lat, lon: to.lon, label }, held: false, by: role.name || role.apt, at: Date.now(), until: Date.now() + 20 * 60_000 };
-      if (!d.preview) target.taxi = taxi;
+      if (!d.preview) { target.taxi = taxi; this.gwCredit(key, icao, Date.now()); }
       return json({ success: true, preview: !!d.preview, ...taxi });
     }
     if ((m === "PUT" || m === "POST") && p === "/api/atc/squawk") {
@@ -1108,6 +1161,7 @@ export class Hub {
         if (!on) st.alt = null;
         else { const ft = parseAlt(d.altitude); if (!ft) return json({ error: "bad_altitude" }, 400); st.alt = { ft, at: now }; }
       } else st.gr[type] = on ? now + CLR_MS[type] : 0;
+      if (on && type === "taxi") this.gwCredit(key, icao, now);
       if (on && target.viol) { const vt = target.viol.type; if ((type === "taxi" && vt === "taxi") || (type === "takeoff" && vt === "runway") || (type === "land" && vt === "landing") || (type === "alt" && vt === "alt")) target.viol = null; }
       if (on && d.msg === true) {   // controller's "Auto msg" switch: tell the pilot in text too
         const ph = PHRASE[target.lang === "pt" ? "pt" : "en"], tp = target.plan || {};
@@ -1346,8 +1400,13 @@ export class Hub {
         if (isNew) await this.ctx.storage.put("tower:" + pn.apt, aptRec);
         return json({ error: "approval_required", airport: pn.apt, position: pn.pos }, 409);
       }
+      if (holder && pn.pos !== "APT" && request.headers.get("X-Member") !== "1" && !TEST.skipGrades && (ROLE_GRADE[pn.pos] || 0) > atcGrade(this.profPeek(key))) {   // controller grade limits the roles (Network members have all)
+        const gi = this.gradeInfo(this.profPeek(key));
+        return json({ error: "grade_required", role: pn.pos, need: GRADE_NAMES[ROLE_GRADE[pn.pos]], grade: gi.atc_grade_name, next_grade: gi.next_grade, next_req: gi.next_req }, 409);
+      }
+      if (holder && pn.pos !== "APT") this.holderKey.set(holder, key);
       if (holder && pn.pos !== "APT") {
-        if (old && old.holder === holder) this.profAdd(key, "atc_s", Math.min(now - old.at, 60_000) / 1000, now);
+        if (old && old.holder === holder) { this.profAdd(key, "atc_s", Math.min(now - old.at, 60_000) / 1000, now); if (pn.pos === "APP") this.profAdd(key, "app_s", Math.min(now - old.at, 60_000) / 1000, now); }
         else {   // taking a NEW role: 2 minutes after the last one taken before another can be taken
           const lc = this.lastClaim.get(holder);
           if (lc && lc.name !== name && now - lc.at < ROLE_COOLDOWN_MS) return json({ error: "role_cooldown", remaining_s: Math.ceil((ROLE_COOLDOWN_MS - (now - lc.at)) / 1000) }, 409);
@@ -1376,7 +1435,7 @@ export class Hub {
         pr.nick = String(d.nick ?? "").replace(/[\u0000-\u001f<>]/g, "").trim().slice(0, 20); pr.saved = Date.now();
         this.ctx.storage.put("prof:" + this.pkey(key), pr);
       }
-      if (m === "GET" || m === "PUT" || m === "POST") return json({ nick: pr.nick, flight_s: Math.round(pr.flight_s), atc_s: Math.round(pr.atc_s), flights: pr.flights || 0 });
+      if (m === "GET" || m === "PUT" || m === "POST") return json({ nick: pr.nick, flight_s: Math.round(pr.flight_s), atc_s: Math.round(pr.atc_s), flights: pr.flights || 0, landings: pr.landings || 0, violations: pr.violations || 0, penalty_points: pr.vpts || 0, timeouts: pr.timeouts || 0, gw_actions: pr.gw || 0, own_ops: pr.ops || 0, app_s: Math.round(pr.app_s || 0), all_roles: request.headers.get("X-Member") === "1", ...this.gradeInfo(pr) });
     }
     if (m === "DELETE" && p === "/api/atc/tower") {
       if (this.noCred(request)) return json({ error: "atc_credential" }, 403);
@@ -1571,8 +1630,10 @@ export class Hub {
               assigned: rec && Date.now() - rec.at < ASSIGN_TTL_MS ? rec : null };
       }
       if (pos.phase === "air" && c.seen) { const gap = Math.min(Date.now() - c.seen, 10_000) / 1000; this.profAdd(key, "flight_s", gap, Date.now()); c.airS = (c.airS || 0) + gap; }
-      else if (c.pos && c.pos.phase === "air" && pos.phase && pos.phase !== "air" && (c.airS || 0) >= FLIGHT_MIN_AIR_S) {   // landed after a real flight
-        const pf = this.profGet(key); pf.flights += 1; pf.saved = Date.now(); this.ctx.storage.put("prof:" + this.pkey(key), pf); c.airS = 0;
+      else if (c.pos && c.pos.phase === "air" && pos.phase && pos.phase !== "air" && !(Number.isFinite(Number(pos.landing_fpm)) && Number(pos.landing_fpm) <= HARD_LANDING_FPM)) {   // touchdown (not a crash)
+        const pf = this.profGet(key); pf.landings += 1;
+        if ((c.airS || 0) >= FLIGHT_MIN_AIR_S) pf.flights += 1;
+        c.airS = 0; pf.saved = Date.now(); this.ctx.storage.put("prof:" + this.pkey(key), pf);
       }
       c.pos = pos; c.seen = Date.now(); c.member = request.headers.get("X-Member") === "1";
       if (pos.phase === "air" && c.taxi) c.taxi = null;
@@ -1581,7 +1642,8 @@ export class Hub {
       if (pos.landing_fpm !== undefined && Number.isFinite(lf) && lf <= HARD_LANDING_FPM) {
         // hard landing = crash: the plane vanishes from traffic, an X is marked, the pilot waits CRASH_TIMEOUT_MS
         const now = Date.now();
-        const cr = { key, icao, callsign: normCallsign(c.plan.callsign ?? pos.callsign), latitude: lat, longitude: lon, member: !!c.member, landing_fpm: Math.round(lf), at: now, until: now + CRASH_TIMEOUT_MS };
+        const lk = this.lockFor(key, "crash", now, { latitude: lat, longitude: lon, landing_fpm: Math.round(lf) });
+        const cr = { key, icao, callsign: normCallsign(c.plan.callsign ?? pos.callsign), latitude: lat, longitude: lon, member: !!c.member, landing_fpm: Math.round(lf), at: now, until: lk.until };
         this.crashes.set(key, cr);
         await this.ctx.storage.put("crash:" + key, cr);
         this.clients.delete(key);

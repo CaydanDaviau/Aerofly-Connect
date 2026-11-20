@@ -34,9 +34,9 @@
       if (lv && newer(lv, cfg.version)) { updBar.style.display = ""; updBar.textContent = t("Update available: v" + lv + " (click to download)", "Atualização disponível: v" + lv + " (clique para baixar)"); } else updBar.style.display = "none";
       const left = (cfg.crashUntil || 0) - Date.now();
       banner.style.display = left > 0 ? "" : "none";
-      if (left > 0) banner.textContent = t("Crash timeout - you can fly again in ", "Castigo por queda - você pode voar de novo em ") + mmss(left);
+      if (left > 0) banner.textContent = t("Timeout - you can fly again in ", "Castigo por queda - você pode voar de novo em ") + mmss(left);
     };
-    upd(); healthT = setInterval(upd, 15000); tick = setInterval(() => { const left = (cfg.crashUntil || 0) - Date.now(); banner.style.display = left > 0 ? "" : "none"; if (left > 0) banner.textContent = t("Crash timeout - you can fly again in ", "Castigo por queda - você pode voar de novo em ") + mmss(left); }, 1000);
+    upd(); healthT = setInterval(upd, 15000); tick = setInterval(() => { const left = (cfg.crashUntil || 0) - Date.now(); banner.style.display = left > 0 ? "" : "none"; if (left > 0) banner.textContent = t("Timeout - you can fly again in ", "Castigo por queda - você pode voar de novo em ") + mmss(left); }, 1000);
     root.append(
       h("img", { class: "logo", src: "../assets/logo.png" }), h("h1", {}, "Aerofly Connect"),
       h("div", { class: "ver" }, "v" + cfg.version + " PC"), count, updBar, banner,
@@ -52,11 +52,16 @@
     const hm = s => { const m = Math.floor((s || 0) / 60); return Math.floor(m / 60) + " h " + String(m % 60).padStart(2, "0") + " min"; };
     const nick = h("input", { maxlength: "20", autocomplete: "off", spellcheck: "false" });
     const fl = h("div", { class: "big" }, "--"), fc = h("div", { class: "big" }, "--"), at = h("div", { class: "big" }, "--");
+    const ld = h("div", { class: "big" }, "--"), vi = h("div", { class: "big" }, "--"), pg = h("div", { class: "big" }, "--"), ag = h("div", { class: "big" }, "--"), nx = h("div", { class: "note" });
     const msg = h("div", { class: "note" });
     window.afc.profile().then(p => {
       if (screen !== "profile") return;
       if (!p || p.error) { msg.textContent = t("No connection", "Sem conexão"); return; }
       nick.value = p.nick || ""; fl.textContent = hm(p.flight_s); fc.textContent = String(p.flights || 0); at.textContent = hm(p.atc_s);
+      ld.textContent = String(p.landings || 0); vi.textContent = (p.violations || 0) + " / " + (p.penalty_points || 0) + " " + t("pts", "pts");
+      pg.textContent = p.pilot_grade || "--"; ag.textContent = p.all_roles ? t("All roles (Network)", "Todas as funções (Network)") : (p.atc_grade_name || "--");
+      const nm = { atc_s: t("ATC time", "Tempo de ATC"), gw: t("ground work actions", "ações de solo"), ops: t("takeoffs/landings at your airport", "decolagens/pousos no seu aeroporto"), app_s: t("APP time", "Tempo de APP") };
+      nx.textContent = p.next_grade && !p.all_roles ? t("Next grade: ", "Próximo nível: ") + p.next_grade + " - " + (p.next_req || []).map(q => nm[q.k] + " " + (/_s$/.test(q.k) ? (Math.floor(q.have / 360) / 10) + "/" + (q.need / 3600) + " h" : q.have + "/" + q.need)).join(", ") : "";
     });
     const save = h("button", { class: "wide primary", onclick: async () => {
       const p = await window.afc.profile(nick.value.trim());
@@ -68,7 +73,11 @@
       card(t("Pilot / controller", "Piloto / controlador"), h("label", {}, t("Nickname", "Apelido")), nick,
         h("label", {}, t("Flight time (in the air)", "Tempo de voo (no ar)")), fl,
         h("label", {}, t("Flights completed", "Voos concluídos")), fc,
-        h("label", {}, t("ATC time (holding a division)", "Tempo de ATC (com uma divisão)")), at),
+        h("label", {}, t("ATC time (holding a division)", "Tempo de ATC (com uma divisão)")), at,
+        h("label", {}, t("Landings", "Pousos")), ld,
+        h("label", {}, t("Violations / penalty points", "Infrações / pontos de penalidade")), vi,
+        h("label", {}, t("Pilot grade", "Nível de piloto")), pg,
+        h("label", {}, t("Controller grade", "Nível de controlador")), ag, nx),
       save, msg,
     );
   }
@@ -97,7 +106,7 @@
       const r = await window.afc.start();
       if (r && r.error) {
         const left = r.left ? mmss(r.left) : "";
-        sbMsg.textContent = { crash: t("Crash timeout: wait ", "Castigo por queda: aguarde ") + left, noip: t("Enter the sim device IP in Settings.", "Digite o IP do dispositivo do simulador em Configurações."), mobile: t("That is a mobile-data address. Use the Wi-Fi IP of the device running Aerofly.", "Esse é um endereço de dados móveis. Use o IP Wi-Fi do dispositivo com o Aerofly."), invalid: t("The sim IP is not valid.", "O IP do simulador não é válido.") }[r.error] || r.error;
+        sbMsg.textContent = { crash: t("Timeout: wait ", "Castigo: aguarde ") + left, noip: t("Enter the sim device IP in Settings.", "Digite o IP do dispositivo do simulador em Configurações."), mobile: t("That is a mobile-data address. Use the Wi-Fi IP of the device running Aerofly.", "Esse é um endereço de dados móveis. Use o IP Wi-Fi do dispositivo com o Aerofly."), invalid: t("The sim IP is not valid.", "O IP do simulador não é válido.") }[r.error] || r.error;
       }
     });
     const rows = {};

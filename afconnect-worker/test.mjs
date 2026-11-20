@@ -1,4 +1,5 @@
-import worker, { Hub } from "./src/index.js";
+import worker, { Hub, TEST } from "./src/index.js";
+TEST.skipGrades = true;
 const store = new Map();
 const ctx = { storage: { get: async k => store.get(k), put: async (k, v) => store.set(k, v), delete: async k => store.delete(k), list: async ({ prefix }) => new Map([...store].filter(([k]) => k.startsWith(prefix))) }, blockConcurrencyWhile: async f => f() };
 let hub = new Hub(ctx);
@@ -231,7 +232,7 @@ await call("DELETE", "/api/atc/tower?name=SBBR_TWR", null, "ctl");
   r = await up("soft1", P(-15.87, -47.92, 90, 5, 3400, 0, { landing_fpm: -300 }));
   console.log("soft landing ok:", r.startsWith("200") ? "PASS" : "FAIL " + r);
   // timeout over: allowed again
-  store.set("crash:cr1", { ...store.get("crash:cr1"), until: Date.now() - 1 }); hub = new Hub(ctx); await new Promise(r => setTimeout(r, 0));
+  store.set("crash:cr1", { ...store.get("crash:cr1"), until: Date.now() - 1 }); store.set("lock:cr1", { ...store.get("lock:cr1"), until: Date.now() - 1 }); hub = new Hub(ctx); await new Promise(r => setTimeout(r, 0));
   r = await up("cr1", P(-15.87, -47.92, 90, 5, 3400));
   console.log("after timeout ok:", r.startsWith("200") ? "PASS" : "FAIL " + r);
   const h = JSON.parse((await call("GET", "/api/health", null, null)).slice(4));

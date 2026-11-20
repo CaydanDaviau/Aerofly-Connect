@@ -1,5 +1,6 @@
 import zlib from "node:zlib";
-import worker, { Hub } from "./src/index.js";
+import worker, { Hub, TEST } from "./src/index.js";
+TEST.skipGrades = true;
 import { decodeTile, graphFromTiles, nearest, holdNode, route, legs, dist } from "./src/taxi.js";
 const T = (n, v) => console.log("tiles " + n + ":", v ? "PASS" : "FAIL");
 // ---- tiny MVT encoder

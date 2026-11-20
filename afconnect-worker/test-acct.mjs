@@ -1,4 +1,5 @@
-import worker, { Hub } from "./src/index.js";
+import worker, { Hub, TEST } from "./src/index.js";
+TEST.skipGrades = true;
 const store = new Map();
 const ctx = { storage: { get: async k => store.get(k), put: async (k, v) => store.set(k, v), delete: async k => store.delete(k), list: async ({ prefix }) => new Map([...store].filter(([k]) => k.startsWith(prefix))) }, blockConcurrencyWhile: async f => f(), acceptWebSocket() {}, setWebSocketAutoResponse() {}, getWebSockets: () => [] };
 let hub = new Hub(ctx);

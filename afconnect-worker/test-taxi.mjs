@@ -1,4 +1,5 @@
-import worker, { Hub } from "./src/index.js";
+import worker, { Hub, TEST } from "./src/index.js";
+TEST.skipGrades = true;
 import { buildGraph, nearest, holdNode, holdNodes, pickHold, route, legs, spokenName } from "./src/taxi.js";
 const T = (n, v) => console.log("taxi " + n + ":", v ? "PASS" : "FAIL");
 // synthetic airport: runway 09/27 along lat 0, parallel taxiway A (north), connectors B (east), C (west), crossing D to taxiway S (south)
