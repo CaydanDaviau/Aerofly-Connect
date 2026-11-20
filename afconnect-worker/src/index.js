@@ -1746,7 +1746,7 @@ export class Hub {
         const pr = this.prof.get(pk) || {}, ac = pk.startsWith("a:") ? this.accts.get(pk.slice(2)) : null;
         let online = null; for (const [k, c] of this.clients) if (c.pos && this.pkey(k) === pk) { online = c; break; }
         const lk = this.locks.get(pk), g = atcGrade(pr);
-        return { id: pid(pk), name: ac ? ac.display : "", nick: pr.nick || "", account: !!ac, online: !!online, callsign: online && online.plan ? online.plan.callsign || "" : "", flight_s: Math.round(pr.flight_s || 0), atc_s: Math.round(pr.atc_s || 0), flights: pr.flights || 0, landings: pr.landings || 0, violations: pr.violations || 0, vpts: pr.vpts || 0, timeouts: pr.timeouts || 0, cviol: pr.cviol || 0, atc_grade: g, atc_grade_name: GRADE_NAMES[g], grade_manual: Number.isInteger(pr.gov), pilot_grade: pilotGrade(pr), banned: !!pr.banned, ban_reason: pr.banned ? pr.banned.reason || "" : "", timeout_s: lk && lk.until > now ? Math.ceil((lk.until - now) / 1000) : 0, timeout_reason: lk && lk.until > now ? lk.note || lk.reason : "" };
+        return { id: pid(pk), name: ac ? ac.display : "", nick: pr.nick || "", account: !!ac, online: !!online, callsign: online && online.plan ? online.plan.callsign || "" : "", flight_s: Math.round(pr.flight_s || 0), atc_s: Math.round(pr.atc_s || 0), flights: pr.flights || 0, landings: pr.landings || 0, violations: pr.violations || 0, vpts: pr.vpts || 0, timeouts: pr.timeouts || 0, cviol: pr.cviol || 0, strikes_today: pr.sday === new Date().toISOString().slice(0, 10) ? pr.sn || 0 : 0, atc_grade: g, atc_grade_name: GRADE_NAMES[g], grade_manual: Number.isInteger(pr.gov), pilot_grade: pilotGrade(pr), banned: !!pr.banned, ban_reason: pr.banned ? pr.banned.reason || "" : "", timeout_s: lk && lk.until > now ? Math.ceil((lk.until - now) / 1000) : 0, timeout_reason: lk && lk.until > now ? lk.note || lk.reason : "" };
       };
       const find = id => { id = String(id || ""); if (id.startsWith("a:")) return this.prof.has(id) || this.accts.has(id.slice(2)) ? id : null; for (const k of this.prof.keys()) if (!k.startsWith("a:") && pid(k) === id) return k; return null; };
       if (m === "GET") {
@@ -1769,6 +1769,14 @@ export class Hub {
           const lk = { until: now + mins * 60_000, reason: "manager", at: now, note: reason }; this.locks.set(pk, lk); await this.ctx.storage.put("lock:" + pk, lk); drop();
         }
         else if (a === "untimeout") { this.locks.delete(pk); await this.ctx.storage.delete("lock:" + pk); }
+        else if (a === "reset_penalties") {
+          for (const f of ["violations", "vpts", "timeouts", "cviol", "sn"]) pr[f] = 0;
+          pr.sday = ""; this.locks.delete(pk); await this.ctx.storage.delete("lock:" + pk);
+        }
+        else if (a === "set_stats") {
+          const st = d.stats || {}, map = { violations: "violations", vpts: "vpts", timeouts: "timeouts", cviol: "cviol", strikes_today: "sn" };
+          for (const k of Object.keys(st)) { if (!map[k]) continue; const v = Math.round(Number(st[k])); if (!(v >= 0 && v <= 99999)) return json({ error: "bad_value", field: k }, 400); pr[map[k]] = v; if (k === "strikes_today") pr.sday = new Date().toISOString().slice(0, 10); }
+        }
         else if (a === "ban") { pr.banned = { at: now, reason }; drop(); }
         else if (a === "unban") delete pr.banned;
         else return json({ error: "bad_action" }, 400);

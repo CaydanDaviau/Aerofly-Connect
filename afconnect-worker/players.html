@@ -50,7 +50,12 @@ function card(p){const c=el("div","c"),h=el("div");const nm=p.name||p.nick||"(de
  const r2=el("div","row"),mi=el("input");mi.type="number";mi.min=1;mi.placeholder="minutes";r2.append(mi,bt("Timeout","d",()=>{const n=parseInt(mi.value);if(!(n>=1)){msg("Enter minutes",true);return}act(p.id,"timeout",{minutes:n})}));
  if(p.timeout_s)r2.append(bt("End timeout","s",()=>act(p.id,"untimeout")));
  r2.append(p.banned?bt("Unban","s",()=>act(p.id,"unban")):bt("Ban","d",()=>{if(confirm("Ban "+nm+" from flying and ATC?"))act(p.id,"ban")}));
- c.append(r2);return c}
+ c.append(r2);
+ const r3=el("div","row"),ed=el("div","row");ed.hidden=true;const F=[["violations","Viol."],["vpts","Points"],["timeouts","Timeouts"],["cviol","ATC viol."],["strikes_today","Strikes today"]],ins={};
+ for(const [k,l] of F){const w=el("div","dim",l),i=el("input");i.type="number";i.min=0;i.value=p[k]||0;i.style.width="64px";ins[k]=i;w.append(i);ed.append(w)}
+ ed.append(bt("Save","",()=>{const st={};for(const k in ins)st[k]=ins[k].value;act(p.id,"set_stats",{stats:st})}));
+ r3.append(bt("Edit violations","s",()=>{ed.hidden=!ed.hidden}),bt("Reset all penalties","d",()=>{if(confirm("Zero violations, points, timeouts, strikes and end any active timeout for "+nm+"?"))act(p.id,"reset_penalties")}));
+ c.append(r3,ed);return c}
 let seq=0;
 async function load(){const n=++seq,r=await api("GET","/api/manager/players?q="+encodeURIComponent($("q").value.trim()));if(n!==seq)return;if(r.s!==200){show(false);return}
  const L=$("list");L.textContent="";if(!r.j.players.length)L.append(el("div","dim","No players found."));
