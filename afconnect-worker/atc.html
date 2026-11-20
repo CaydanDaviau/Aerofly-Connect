@@ -537,11 +537,12 @@ function renderStrips(force){
     var cruise=a.cruise_altitude||a.cruise_altitude_ft||a.cruise_alt||'';
     var ctl=isSel&&!tw?'<div class="ctl"><input id="sqin" inputmode="numeric" maxlength="4" placeholder="'+(asg||'0000')+'" value="'+esc(asg||'')+'">'+
       '<button data-act="set">'+L('Assign','Atribuir')+'</button><button data-act="auto">Auto</button><button data-act="clear">'+L('Clear','Limpar')+'</button></div>'+
+      '<div class="ctl"><button class="ptt'+(voiceOn&&a.voice!==false?'':' off')+'" id="ptt" data-icao="'+esc(id)+'" data-cs="'+esc(a.callsign||id)+'" data-voice="'+(a.voice===false?'0':'1')+'">'+(a.voice===false?L('Pilot voice off','Voz do piloto desligada'):L('Hold to talk','Segure para falar'))+'</button></div>'+
       clrCtl(a)+
       (a.phase==='air'?'':'<div class="ctl">'+(txMode===id?(txPrev&&txPrev.id===id?'<button data-act="txsend">'+L('Send route','Enviar rota')+'</button>':'<span class="m">'+L('Click the destination on the radar','Clique no destino no radar')+'</span>')+'<button data-act="txcancel">'+L('Cancel','Cancelar')+'</button>':'<button data-act="txr">'+L('Taxi route','Rota de táxi')+'</button>'+(a.has_taxi?'<button data-act="txclr">'+L('Clear route','Limpar rota')+'</button>':''))+'</div>')+
       '<div class="ctl hdg"><button data-act="hdgs" data-d="-10">&lsaquo;10</button><button data-act="hdgs" data-d="-5">&lsaquo;5</button><input id="hdgin" inputmode="numeric" maxlength="3" value="'+hdgVal(a)+'"><button data-act="hdgs" data-d="5">5&rsaquo;</button><button data-act="hdgs" data-d="10">10&rsaquo;</button></div>'+
       '<div class="ctl hdg"><button data-act="hdgsend" data-t="L">&larr; '+L('Left','Esq.')+'</button><button data-act="hdgsend" data-t="F">'+L('Fly heading','Voar proa')+'</button><button data-act="hdgsend" data-t="R">'+L('Right','Dir.')+' &rarr;</button></div>'+
-      '':'';
+      '<div class="ctl"><input id="msgin" maxlength="300" placeholder="'+L('Message to pilot','Mensagem ao piloto')+'"><label class="urg"><input type="checkbox" id="urg"'+(urgent?' checked':'')+'> '+L('Urgent','Urgente')+'</label><button data-act="msg">'+L('Send','Enviar')+'</button></div>':'';
     var ho=handUi(a,isSel&&!tw);
     var vc=vclips.filter(function(v){return v.icao_address===id&&isHeard(v.freq)}).slice(-3).map(function(v){return'<div class="mlog chat"><b>'+L('PILOT voice','PILOTO voz')+'</b> '+Math.round((v.ms||0)/1000)+' s <button data-act="vplay" data-clip="'+esc(v.id)+'">&#9654;</button></div>'}).join('');
     var ml=vc+msgs.filter(function(m){return m.icao_address===id&&(m.kind!=='chat'||isHeard(m.freq))}).slice(-3).map(function(m){return m.kind==='chat'?'<div class="mlog chat"><b>'+L('PILOT','PILOTO')+':</b> '+esc(m.text)+'</div>':'<div class="mlog">&rsaquo; '+esc(m.text)+' &mdash; <b class="'+esc(m.status)+'">'+esc(m.status.toUpperCase())+'</b></div>'}).join('');
@@ -609,7 +610,7 @@ function postMsg(id,t,el){
    .catch(function(){toast(L('Network error','Erro de rede'))})}
 $('strips').addEventListener('input',function(e){if(e.target.id==='hdgin'&&sel){var v=parseInt(e.target.value,10);if(v>=0&&v<=360){hdgSel[sel]=hdgNorm(v);draw()}}});
 $('strips').addEventListener('change',function(e){if(e.target.id==='urg')urgent=e.target.checked});
-$('strips').addEventListener('keydown',function(e){if(e.key==='Enter'&&e.target.id==='altin'){var s0=e.target.closest('.strip');if(s0&&e.target.value)clrSend(s0.getAttribute('data-id'),'alt',true,e.target.value)}if(e.key==='Enter'&&e.target.hasAttribute&&e.target.hasAttribute('data-fmsg')){var fb=e.target.closest('.fqbox').querySelector('[data-fsend]');if(fb)fb.click()}});
+$('strips').addEventListener('keydown',function(e){if(e.key==='Enter'&&e.target.id==='altin'){var s0=e.target.closest('.strip');if(s0&&e.target.value)clrSend(s0.getAttribute('data-id'),'alt',true,e.target.value)}if(e.key==='Enter'&&e.target.id==='msgin'){var s=e.target.closest('.strip');if(s)sendMsg(s.getAttribute('data-id'))}});
 function clearSq(id){api('/api/atc/squawk?icao_address='+encodeURIComponent(id)+'&holder='+encodeURIComponent(holder)+'&freq='+encodeURIComponent(talkFreq()),{method:'DELETE'}).then(function(r){return r.json().then(function(j){toast(r.ok?L('Cleared','Removido'):(j.error==='not_tuned'||j.error==='outside_airspace')?NOTTUNED(j):j.error==='division_required'?L('Claim a role first','Assuma uma função primeiro'):L('Error: ','Erro: ')+(j.error||r.status));poll(true)})})}
 
 /* ---------- virtual towers ---------- */
@@ -773,31 +774,16 @@ function twClick(e){var b=e.target.closest('button');if(!b)return;
   n=b.getAttribute('data-appr');if(n){var aq=n.split('|');kickAct('/api/atc/approval',{airport:aq[0],on:aq[1]==='1'},aq[1]==='1'?L('Approval required for new controllers','Novos controladores precisam de aprovação'):L('Approval off','Aprovação desligada'));return}
   n=b.getAttribute('data-apv');if(n){var pq=n.split('|');kickAct('/api/atc/approve',{airport:pq[0],hid:pq[1],allow:pq[2]==='1'},pq[2]==='1'?L('Approved - they can claim now','Aprovado - já pode assumir'):L('Denied','Negado'));return}
   n=b.getAttribute('data-unban');if(n){var uq=n.split('|');kickAct('/api/atc/unban',{airport:uq[0],hid:uq[1]},L('Unblocked','Desbloqueado'));return}
-  n=b.getAttribute('data-fsend');if(n){fqSend(n,b);return}
   n=b.getAttribute('data-atis');if(n){var u=atisPanelFor(n);u.open=!u.open;$('twList')._sig=null;renderTowerBox();if(u.open)atisLoad(n);return}
   var act=b.getAttribute('data-act'),row=b.closest('[data-tower]');if(act&&row)atisAct(row.getAttribute('data-tower'),act)}
 var twRows={};
-/* speak / write to a whole frequency: everyone tuned to it hears it (per-pilot actions stay on the strips) */
-function fqBox(fq){var e=esc(fq);return'<div class="fqbox" data-fq="'+e+'" style="margin:2px 0 6px;padding:6px;border:1px solid #2a3b46;border-radius:8px">'
- +'<div class="row"><span class="m">'+e+' &middot; <b data-stat="'+e+'">&hellip;</b></span><button class="ptt" data-freq="'+e+'">'+L('Speak on frequency','Falar na frequência')+'</button></div>'
- +'<div class="row" style="margin-top:4px;gap:4px"><input data-fmsg="'+e+'" maxlength="300" placeholder="'+L('Message to frequency','Mensagem à frequência')+'" style="flex:1;min-width:0"><button data-fsend="'+e+'">'+L('Send','Enviar')+'</button></div>'
- +'<div data-flog="'+e+'"></div></div>'}
-function fqStats(){var m={};ac.forEach(function(a){(a.positions||[]).forEach(function(q){if(q.freq&&q.pilots!=null)m[q.freq]=q})});
-  Object.keys(twRows).forEach(function(n){var row=twRows[n];
-    row.querySelectorAll('[data-stat]').forEach(function(el){var q=m[el.getAttribute('data-stat')];if(!q){el.textContent='';return}
-      el.textContent=q.pilots+L(q.pilots===1?' pilot':' pilots',q.pilots===1?' piloto':' pilotos')+' \u00b7 '+q.ctls+L(q.ctls===1?' controller':' controllers',q.ctls===1?' controlador':' controladores')});
-    row.querySelectorAll('[data-flog]').forEach(function(el){var f=el.getAttribute('data-flog'),h=msgs.filter(function(x){return x.kind==='freq'&&x.freq===f}).slice(-3).map(function(x){return'<div class="mlog">&rsaquo; '+esc(x.text)+' &mdash; <b>'+L('heard by ','ouvido por ')+(x.n||0)+'</b></div>'}).join('');if(el._h!==h){el._h=h;el.innerHTML=h}})})}
-function fqSend(f,b){var bx=b.closest('.fqbox'),inp=bx&&bx.querySelector('[data-fmsg]'),t=inp?(inp.value||'').trim():'';if(!t){toast(L('Type a message','Digite uma mensagem'));return}
-  api('/api/atc/freqmsg',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({holder:holder,freq:f,text:t})})
-   .then(function(r){return r.json().then(function(j){if(!r.ok){toast(j.error==='division_required'?L('Claim a role first','Assuma uma função primeiro'):L('Error: ','Erro: ')+(j.error||r.status));return}inp.value='';var hb=j.heard_by;toast(L('Sent to '+f+' ('+hb+(hb===1?' pilot)':' pilots)'),'Enviado a '+f+' ('+hb+(hb===1?' piloto)':' pilotos)')));poll(true)})})
-   .catch(function(){toast(L('Network error','Erro de rede'))})}
 function mountTowers(){var ms=document.querySelectorAll('.twmount');for(var i=0;i<ms.length;i++){var r=twRows[ms[i].getAttribute('data-mount')];if(r&&r.parentNode!==ms[i]){ms[i].innerHTML='';ms[i].appendChild(r)}}}
 function isOwned(a){var n=String(a.callsign).replace(/^ATC_/,'');return a.owner_hid===myHid||myApts.some(function(x){return x.name===n})}
 function renderTowerBox(){var box=$('twList'),names=ac.filter(function(a){return a.virtual_tower}).map(function(a){return String(a.callsign).replace(/^ATC_/,'')});
   for(var k in atisUI)if(names.indexOf(k)<0)delete atisUI[k];
   var twOf=function(n){return ac.filter(function(x){return x.virtual_tower&&x.callsign==='ATC_'+n})[0]||{}};
   var sig=names.map(function(n){var t=twOf(n);return n+(atisUI[n]&&atisUI[n].open?'+':'')+(t.owner_hid===myHid||isMember?'o':'')+(t.bans||[]).map(function(b){return b.hid+b.pos}).join('')+(t.approval?'A':'a')+(t.pending||[]).map(function(p){return p.hid+p.pos}).join('')+(t.positions||[]).map(function(p){return p.pos+(p.claimed?'c':'')+(p.freq||'')+(p.ctl||p.nick||'')+(myTowers.some(function(x){return x.name===n+'_'+p.pos})?'m':'')}).join('.')}).join(',')+'|'+myTowers.map(function(x){return x.name}).join('.')+'|'+talkName+'#';
-  if(box._sig===sig){fqStats();return}box._sig=sig;   /* unchanged: leave the DOM alone so typed text is kept */
+  if(box._sig===sig)return;box._sig=sig;   /* unchanged: leave the DOM alone so typed text is kept */
   twRows={};
   if(!names.length)return;
   names.forEach(function(n){var row=document.createElement('div'),u=atisUI[n],tw0=twOf(n),pl=tw0.positions||[];row.setAttribute('data-tower',n);
@@ -806,14 +792,13 @@ function renderTowerBox(){var box=$('twList'),names=ac.filter(function(a){return
     ['DEL','GND','TWR','APP','CTR'].forEach(function(r){var nm=n+'_'+r,p=pl.filter(function(x){return x.pos===r})[0],mine=myTowers.some(function(x){return x.name===nm}),taken=p&&p.claimed&&!mine,act=mine&&talkName===nm;
       h+='<div class="row" style="margin-top:3px"><span><b>'+r+'</b> <span class="m">'+(mine?L('you','você'):taken?L('taken','ocupada'):L('free','livre'))+(p&&p.freq?' '+esc(p.freq):'')+(p&&p.claimed&&(p.ctl||p.nick)?' &middot; '+esc(p.ctl||p.nick):'')+'</span></span><span>'
         +(mine?'<button data-open="'+esc(nm)+'"'+(act?' style="border-color:#4FE3D0;color:#4FE3D0"':'')+'>'+(act?L('Open ✓','Aberta ✓'):L('Open','Abrir'))+'</button> <button data-rel="'+esc(nm)+'">'+L('Release','Liberar')+'</button>'
-        :taken?(canMod?'<button data-kick="'+esc(n)+'|'+r+'">'+L('Kick','Expulsar')+'</button>':''):'<input data-f="'+esc(nm)+'" maxlength="7" placeholder="'+esc(defFreq(n,r)||'121.900')+'" inputmode="decimal" style="width:70px"> <button data-claim="'+esc(n)+'|'+r+'">'+L('Claim','Assumir')+'</button>')+'</span></div>';
-      if(mine&&p&&p.freq)h+=fqBox(p.freq)});
+        :taken?(canMod?'<button data-kick="'+esc(n)+'|'+r+'">'+L('Kick','Expulsar')+'</button>':''):'<input data-f="'+esc(nm)+'" maxlength="7" placeholder="'+esc(defFreq(n,r)||'121.900')+'" inputmode="decimal" style="width:70px"> <button data-claim="'+esc(n)+'|'+r+'">'+L('Claim','Assumir')+'</button>')+'</span></div>'});
     if(canMod){h+='<div class="row" style="margin-top:3px"><span class="m">'+L('New controllers need approval: ','Novos controladores precisam de aprovação: ')+'<b>'+(tw0.approval?L('on','ligado'):L('off','desligado'))+'</b></span><span><button data-appr="'+esc(n)+'|'+(tw0.approval?'0':'1')+'">'+(tw0.approval?L('Turn off','Desligar'):L('Turn on','Ligar'))+'</button></span></div>';
       (tw0.pending||[]).forEach(function(p){h+='<div class="row" style="margin-top:3px"><span class="m warn">'+L('wants ','quer ')+esc(p.pos)+' &middot; '+esc(p.name||('#'+p.hid))+'</span><span><button data-apv="'+esc(n)+'|'+esc(p.hid)+'|1">'+L('Approve','Aprovar')+'</button> <button data-apv="'+esc(n)+'|'+esc(p.hid)+'|0">'+L('Deny','Negar')+'</button></span></div>'})}
     if(canMod)(tw0.bans||[]).forEach(function(b){h+='<div class="row" style="margin-top:3px"><span class="m">'+L('blocked ','bloqueado ')+esc(b.pos)+' #'+esc(b.hid)+'</span><span><button data-unban="'+esc(n)+'|'+esc(b.hid)+'">'+L('Unban','Desbloquear')+'</button></span></div>'});
     row.innerHTML=h;
     if(u&&u.open){row.appendChild(u.el);atisFill(n)}
-    twRows[n]=row});mountTowers();fqStats()}
+    twRows[n]=row});mountTowers()}
 // prompt() does not exist in the PC app (Electron), so ask in a small in-page box
 function askText(msg,def,cb){
   var o=document.createElement('div');o.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px';
@@ -930,23 +915,23 @@ function voiceStreamEvent(j){
 }
 function pttStart(btn){
   if(!voiceOn){toast(L('Turn Voice on first','Ligue a voz primeiro'));return}
+  if(btn.getAttribute('data-voice')==='0'){toast(btn.getAttribute('data-cs')+L(" can't listen to voice, send text instead",' não pode ouvir voz, envie texto'));return}
   if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia||!window.AudioContext){toast(L('Live microphone not supported','Microfone ao vivo indisponível'));return}
   if(!ws||ws.readyState!==1){toast(L('Live connection unavailable','Conexão ao vivo indisponível'));return}
-  pttBusy=true;pttBtn=btn;btn._lbl=btn.textContent;btn.classList.add('rec');btn.textContent=L('ON AIR · release to stop','NO AR · solte para parar');
+  pttBusy=true;btn.classList.add('rec');btn.textContent=L('LIVE PTT · release to stop','PTT AO VIVO · solte para parar');
   var cancelled=false,streamId='atc'+Date.now().toString(36)+Math.random().toString(36).slice(2,7),st=null,src=null,proc=null,ctx=null,sent=0,localChunks=[];
   rec={cancel:function(){cancelled=true}};
   navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,channelCount:1}}).then(function(media){
     if(!pttBusy||cancelled){media.getTracks().forEach(function(t){t.stop()});return}st=media;ctx=ac_();src=ctx.createMediaStreamSource(st);proc=ctx.createScriptProcessor(2048,1,1);
-    ws.send(JSON.stringify({voice_stream:'start',id:streamId,direction:'down',holder:holder,freq:btn.getAttribute('data-freq'),sampleRate:ctx.sampleRate}));
+    ws.send(JSON.stringify({voice_stream:'start',id:streamId,direction:'down',holder:holder,icao_address:btn.getAttribute('data-icao'),freq:talkFreq(),sampleRate:ctx.sampleRate}));
     proc.onaudioprocess=function(e){if(!pttBusy||!ws||ws.readyState!==1)return;var f=e.inputBuffer.getChannelData(0),chunk=new Float32Array(f);if(sent<20000){var b=pcmB64(chunk);ws.send(JSON.stringify({voice_stream:'chunk',id:streamId,data:b}));localChunks.push(pcmFromB64(b));sent+=chunk.length*1000/ctx.sampleRate}var out=e.outputBuffer.getChannelData(0);out.fill(0)};
     src.connect(proc);proc.connect(ctx.destination);rec={cancel:function(){cancelled=true}};
     rec.stop=function(){try{proc.disconnect();src.disconnect()}catch(e){};if(st)st.getTracks().forEach(function(t){t.stop()});if(ws&&ws.readyState===1)ws.send(JSON.stringify({voice_stream:'end',id:streamId}));streamPlay(localChunks,ctx?ctx.sampleRate:16000);};
-  }).catch(function(){pttStop();toast(L('Microphone blocked','Microfone bloqueado'))})}
-var pttBtn=null;
-function pttStop(){if(!pttBusy)return;pttBusy=false;if(pttBtn){pttBtn.classList.remove('rec');pttBtn.textContent=pttBtn._lbl||pttBtn.textContent;pttBtn=null}if(rec&&rec.stop)rec.stop();else if(rec&&rec.cancel)rec.cancel();rec=null;renderStrips(true)}
-$('strips').addEventListener('pointerdown',function(e){var b=e.target.closest('.ptt');if(b){e.preventDefault();try{b.setPointerCapture(e.pointerId)}catch(x){}pttStart(b)}});
-['pointerup','pointercancel'].forEach(function(n){document.addEventListener(n,function(){pttStop()},true)});
-$('strips').addEventListener('contextmenu',function(e){if(e.target.closest('.ptt'))e.preventDefault()});
+  }).catch(function(){pttBusy=false;toast(L('Microphone blocked','Microfone bloqueado'));renderStrips(true)})}
+function pttStop(){if(!pttBusy)return;pttBusy=false;if(rec&&rec.stop)rec.stop();else if(rec&&rec.cancel)rec.cancel();rec=null;renderStrips(true)}
+$('strips').addEventListener('pointerdown',function(e){var b=e.target.closest('#ptt');if(b){e.preventDefault();try{b.setPointerCapture(e.pointerId)}catch(x){}pttStart(b)}});
+['pointerup','pointercancel'].forEach(function(n){$('strips').addEventListener(n,function(e){if(e.target.closest('#ptt'))pttStop()})});
+$('strips').addEventListener('contextmenu',function(e){if(e.target.closest('#ptt'))e.preventDefault()});
 /* ---------- WebSocket (push); polling stays as fallback ---------- */
 var ws=null,wsAt=0,wsTry=0,wsTimer=0,wsPing=0;
 function wsLive(){return ws&&ws.readyState===1&&Date.now()-wsAt<12000}
