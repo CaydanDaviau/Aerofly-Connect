@@ -828,7 +828,7 @@ export class Hub {
         c.emerg = null;
       } else if (now > st.grace) {
         if (cur === "ground" && gs >= 10 && !(g.taxi > now) && !(g.takeoff > now)) this.violate(key, c, st, "taxi", apt, "", now, quiet);
-        if (cur === "runway" && !(g.takeoff > now) && now - (st.landedAt || 0) > 120_000 && (p.on_rwy || gs >= 15)) this.violate(key, c, st, "runway", apt, onRwys[0] || "", now, quiet);
+        if (cur === "runway" && !(g.takeoff > now) && now - (st.landedAt || 0) > 120_000 && (g.taxi > now ? gs > 35 : (p.on_rwy || gs >= 15))) this.violate(key, c, st, "runway", apt, onRwys[0] || "", now, quiet);   // a human taxi clearance includes entering/crossing runways; only > 35 kt counts as a takeoff attempt
       }
     }
   }

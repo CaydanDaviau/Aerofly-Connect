@@ -36,3 +36,13 @@ r = await call("PUT", "/api/atc/timeout", { icao_address: "BBB222", holder: "hc"
 const mp = hub.profGet("m1"); t("no penalty/violation/timeout count on account", mp.pen === 0 && mp.vpts === 0 && mp.violations === 0 && (mp.timeouts || 0) === 0);
 r = await call("PUT", "/api/position", { latitude: 1, longitude: 2 }, "m1", M); t("pilot gets 423 with reason + time", r.s === 423 && r.j.error === "timeout" && r.j.note === "Ignored instructions" && r.j.remaining_s > 590);
 console.log("FAILS: " + fails);
+// human taxi clearance: entering a runway is fine, only > 35 kt counts as a takeoff attempt
+{
+  TEST.warnLimit = 0;
+  const run = (gs, taxi) => { const c = { pos: { ground_speed: gs, on_rwy: true, rwy_on: "27", latitude: 1, longitude: 2 }, plan: { callsign: "H1" } }, now = Date.now(), st = { viol: {}, grace: 0, gr: { taxi: taxi ? now + 60_000 : 0, takeoff: 0 } };
+    hub.humanTrack("hx", c, st, "runway", "runway", now, "SBBR"); return !!st.viol.runway; };
+  t("taxi clearance, 20 kt on runway: no violation", run(20, true) === false);
+  t("taxi clearance, 40 kt on runway: violation", run(40, true) === true);
+  t("no taxi clearance, on runway: violation", run(5, false) === true);
+}
+console.log("FAILS: " + fails);
