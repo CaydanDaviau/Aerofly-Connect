@@ -17,11 +17,16 @@ public class ControllerActivity extends Activity {
     private WebView web;
     private View err;
     private boolean failed;
-    private String url() { return BuildConfig.SERVER_URL + "/atc?key=" + Api.key(this) + "&lang=" + Api.uiLang(this) + (Api.voiceOn(this) ? "" : "&voice=0") + "&group=" + java.net.URLEncoder.encode(Api.group); }
+    private boolean train;
+    private String url() {
+        if (train) return BuildConfig.SERVER_URL + "/train?key=" + Api.key(this) + "&lang=" + Api.uiLang(this);
+        return BuildConfig.SERVER_URL + "/atc?key=" + Api.key(this) + "&lang=" + Api.uiLang(this) + (Api.voiceOn(this) ? "" : "&voice=0") + "&group=" + java.net.URLEncoder.encode(Api.group);
+    }
 
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
+        train = "train".equals(getIntent().getStringExtra("page"));
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
         web = new WebView(this);
         web.getSettings().setJavaScriptEnabled(true);
@@ -53,7 +58,7 @@ public class ControllerActivity extends Activity {
         setContentView(root);
         if (Api.voiceOn(this) && !Mic.permitted(this)) requestPermissions(new String[] { android.Manifest.permission.RECORD_AUDIO }, 5);
         web.loadUrl(url());
-        RadioPlayer.start(this, "ctl");   // background radio (only plays if enabled in Settings)
+        if (!train) RadioPlayer.start(this, "ctl");   // background radio (only plays if enabled in Settings)
     }
 
     @Override
@@ -64,7 +69,7 @@ public class ControllerActivity extends Activity {
 
     @Override
     protected void onDestroy() {
-        RadioPlayer.stop("ctl");
+        if (!train) RadioPlayer.stop("ctl");
         super.onDestroy();
     }
 

@@ -42,6 +42,7 @@
       h("div", { class: "ver" }, "v" + cfg.version + " PC"), count, updBar, banner,
       h("div", { class: "card click", onclick: () => go("pilot") }, h("h2", {}, "Pilot"), h("p", {}, t("Share your flight with other pilots and ATC", "Compartilhe seu voo com outros pilotos e o ATC"))),
       h("div", { class: "card click", onclick: () => window.afc.open("atc") }, h("h2", {}, t("Controller", "Controlador")), h("p", {}, t("See the radar and message pilots (opens in your browser)", "Veja o radar e envie mensagens aos pilotos (abre no navegador)"))),
+      h("div", { class: "card click", onclick: () => window.afc.open("train") }, h("h2", {}, t("Training", "Treino")), h("p", {}, t("Practice Tower and Approach with AI traffic (opens in your browser)", "Pratique Torre e Aproximação com tráfego de IA (abre no navegador)"))),
       h("button", { class: "wide", onclick: () => go("profile") }, t("Profile", "Perfil")),
       h("button", { class: "wide", onclick: () => go("settings") }, t("Settings", "Configurações")),
     );

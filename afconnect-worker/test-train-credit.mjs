@@ -1,0 +1,41 @@
+import worker, { Hub, TEST } from "./src/index.js";
+const store = new Map();
+const ctx = { storage: { get: async k => store.get(k), put: async (k, v) => store.set(k, v), delete: async k => store.delete(k), list: async ({ prefix }) => new Map([...store].filter(([k]) => k.startsWith(prefix))) }, blockConcurrencyWhile: async f => f(), acceptWebSocket() {}, setWebSocketAutoResponse() {}, getWebSockets: () => [] };
+const hub = new Hub(ctx);
+let fails = 0; const t = (n, c) => { console.log(n + ": " + (c ? "PASS" : "FAIL")); if (!c) fails++; };
+const call = async (method, path, body, key = "k1") => { const r = await hub.fetch(new Request("https://x" + path, { method, body: body && JSON.stringify(body), headers: { "X-API-Key": key, "X-Member": "0", "Content-Type": "application/json" } })); return { s: r.status, j: await r.json() }; };
+TEST.skipGrades = false;
+const rep = (o = {}) => ({ role: "twr", apt: "EHAM", score: 80, handled: 12, strikes: 0, dur: 600, ops: 10, sid: "s" + Math.random(), ...o });
+const reset = (key = "k1") => { const p = hub.profGet(key); if (p.tr) p.tr.last = 0; return p; };
+let r = await call("PUT", "/api/training/result", rep({ dur: 100, handled: 3, ops: 2 }));
+t("too short: no credit", r.s === 200 && r.j.reason === "too_short" && !r.j.credited.atc_s);
+reset(); r = await call("PUT", "/api/training/result", rep());
+t("valid tower session: 5 min ATC (half of 10 min) + 10 ops, no app time", r.s === 200 && r.j.credited.atc_s === 300 && r.j.credited.ops === 10 && !r.j.credited.app_s);
+t("profile fields updated", hub.profGet("k1").atc_s === 300 && hub.profGet("k1").ops === 10);
+const sid = "dup1"; reset(); await call("PUT", "/api/training/result", rep({ sid, handled: 4, ops: 0, dur: 300 }));
+reset(); r = await call("PUT", "/api/training/result", rep({ sid, handled: 4, ops: 0, dur: 300 })); t("same session id twice: counted once", r.j.reason === "duplicate");
+reset(); await call("PUT", "/api/training/result", rep({ handled: 4, ops: 0, dur: 300 })); r = await call("PUT", "/api/training/result", rep()); t("two reports within a minute: 429", r.s === 429);
+reset(); r = await call("PUT", "/api/training/result", rep({ role: "app", ops: 8 }));
+t("approach session also credits APP time", r.s === 200 && r.j.credited.app_s === r.j.credited.atc_s && r.j.credited.app_s > 0);
+reset(); r = await call("PUT", "/api/training/result", rep({ handled: 100, dur: 200, ops: 10 })); t("implausible rate rejected", r.s === 400 && r.j.error === "implausible");
+reset(); r = await call("PUT", "/api/training/result", rep({ ops: 20, handled: 12 })); t("ops above handled rejected", r.s === 400);
+reset(); r = await call("PUT", "/api/training/result", rep({ role: "ctr" })); t("bad role rejected", r.s === 400 && r.j.error === "bad_report");
+reset(); r = await call("PUT", "/api/training/result", { role: "twr" }); t("missing numbers rejected", r.s === 400);
+reset(); r = await call("PUT", "/api/training/result", rep({ handled: 2, ops: 2, dur: 400 })); t("fewer than 3 aircraft: no credit", r.j.reason === "too_few_aircraft");
+// caps
+let p = reset(); p.tr.atc_day = 3500; p.tr.ops_day = 14;
+r = await call("PUT", "/api/training/result", rep({ dur: 3000 })); t("daily ATC cap 1 h: only 100 s left", r.j.credited.atc_s === 100 && r.j.credited.ops === 1);
+reset(); r = await call("PUT", "/api/training/result", rep({ dur: 3000 })); t("daily cap reached: no credit", r.j.reason === "cap_reached" && r.j.day_atc_left_s === 0);
+p = reset(); p.tr.day = "2000-01-01"; p.tr.atc_s = 5 * 3600 - 50; p.tr.ops = 24; p.tr.ops_day = 0;
+r = await call("PUT", "/api/training/result", rep({ dur: 1200, ops: 10 })); t("lifetime caps: 50 s of ATC time and 1 op", r.j.credited.atc_s === 50 && r.j.credited.ops === 1);
+// quality gates
+p = reset(); p.tr.day = "2000-01-01"; p.tr.atc_day = 0; p.tr.ops_day = 0; p.tr.atc_s = 0; p.tr.ops = 0;
+r = await call("PUT", "/api/training/result", rep({ strikes: 6, ops: 6 })); t("6 strikes: time credit but no ops", r.j.credited.atc_s === 300 && !r.j.credited.ops);
+p = reset(); p.tr.atc_day = 0; p.tr.ops_day = 0;
+r = await call("PUT", "/api/training/result", rep({ score: -4, ops: 6 })); t("negative score: no ops credit", !r.j.credited.ops && r.j.credited.atc_s > 0);
+// profile + grade effect
+p = reset(); const pq = await call("GET", "/api/profile"); t("profile shows training stats", pq.j.training.sessions >= 5 && pq.j.training.credited.atc_s > 0 && pq.j.training.best_twr === 80);
+const k2 = "k2"; const p2 = hub.profGet(k2); p2.atc_s = 3 * 3600 - 100; p2.gw = 50;
+t("before: Ground grade", hub.gradeInfo(p2).atc_grade === 0);
+r = await call("PUT", "/api/training/result", rep({ dur: 600 }), k2); t("training time pushes the account to Tower grade", r.j.atc_grade === 1);
+console.log(fails ? fails + " FAIL" : "0 FAIL"); process.exit(fails ? 1 : 0);

@@ -88,7 +88,8 @@ input::placeholder{color:var(--dim)}
     <button id="grpBtn" title="Aerofly Connect ATC Network code (from Discord)">ATC Network</button>
     <button id="credBtn" title="ATC credential issued by the network management: lets you open towers in the network" disabled>ATC Credential</button>
     <button id="dimBtn" title="Grey out aircraft that are not on my frequencies (they stay visible)">My freqs: off</button>
-    <button id="wpBtn" title="Waypoints: show all, or only those used by pilots' routes">Waypoints: all</button></div>
+    <button id="wpBtn" title="Waypoints: show all, or only those used by pilots' routes">Waypoints: all</button>
+    <button id="trainBtn" title="ATC training with AI traffic (offline simulation)" onclick="location.href='/train?key='+encodeURIComponent(key)+(LANG==='pt'?'&amp;lang=pt':'')">Training</button></div>
     <span id="rwStatus" class="m"></span>
     <span id="status">offline</span>
   </div>

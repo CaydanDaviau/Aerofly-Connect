@@ -7,6 +7,7 @@ import ATC_HTML from "./atc.js";
 import MAP_HTML from "./map.js";
 import MANAGER_HTML from "./manager.js";
 import PLAYERS_HTML from "./players.js";
+import TRAIN_HTML from "./train.js";
 const ROUTE_MAX = 200;   // SimBrief route points kept per flight
 const TTL_MS = 60_000;
 const ASSIGN_TTL_MS = 12 * 3600_000;
@@ -46,6 +47,8 @@ const PILOT_GRADES = [["Captain", 100 * 3600, 100], ["Commercial", 25 * 3600, 25
 export const TEST = { skipGrades: false, warnLimit: null };   // tests turn the role gate off
 function atcGrade(p) { if (p && Number.isInteger(p.gov)) return p.gov; let g = 0; while (g < 3) { const r = GRADE_REQ[g + 1]; if (!p || Object.keys(r).some(k => (p[k] || 0) < r[k])) break; g++; } return g; }
 function pilotGrade(p) { const f = p ? p.flight_s || 0 : 0, n = p ? p.flights || 0 : 0; return (PILOT_GRADES.find(x => f >= x[1] && n >= x[2]) || PILOT_GRADES[3])[0]; }
+// Training mode (/train): the session runs in the browser; one result report per session earns CAPPED real credit.
+const TRAIN = { MIN_S: 120, MAX_S: 7200, FACTOR: 0.5, DAY_ATC_S: 3600, CAP: { atc_s: 5 * 3600, app_s: 15 * 3600, ops: 25 }, DAY_OPS: 15, MIN_HANDLED: 3, MIN_OPS_HANDLED: 5, PER_HANDLED_S: 20 };
 const CRASH_SHOW_MS = 10 * 60_000;     // the X stays on the maps this long
 const HARD_LANDING_FPM = -1500;        // landing_fpm at or below this = crash
 const TA_COOLDOWN_MS = 30_000;         // per viewer + other aircraft
@@ -268,6 +271,8 @@ export default {
       return new Response(ATC_HTML, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
     if (url.pathname === "/map" || url.pathname === "/map/")
       return new Response(MAP_HTML, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+    if (url.pathname === "/train" || url.pathname === "/train/")
+      return new Response(TRAIN_HTML, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
     if (url.pathname === "/players" || url.pathname === "/players/")
       return new Response(PLAYERS_HTML, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
     if (url.pathname === "/manager" || url.pathname === "/manager/")
@@ -483,6 +488,33 @@ export class Hub {
       const hk = this.holderKey.get(t.holder); if (!hk) continue;
       const pf = this.profGet(hk); pf.ops += 1; pf.saved = now; this.ctx.storage.put("prof:" + this.pkey(hk), pf);
     }
+  }
+  // Training result: validated, then credited with daily and lifetime caps (training can cover at most half of each requirement)
+  trainResult(key, d, now) {
+    const role = d.role === "app" ? "app" : d.role === "twr" ? "twr" : "";
+    const dur = Math.round(Number(d.dur)), handled = Math.round(Number(d.handled)), ops = Math.round(Number(d.ops)), score = Math.round(Number(d.score)), strikes = Math.round(Number(d.strikes));
+    if (!role || ![dur, handled, ops, score, strikes].every(Number.isFinite) || handled < 0 || ops < 0 || strikes < 0) return json({ error: "bad_report" }, 400);
+    if (dur > TRAIN.MAX_S || handled > dur / TRAIN.PER_HANDLED_S + 1 || ops > handled) return json({ error: "implausible" }, 400);
+    const pf = this.profGet(key); const tr = pf.tr || (pf.tr = { day: "", atc_day: 0, ops_day: 0, atc_s: 0, app_s: 0, ops: 0, sessions: 0, handled: 0, best_twr: 0, best_app: 0, sids: [], last: 0 });
+    const day = new Date(now).toISOString().slice(0, 10); if (tr.day !== day) { tr.day = day; tr.atc_day = 0; tr.ops_day = 0; }
+    const left = () => ({ day_atc_left_s: Math.max(0, TRAIN.DAY_ATC_S - tr.atc_day), atc_left_s: Math.max(0, TRAIN.CAP.atc_s - tr.atc_s), app_left_s: Math.max(0, TRAIN.CAP.app_s - tr.app_s), ops_left: Math.max(0, Math.min(TRAIN.DAY_OPS - tr.ops_day, TRAIN.CAP.ops - tr.ops)) });
+    const sid = String(d.sid || "").slice(0, 40);
+    if (sid && tr.sids.includes(sid)) return json({ success: true, credited: {}, reason: "duplicate", ...left() });
+    if (now - tr.last < 60_000) return json({ error: "too_fast" }, 429);
+    tr.last = now; if (sid) { tr.sids.push(sid); if (tr.sids.length > 20) tr.sids.shift(); }
+    tr.sessions++; tr.handled += handled; if (score > (tr["best_" + role] || 0)) tr["best_" + role] = score;
+    const got = { atc_s: 0, app_s: 0, ops: 0 }; let reason = "";
+    if (dur < TRAIN.MIN_S) reason = "too_short"; else if (handled < TRAIN.MIN_HANDLED) reason = "too_few_aircraft";
+    else {
+      const want = Math.min(dur, 3600) * TRAIN.FACTOR;
+      got.atc_s = Math.floor(Math.max(0, Math.min(want, TRAIN.DAY_ATC_S - tr.atc_day, TRAIN.CAP.atc_s - tr.atc_s)));
+      if (role === "app") got.app_s = Math.floor(Math.max(0, Math.min(got.atc_s, TRAIN.CAP.app_s - tr.app_s)));
+      if (handled >= TRAIN.MIN_OPS_HANDLED && strikes < 6 && score > 0) got.ops = Math.max(0, Math.min(ops, TRAIN.DAY_OPS - tr.ops_day, TRAIN.CAP.ops - tr.ops));
+      pf.atc_s += got.atc_s; pf.app_s += got.app_s; pf.ops += got.ops; tr.atc_day += got.atc_s; tr.atc_s += got.atc_s; tr.app_s += got.app_s; tr.ops_day += got.ops; tr.ops += got.ops;
+      if (!got.atc_s && !got.ops && !got.app_s) reason = "cap_reached";
+    }
+    pf.saved = now; this.ctx.storage.put("prof:" + this.pkey(key), pf);
+    return json({ success: true, credited: got, reason, ...left(), ...this.gradeInfo(pf) });
   }
   // Grades + progress for /api/profile and the role gate
   gradeInfo(p) {
@@ -1666,6 +1698,7 @@ export class Hub {
       return json({ success: true, callsign: "ATC_" + name, position: pn.pos, airport: pn.apt });
     }
     if (p.startsWith("/api/account")) return this.accountApi(request, key, m, p);
+    if (p === "/api/training/result" && (m === "PUT" || m === "POST")) return this.trainResult(key, await request.json().catch(() => ({})), Date.now());
     if (p === "/api/profile") {
       const pr = this.profGet(key);
       if (m === "PUT" || m === "POST") {
@@ -1673,7 +1706,7 @@ export class Hub {
         pr.nick = String(d.nick ?? "").replace(/[\u0000-\u001f<>]/g, "").trim().slice(0, 20); pr.saved = Date.now();
         this.ctx.storage.put("prof:" + this.pkey(key), pr);
       }
-      if (m === "GET" || m === "PUT" || m === "POST") return json({ nick: pr.nick, flight_s: Math.round(pr.flight_s), atc_s: Math.round(pr.atc_s), flights: pr.flights || 0, landings: pr.landings || 0, violations: pr.violations || 0, penalty_points: pr.vpts || 0, penalties_today: pr.pen || 0, penalty_limit: PEN_LIMIT, violations_today: pr.vio || 0, violation_limit: VIO_LIMIT, atc_demotions: pr.dem || 0, timeouts: pr.timeouts || 0, atc_violations: pr.cviol || 0, gw_actions: pr.gw || 0, own_ops: pr.ops || 0, app_s: Math.round(pr.app_s || 0), all_roles: request.headers.get("X-Member") === "1", ...this.gradeInfo(pr) });
+      if (m === "GET" || m === "PUT" || m === "POST") return json({ nick: pr.nick, flight_s: Math.round(pr.flight_s), atc_s: Math.round(pr.atc_s), flights: pr.flights || 0, landings: pr.landings || 0, violations: pr.violations || 0, penalty_points: pr.vpts || 0, penalties_today: pr.pen || 0, penalty_limit: PEN_LIMIT, violations_today: pr.vio || 0, violation_limit: VIO_LIMIT, atc_demotions: pr.dem || 0, timeouts: pr.timeouts || 0, atc_violations: pr.cviol || 0, gw_actions: pr.gw || 0, own_ops: pr.ops || 0, app_s: Math.round(pr.app_s || 0), all_roles: request.headers.get("X-Member") === "1", training: { sessions: (pr.tr && pr.tr.sessions) || 0, handled: (pr.tr && pr.tr.handled) || 0, best_twr: (pr.tr && pr.tr.best_twr) || 0, best_app: (pr.tr && pr.tr.best_app) || 0, credited: { atc_s: (pr.tr && pr.tr.atc_s) || 0, app_s: (pr.tr && pr.tr.app_s) || 0, ops: (pr.tr && pr.tr.ops) || 0 } }, ...this.gradeInfo(pr) });
     }
     if (m === "DELETE" && p === "/api/atc/tower") {
       if (this.noCred(request)) return json({ error: "atc_credential" }, 403);

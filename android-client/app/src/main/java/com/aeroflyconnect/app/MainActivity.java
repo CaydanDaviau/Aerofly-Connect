@@ -180,6 +180,11 @@ public class MainActivity extends Activity {
                 new View.OnClickListener() {
                     @Override public void onClick(View v) { startActivity(new Intent(MainActivity.this, ControllerActivity.class)); }
                 }), Ui.lp(this, 12));
+        root.addView(menuCard(Api.t(this, "Training", "Treino"),
+                Api.t(this, "Practice Tower and Approach with AI traffic", "Pratique Torre e Aproximação com tráfego de IA"),
+                new View.OnClickListener() {
+                    @Override public void onClick(View v) { startActivity(new Intent(MainActivity.this, ControllerActivity.class).putExtra("page", "train")); }
+                }), Ui.lp(this, 12));
 
         Button prof = Ui.button(this, Api.t(this, "Profile", "Perfil"), Ui.SECONDARY);
         prof.setOnClickListener(new View.OnClickListener() {
