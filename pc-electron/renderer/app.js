@@ -58,7 +58,7 @@
       if (screen !== "profile") return;
       if (!p || p.error) { msg.textContent = t("No connection", "Sem conexão"); return; }
       nick.value = p.nick || ""; fl.textContent = hm(p.flight_s); fc.textContent = String(p.flights || 0); at.textContent = hm(p.atc_s);
-      ld.textContent = String(p.landings || 0); vi.textContent = (p.violations || 0) + " / " + (p.penalty_points || 0) + " " + t("pts", "pts");
+      ld.textContent = String(p.landings || 0); vi.textContent = (p.penalties_today || 0) + "/" + (p.penalty_limit || 10) + "  ·  " + (p.violations_today || 0) + "/" + (p.violation_limit || 3);
       pg.textContent = p.pilot_grade || "--"; ag.textContent = p.all_roles ? t("All roles (Network)", "Todas as funções (Network)") : (p.atc_grade_name || "--");
       const nm = { atc_s: t("ATC time", "Tempo de ATC"), gw: t("ground work actions", "ações de solo"), ops: t("takeoffs/landings at your airport", "decolagens/pousos no seu aeroporto"), app_s: t("APP time", "Tempo de APP") };
       nx.textContent = p.next_grade && !p.all_roles ? t("Next grade: ", "Próximo nível: ") + p.next_grade + " - " + (p.next_req || []).map(q => nm[q.k] + " " + (/_s$/.test(q.k) ? (Math.floor(q.have / 360) / 10) + "/" + (q.need / 3600) + " h" : q.have + "/" + q.need)).join(", ") : "";
@@ -76,7 +76,7 @@
         h("label", {}, t("Flights completed", "Voos concluídos")), fc,
         h("label", {}, t("ATC time (holding a division)", "Tempo de ATC (com uma divisão)")), at,
         h("label", {}, t("Landings", "Pousos")), ld,
-        h("label", {}, t("Violations / penalty points", "Infrações / pontos de penalidade")), vi,
+        h("label", {}, t("Penalties / Violations (today)", "Penalidades / Infrações (hoje)")), vi,
         h("label", {}, t("Pilot grade", "Nível de piloto")), pg,
         h("label", {}, t("Controller grade", "Nível de controlador")), ag, nx),
       save, msg,

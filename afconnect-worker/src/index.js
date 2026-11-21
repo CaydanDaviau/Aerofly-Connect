@@ -32,7 +32,11 @@ const hid = h => { let x = 2166136261; for (const ch of String(h || "")) x = Mat
 const MAX_TRAFFIC = 500;
 const TIMEOUT_MS = 5 * 60_000;           // crash or landing without clearance: first time that day
 const TIMEOUT_REPEAT_MS = 60 * 60_000;   // repeated the same (UTC) day
-const VIOL_PTS = { taxi: 1, alt: 1, runway: 3, landing: 5 };   // penalty points per unauthorised action (landing also = timeout)
+// Unauthorised actions: taxi / altitude = 1 penalty point; runway / landing = 1 violation. Both counters reset daily (UTC).
+// 10 penalties = 30 min timeout, 3 violations = 6 h timeout (counter restarts at 0 after the timeout).
+const VIOL_PTS = { taxi: 1, alt: 1 };
+const PEN_LIMIT = 10, VIO_LIMIT = 3, PEN_TIMEOUT_MS = 30 * 60_000, VIO_TIMEOUT_MS = 6 * 3600_000;
+const DEM_STAT = { 1: "gw", 2: "ops", 3: "app_s" };   // stat that is lost (grade drops one level) when an ATC causes a mid-air collision
 // Controller grades: everyone starts at Ground (DEL/GND); Network members have every role. Stats never go down, so grades never drop.
 const ROLE_GRADE = { DEL: 0, GND: 0, TWR: 1, APP: 2, CTR: 3 };
 const GRADE_NAMES = ["Ground", "Tower", "Approach", "Center"];
@@ -132,7 +136,7 @@ function computeTA(a, b) {
 // ---- Auto-ATC (basic clearances for pilots when no human controller covers the airport) ----
 // Newest released app versions: bump when a new APK / PC build is published; clients older than this show an update notice.
 const FLIGHT_MIN_AIR_S = 180;   // airborne at least 3 min, then touchdown (no crash) = flight completed
-const LATEST = { android: "1.3", pc: "2.3.0" };
+const LATEST = { android: "1.3.2", pc: "2.3.0" };
 const REQ_TYPES = ["clearance", "pushback", "taxi", "takeoff", "land", "climb", "descent", "mayday", "mayday_cancel"];
 const MAYDAY_MS = 30 * 60_000, MAYDAY_NEAR_MI = 30;
 const REQ_LOCK_MS = { takeoff: 90_000, land: 120_000 };
@@ -444,7 +448,7 @@ export class Hub {
   // Profile: nickname + flight time (airborne) + ATC time (holding a role), per app key. Saved at most once a minute.
   pkey(key) { const t = this.toks.get(key); return t ? "a:" + t.acct : key; }
   profPeek(key) { return this.prof.get(this.pkey(key)); }
-  profGet(key) { key = this.pkey(key); let p = this.prof.get(key); if (!p) { p = { nick: "", flight_s: 0, atc_s: 0, flights: 0, saved: 0 }; this.prof.set(key, p); } if (!p.flights) p.flights = 0; for (const f of ["landings", "violations", "vpts", "timeouts", "gw", "ops", "app_s", "cviol"]) if (!p[f]) p[f] = 0; return p; }
+  profGet(key) { key = this.pkey(key); let p = this.prof.get(key); if (!p) { p = { nick: "", flight_s: 0, atc_s: 0, flights: 0, saved: 0 }; this.prof.set(key, p); } if (!p.flights) p.flights = 0; for (const f of ["landings", "violations", "vpts", "timeouts", "gw", "ops", "app_s", "cviol", "pen", "vio", "dem"]) if (!p[f]) p[f] = 0; const day = new Date().toISOString().slice(0, 10); if (p.pday !== day) { p.pday = day; p.pen = 0; p.vio = 0; } return p; }
   profAdd(key, field, secs, now) {
     if (!key || !(secs > 0)) return;
     const p = this.profGet(key); p[field] += secs;
@@ -635,6 +639,18 @@ export class Hub {
     p.sn++; p.timeouts = (p.timeouts || 0) + 1; p.saved = Date.now(); this.ctx.storage.put("prof:" + this.pkey(key), p);
     return dur;
   }
+  lockMs(key, reason, now, ms, extra) {
+    const lk = { until: now + ms, reason, at: now, ...(extra || {}) }, pk = this.pkey(key), p = this.profGet(key);
+    p.timeouts = (p.timeouts || 0) + 1; p.saved = now; this.ctx.storage.put("prof:" + pk, p);
+    this.locks.set(pk, lk); this.ctx.storage.put("lock:" + pk, lk); return lk;
+  }
+  // ATC caused a mid-air collision: permanent demotion by one level (the stat of that tier is lost, so it has to be earned again)
+  demote(key, now) {
+    const p = this.profGet(key), g = atcGrade(p);
+    if (g < 1) return;
+    if (Number.isInteger(p.gov)) p.gov = g - 1; else p[DEM_STAT[g]] = 0;
+    p.dem = (p.dem || 0) + 1; p.saved = now; this.ctx.storage.put("prof:" + this.pkey(key), p);
+  }
   lockFor(key, reason, now, extra) {
     const lk = { until: now + this.strike(key), reason, at: now, ...(extra || {}) }, pk = this.pkey(key);
     this.locks.set(pk, lk); this.ctx.storage.put("lock:" + pk, lk); return lk;
@@ -822,9 +838,12 @@ export class Hub {
       st.viol[type] = { said: st.viol[type].said, logged: now };
       this.violations.push({ at: now, callsign: normCallsign(c.plan.callsign ?? c.pos.callsign), icao: c.pos.icao_address, type, airport: apt, runway: rwy });
       if (this.violations.length > MAX_VIOL) this.violations.shift();
-      if (firstOne) {   // stats + penalty points; landing without clearance = timeout
-        const pf = this.profGet(key); pf.violations += 1; pf.vpts += VIOL_PTS[type] || 0; pf.saved = now; this.ctx.storage.put("prof:" + this.pkey(key), pf);
-        if (type === "landing") { this.lockFor(key, "landing_no_clnc", now, { latitude: c.pos.latitude, longitude: c.pos.longitude }); this.clients.delete(key); }
+      if (firstOne) {   // counters: taxi / altitude = penalty, runway / landing = violation; thresholds give timeouts
+        const pf = this.profGet(key); let ms = 0, why = "";
+        if (VIOL_PTS[type]) { pf.vpts += 1; pf.pen += 1; if (pf.pen >= PEN_LIMIT) { pf.pen = 0; ms = PEN_TIMEOUT_MS; why = "penalties"; } }
+        else { pf.violations += 1; pf.vio += 1; if (pf.vio >= VIO_LIMIT) { pf.vio = 0; ms = VIO_TIMEOUT_MS; why = "violations"; } }
+        pf.saved = now; this.ctx.storage.put("prof:" + this.pkey(key), pf);
+        if (ms) { this.lockMs(key, why, now, ms, { latitude: c.pos.latitude, longitude: c.pos.longitude }); this.clients.delete(key); }
       }
     }
     c.viol = { type, at: now };
@@ -933,6 +952,7 @@ export class Hub {
       if (Math.sqrt(v2) * 3600 < 20) continue;
       const t = Math.max(-3, Math.min(1.5, -(x * rvx + y * rvy) / v2));
       if (Math.hypot(x + rvx * t, y + rvy * t) > 0.03 || Math.abs(B.z - A.z + (B.v - A.v) / 60 * t) > 100) continue;
+      for (const hd of new Set([...this.handlersOf(c, now), ...this.handlersOf(o, now)])) { const ck = this.holderKey.get(hd); if (ck) this.demote(ck, now); }
       for (const [k, q] of [[key, c], [k2, o]]) {
         const lat = Number(q.pos.latitude), lon = Number(q.pos.longitude);
         const lk = this.lockFor(k, "midair", now, { latitude: lat, longitude: lon });
@@ -1616,7 +1636,7 @@ export class Hub {
         pr.nick = String(d.nick ?? "").replace(/[\u0000-\u001f<>]/g, "").trim().slice(0, 20); pr.saved = Date.now();
         this.ctx.storage.put("prof:" + this.pkey(key), pr);
       }
-      if (m === "GET" || m === "PUT" || m === "POST") return json({ nick: pr.nick, flight_s: Math.round(pr.flight_s), atc_s: Math.round(pr.atc_s), flights: pr.flights || 0, landings: pr.landings || 0, violations: pr.violations || 0, penalty_points: pr.vpts || 0, timeouts: pr.timeouts || 0, atc_violations: pr.cviol || 0, gw_actions: pr.gw || 0, own_ops: pr.ops || 0, app_s: Math.round(pr.app_s || 0), all_roles: request.headers.get("X-Member") === "1", ...this.gradeInfo(pr) });
+      if (m === "GET" || m === "PUT" || m === "POST") return json({ nick: pr.nick, flight_s: Math.round(pr.flight_s), atc_s: Math.round(pr.atc_s), flights: pr.flights || 0, landings: pr.landings || 0, violations: pr.violations || 0, penalty_points: pr.vpts || 0, penalties_today: pr.pen || 0, penalty_limit: PEN_LIMIT, violations_today: pr.vio || 0, violation_limit: VIO_LIMIT, atc_demotions: pr.dem || 0, timeouts: pr.timeouts || 0, atc_violations: pr.cviol || 0, gw_actions: pr.gw || 0, own_ops: pr.ops || 0, app_s: Math.round(pr.app_s || 0), all_roles: request.headers.get("X-Member") === "1", ...this.gradeInfo(pr) });
     }
     if (m === "DELETE" && p === "/api/atc/tower") {
       if (this.noCred(request)) return json({ error: "atc_credential" }, 403);
@@ -1772,7 +1792,7 @@ export class Hub {
         }
         else if (a === "untimeout") { this.locks.delete(pk); await this.ctx.storage.delete("lock:" + pk); }
         else if (a === "reset_penalties") {
-          for (const f of ["violations", "vpts", "timeouts", "cviol", "sn"]) pr[f] = 0;
+          for (const f of ["violations", "vpts", "timeouts", "cviol", "sn", "pen", "vio"]) pr[f] = 0;
           pr.sday = ""; this.locks.delete(pk); await this.ctx.storage.delete("lock:" + pk);
         }
         else if (a === "set_stats") {

@@ -313,7 +313,7 @@ public class MainActivity extends Activity {
         final TextView lands = text("--", 18, true), viols = text("--", 18, true), pgrade = text("--", 18, true), agrade = text("--", 18, true), nextReq = dim("", 13);
         card.addView(dim(Api.t(this, "Landings", "Pousos"), 13));
         card.addView(lands);
-        card.addView(dim(Api.t(this, "Violations / penalty points", "Infrações / pontos de penalidade"), 13));
+        card.addView(dim(Api.t(this, "Penalties / Violations (today)", "Penalidades / Infrações (hoje)"), 13));
         card.addView(viols);
         card.addView(dim(Api.t(this, "Pilot grade", "Nível de piloto"), 13));
         card.addView(pgrade);
@@ -341,7 +341,7 @@ public class MainActivity extends Activity {
                                 atc.setText(hm(j.optLong("atc_s", 0)));
                                 flights.setText(String.valueOf(j.optLong("flights", 0)));
                                 lands.setText(String.valueOf(j.optLong("landings", 0)));
-                                viols.setText(j.optLong("violations", 0) + " / " + j.optLong("penalty_points", 0) + " pts");
+                                viols.setText(j.optLong("penalties_today", 0) + "/" + j.optLong("penalty_limit", 10) + "  ·  " + j.optLong("violations_today", 0) + "/" + j.optLong("violation_limit", 3));
                                 pgrade.setText(j.optString("pilot_grade", "--"));
                                 boolean allRoles = j.optBoolean("all_roles", false);
                                 agrade.setText(allRoles ? Api.t(MainActivity.this, "All roles (Network)", "Todas as funções (Network)") : j.optString("atc_grade_name", "--"));

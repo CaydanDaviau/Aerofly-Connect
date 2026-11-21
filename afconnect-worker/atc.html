@@ -154,6 +154,7 @@ window.saveTrails=saveTrails;
 
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
 function p3(n){n=Math.round(n);return (n<100?'0':'')+(n<10?'0':'')+n}
+function vsStr(v){v=Math.round((Number(v)||0)/50)*50;return 'VS '+(v>0?'+':'')+v+' fpm';}
 function altStr(ft){if(ft==null||isNaN(ft))return '---';return ft>=TA?'FL'+p3(ft/100):'A'+p3(ft/100)}
 var TA=5000; /* transition altitude (ft): FL above, A (altitude in hundreds) below */
 function isTwr(a){return /^ATC_/i.test(a.callsign||'')}
@@ -548,7 +549,7 @@ function renderStrips(force){
     var ml=vc+msgs.filter(function(m){return m.icao_address===id&&(m.kind!=='chat'||isHeard(m.freq))}).slice(-3).map(function(m){return m.kind==='chat'?'<div class="mlog chat"><b>'+L('PILOT','PILOTO')+':</b> '+esc(m.text)+'</div>':'<div class="mlog">&rsaquo; '+esc(m.text)+' &mdash; <b class="'+esc(m.status)+'">'+esc(m.status.toUpperCase())+'</b></div>'}).join('');
     return'<div class="strip'+(isSel?' sel':'')+(tw?' twr':(asg?'':' nocode'))+(a.no_clnc?' noclnc'+(a.clnc?' nc-'+a.clnc:''):'')+(a.emergency?' emerg':'')+(isDim(a)?' dim':'')+'" data-id="'+esc(id)+'">'+
       '<div class="h"><span class="cs">'+esc(a.callsign||id)+(!tw&&a.nick?' <span class="m">'+esc(a.nick)+'</span>':'')+(tw?(isSel||isOwned(a)?' &#9660;':' &#9654;'):'')+(a.emergency?'<span class="mayday">MAYDAY</span>':'')+(a.no_clnc?'<span class="noc'+(a.clnc?' nc-'+a.clnc:'')+'">'+nocText(a.clnc)+'</span>':'')+'</span><span class="m">'+Math.round(r.dist)+' nm / '+p3(r.brg)+'&deg;'+(tw?'':' &middot; '+(a.freq?esc(a.freq)+' ':'')+esc(ctrlOf(a)))+'</span></div>'+
-      (tw?'':'<div>'+altStr(a.altitude_ft)+' &middot; '+Math.round(Number(a.ground_speed)||0)+' kt &middot; HDG '+p3(Number(a.heading_mag!=null?a.heading_mag:a.heading_true)||0)+'&deg;'+(a.heading_mag==null?'T':'')+' &middot; '+(Number(a.vertical_speed_ft_min)>100?'&uarr;':Number(a.vertical_speed_ft_min)<-100?'&darr;':'&rarr;')+'</div>')+
+      (tw?'':'<div>'+altStr(a.altitude_ft)+' &middot; '+Math.round(Number(a.ground_speed)||0)+' kt &middot; HDG '+p3(Number(a.heading_mag!=null?a.heading_mag:a.heading_true)||0)+'&deg;'+(a.heading_mag==null?'T':'')+' &middot; '+(Number(a.vertical_speed_ft_min)>100?'&uarr;':Number(a.vertical_speed_ft_min)<-100?'&darr;':'&rarr;')+' '+vsStr(a.vertical_speed_ft_min)+'</div>')+
       (tw?'':'<div>'+st+'</div>')+
       (tw?'':clrLine(a))+
       (!tw&&(a.airplane_model||a.departure_runway||a.arrival_runway)?'<div class="m">'+(a.airplane_model?esc(a.airplane_model):'')+((a.departure_runway||a.arrival_runway)?(a.airplane_model?' &middot; ':'')+'RWY '+esc(a.departure_runway||'--')+' &rarr; '+esc(a.arrival_runway||'--'):'')+'</div>':'')+
