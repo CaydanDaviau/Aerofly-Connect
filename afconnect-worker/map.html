@@ -309,7 +309,7 @@ function navUpdate(){
   var q=p[navIdx],d=dNm(own.lat,own.lon,q[0],q[1]),gs=Number(own.gs);
   return{idx:navIdx,id:q[3]||'WPT',d:d,min:gs>30?Math.round(d/gs*60):null}
 }
-map.on('click',function(e){if(popup&&!map.queryRenderedFeatures(e.point,{layers:['planes']}).length){popup.remove()}});
+map.on('click',function(e){if(popup&&!map.queryRenderedFeatures(e.point,{layers:['planes','own']}).length){popup.remove()}});
 map.on('mouseenter','planes',function(){map.getCanvas().style.cursor='pointer'});
 map.on('mouseleave','planes',function(){map.getCanvas().style.cursor=''});
 

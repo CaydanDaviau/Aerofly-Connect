@@ -203,6 +203,7 @@ public class PilotService extends Service {
                         if (Phase.etaMin >= 0) pos.put("eta_min", Phase.etaMin);
                         pos.put("terminal", Phase.terminal);
                         pos.put("voice", Api.voiceOn(this));
+                        pos.put("auto_atc", Api.autoAtcOn(this));
                         // Auto-ATC: where the aircraft is (ground / runway / air), which runway, distance to the arrival airport.
                         pos.put("phase", Phase.phaseName);
                         pos.put("lang", Api.voiceLang(this));

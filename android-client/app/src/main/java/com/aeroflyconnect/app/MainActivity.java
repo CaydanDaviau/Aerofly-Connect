@@ -566,6 +566,17 @@ public class MainActivity extends Activity {
         voice.addView(voiceRow());
         voice.addView(rateRow());
 
+        // ----- Auto ATC on/off -----
+        LinearLayout aa = section(root, Api.t(this, "Auto ATC", "ATC automático"));
+        aa.addView(sw(Api.t(this, "Automatic ATC when no controller is online", "ATC automático quando não há controlador online"), Api.autoAtcOn(this),
+                new CompoundButton.OnCheckedChangeListener() {
+                    @Override public void onCheckedChanged(CompoundButton b, boolean on) { Api.setAutoAtcOn(MainActivity.this, on); }
+                }));
+        TextView aaHint = dim(Api.t(this, "Off: no automatic clearances or messages, and requests get no automatic answer. A human controller still works normally. Takes effect within a few seconds.",
+                "Desligado: sem autorizações ou mensagens automáticas, e os pedidos não recebem resposta automática. Um controlador humano continua normal. Vale em poucos segundos."), 13);
+        aaHint.setPadding(0, pad / 4, 0, 0);
+        aa.addView(aaHint);
+
         // ----- Voice chat (push-to-talk with the controller) -----
         LinearLayout vc = section(root, Api.t(this, "Voice chat", "Chat de voz"));
         vc.addView(sw(Api.t(this, "Push-to-talk voice with ATC (hear and send clips)", "Voz push-to-talk com o ATC (ouvir e enviar)"), Api.voiceOn(this),

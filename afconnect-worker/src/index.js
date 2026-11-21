@@ -713,6 +713,7 @@ export class Hub {
     st.at = now; st.lat = p.latitude; st.lon = p.longitude; st.ph = cur;
     const say = (text, urgent, contact) => { const m = this.addMsg(c, text, "auto", { urgent: !!urgent }); m.status = "delivered"; out.push({ id: m.id, text: m.text, kind: "auto", urgent: !!urgent, at: m.at, ...(contact ? { contact } : {}) }); };
     const apt = up(p.rwy_apt) || (cur === "air" ? arr : dep);
+    if (p.auto_atc === false && !this.humanCovers(c, apt || dep)) return out;   // Auto ATC off: no automatic messages or clearances (a human controller still works as usual)
     if (this.humanCovers(c, apt || dep)) {   // a human controller owns this airport: he gives the clearances, we only tag what happens without one
       this.humanTrack(key, c, st, prev, cur, now, apt);
       if (c.viol && now - c.viol.at > VIOL_SHOW_MS) c.viol = null;
@@ -1495,6 +1496,7 @@ export class Hub {
         msg.status = "request";
         return json({ success: true, mode: "controller", id: msg.id });
       }
+      if (c.pos.auto_atc === false) return json({ success: true, mode: "none", messages: [] });   // Auto ATC off and no human controller: nobody answers
       let text;
       const lockKey = rwy ? rwyKey(apt, rwy) : null;
       const holder = lockKey && this.rwy.get(lockKey);
@@ -1843,6 +1845,7 @@ export class Hub {
         landing_fpm: pick(d, "landing_fpm"),
         terminal: pick(d, "terminal") === true,
         voice: pick(d, "voice") !== false,
+        auto_atc: pick(d, "auto_atc") !== false,   // pilot switched Auto ATC off in Settings
         phase: pick(d, "phase"), rwy_on: pick(d, "rwy_on"), on_rwy: pick(d, "on_rwy"), rwy_apt: pick(d, "rwy_apt"), arr_nm: pick(d, "arr_nm"), fq_dep: pick(d, "fq_dep"), fq_arr: pick(d, "fq_arr"), freq: normFreq(pick(d, "freq")),
         airplane_model: pick(d, "airplane_model"),
         airplane_livery: pick(d, "airplane_livery", "livery"),

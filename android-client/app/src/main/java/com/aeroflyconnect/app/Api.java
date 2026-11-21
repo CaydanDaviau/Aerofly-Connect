@@ -104,6 +104,10 @@ final class Api {
     static long crashLeftMs(Context c) { return Math.max(0, crashUntil(c) - System.currentTimeMillis()); }
     static String mmss(long ms) { long s = (ms + 999) / 1000; return (s / 60) + ":" + (s % 60 < 10 ? "0" : "") + (s % 60); }
 
+    /** Automatic ATC (answers requests and gives clearances when no controller is online); default on. */
+    static boolean autoAtcOn(Context c) { return prefs(c).getBoolean("auto_atc_on", true); }
+    static void setAutoAtcOn(Context c, boolean on) { prefs(c).edit().putBoolean("auto_atc_on", on).apply(); }
+
     /** Voice chat (push-to-talk, both directions); default on. */
     static boolean voiceOn(Context c) { return prefs(c).getBoolean("voice_on", true); }
     static void setVoiceOn(Context c, boolean on) { prefs(c).edit().putBoolean("voice_on", on).apply(); }

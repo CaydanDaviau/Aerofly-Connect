@@ -160,3 +160,18 @@ globalThis.fetch = realFetch;
   hub.msgs.clear(); c1.lang = "pt"; await dr({ preview: false, msg: true });
   T("Portuguese phrase", /^Táxi para o portão S9 via /.test(texts(i1)[0] || ""));
 }
+
+// ---- Auto ATC switched off in Settings
+{
+  hub.towers.clear(); hub.locks.clear();
+  const c = hub.clients.get("t2"), body = { ...c.pos };
+  delete body.auto_atc;
+  let r = await call("PUT", "/api/position", { ...body, auto_atc: false }, "t2");
+  T("auto_atc:false stored from the upload", hub.clients.get("t2").pos.auto_atc === false);
+  hub.clients.get("t2").lastReq = 0;
+  r = await call("PUT", "/api/atc/request", { type: "taxi" }, "t2");
+  T("Auto ATC off: request gets no automatic answer", r.success && r.mode === "none" && (r.messages || []).length === 0);
+  r = await call("PUT", "/api/position", { ...body, auto_atc: true }, "t2"); hub.clients.get("t2").lastReq = 0;
+  r = await call("PUT", "/api/atc/request", { type: "taxi" }, "t2");
+  T("Auto ATC on: request answered automatically", r.mode === "auto" && r.messages.length > 0);
+}
