@@ -283,6 +283,11 @@ function drawRunways(maxR){   /* light runway bars over the map, plus the number
     if(Math.abs((r[2]-center.lat)*60)>lim||Math.abs((r[3]-center.lon)*60*cl)>lim)continue;
     var p1=projLL(r[2],r[3]),p2=projLL(r[5],r[6]),dx=p2[0]-p1[0],dy=p2[1]-p1[1],L=Math.hypot(dx,dy)||1,ux=dx/L,uy=dy/L;
     var w=Math.min(40,Math.max(3,(r[7]?r[7]*0.3048:45)/1852/nmpp));
+    if(nmpp<0.2&&L>=30){   /* extended centre lines, ticks every 2 nm (like /train) */
+      g.save();g.lineWidth=1;g.strokeStyle='rgba(122,233,255,.45)';g.fillStyle='rgba(122,233,255,.8)';g.font='10px ui-monospace,monospace';g.textAlign='start';g.textBaseline='middle';
+      [[p1,-1],[p2,1]].forEach(function(e){var q=e[0],sg=e[1],D=Math.min(12,maxR);g.setLineDash([8,6]);g.beginPath();g.moveTo(q[0],q[1]);g.lineTo(q[0]+sg*ux*D/nmpp,q[1]+sg*uy*D/nmpp);g.stroke();g.setLineDash([]);
+        for(var d=2;d<=D;d+=2){var tx=q[0]+sg*ux*d/nmpp,ty=q[1]+sg*uy*d/nmpp;g.beginPath();g.moveTo(tx-uy*4,ty+ux*4);g.lineTo(tx+uy*4,ty-ux*4);g.stroke();if(d%4===0&&nmpp<.1)g.fillText(d+'',tx+6,ty)}});
+      g.restore();g.font='bold 11px ui-monospace,monospace';g.textAlign='center';g.textBaseline='middle';g.lineJoin='round'}
     g.lineCap='butt';g.beginPath();g.moveTo(p1[0],p1[1]);g.lineTo(p2[0],p2[1]);
     g.strokeStyle='#d6d6d6';g.lineWidth=w+2;g.stroke();          // light outline
     g.strokeStyle='#8c8c8c';g.lineWidth=w;g.stroke();            // surface, clearly brighter than taxiways
