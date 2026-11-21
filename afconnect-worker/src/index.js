@@ -652,6 +652,8 @@ export class Hub {
     p.dem = (p.dem || 0) + 1; p.saved = now; this.ctx.storage.put("prof:" + this.pkey(key), p);
   }
   lockFor(key, reason, now, extra) {
+    const cl = this.clients.get(key);
+    if (cl && cl.member) return { until: now + 10_000, reason, at: now, ...(extra || {}) };   // ATC Network: no timeouts (the plane is just removed for a moment)
     const lk = { until: now + this.strike(key), reason, at: now, ...(extra || {}) }, pk = this.pkey(key);
     this.locks.set(pk, lk); this.ctx.storage.put("lock:" + pk, lk); return lk;
   }
@@ -831,14 +833,15 @@ export class Hub {
   }
 
   violate(key, c, st, type, apt, rwy, now, notify) {
-    if (c.emerg && now < c.emerg.until) return;   // declared emergency: no unauthorised-action calls
+    if (c.emerg && now < c.emerg.until) return;
+    const net = !!c.member;   // ATC Network: tags and calls stay, but no counters, penalties or timeouts   // declared emergency: no unauthorised-action calls
     const v = st.viol[type], firstOne = !v || now - (v.logged || 0) > 300_000;   // a new episode (not the same one still going on)
     if (!v || now - v.said > VIOL_RENEW_MS) { st.viol[type] = { said: now }; notify(); }
     if (!v || now - v.logged > 60_000) {
       st.viol[type] = { said: st.viol[type].said, logged: now };
       this.violations.push({ at: now, callsign: normCallsign(c.plan.callsign ?? c.pos.callsign), icao: c.pos.icao_address, type, airport: apt, runway: rwy });
       if (this.violations.length > MAX_VIOL) this.violations.shift();
-      if (firstOne) {   // counters: taxi / altitude = penalty, runway / landing = violation; thresholds give timeouts
+      if (firstOne && !net) {   // counters: taxi / altitude = penalty, runway / landing = violation; thresholds give timeouts
         const pf = this.profGet(key); let ms = 0, why = "";
         if (VIOL_PTS[type]) { pf.vpts += VIOL_PTS[type]; pf.pen += VIOL_PTS[type]; if (pf.pen >= PEN_LIMIT) { pf.pen = 0; ms = PEN_TIMEOUT_MS; why = "penalties"; } }
         else { pf.violations += 1; pf.vio += 1; if (pf.vio >= VIO_LIMIT) { pf.vio = 0; ms = VIO_TIMEOUT_MS; why = "violations"; } else { this.ctx.storage.put("prof:" + this.pkey(key), pf); ms = this.strike(key); why = type === "landing" ? "landing_no_clnc" : "runway_no_clnc"; } }
@@ -952,7 +955,7 @@ export class Hub {
       if (Math.sqrt(v2) * 3600 < 20) continue;
       const t = Math.max(-3, Math.min(1.5, -(x * rvx + y * rvy) / v2));
       if (Math.hypot(x + rvx * t, y + rvy * t) > 0.03 || Math.abs(B.z - A.z + (B.v - A.v) / 60 * t) > 100) continue;
-      for (const hd of new Set([...this.handlersOf(c, now), ...this.handlersOf(o, now)])) { const ck = this.holderKey.get(hd); if (ck) this.demote(ck, now); }
+      for (const hd of c.member ? [] : new Set([...this.handlersOf(c, now), ...this.handlersOf(o, now)])) { const ck = this.holderKey.get(hd); if (ck) this.demote(ck, now); }
       for (const [k, q] of [[key, c], [k2, o]]) {
         const lat = Number(q.pos.latitude), lon = Number(q.pos.longitude);
         const lk = this.lockFor(k, "midair", now, { latitude: lat, longitude: lon });
@@ -980,6 +983,7 @@ export class Hub {
   separation(key, c, now) {
     const ok = q => q && q.phase !== "ground" && q.phase !== "runway" && Number(q.ground_speed) >= 60 && Number.isFinite(Number(q.altitude_ft)) && Number.isFinite(Number(q.heading_true));
     if (!ok(c.pos)) return;
+    if (c.member) return;   // ATC Network: no controller violations
     const A = c.pos, rad = Math.PI / 180;
     for (const [k2, o] of this.clients) {
       if (k2 === key || !ok(o.pos) || now - o.seen > 15_000 || !!o.member !== !!c.member) continue;

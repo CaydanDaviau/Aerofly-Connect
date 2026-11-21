@@ -72,4 +72,8 @@ r = await call("PUT", "/api/position", { latitude: 1, longitude: 2 }, "afa_x"); 
 // landings count
 await call("PUT", "/api/position", { latitude: 5, longitude: 5, phase: "air" }, "p3"); await call("PUT", "/api/position", { latitude: 5, longitude: 5, phase: "ground" }, "p3");
 t("landing counted", hub.profGet("p3").landings === 1);
+// ATC Network: no counters, no timeouts
+await call("PUT", "/api/position", { latitude: 1, longitude: 2 }, "m1"); hub.clients.get("m1").member = true;
+for (const ty of ["taxi", "alt", "runway", "landing", "runway", "landing"]) { const x = { c: hub.clients.get("m1"), st: { viol: {} } }; hub.violate("m1", x.c, x.st, ty, "SBBR", "27", Date.now(), () => {}); }
+t("member: no penalties/violations/timeout", hub.profGet("m1").pen === 0 && hub.profGet("m1").violations === 0 && !hub.locks.get("m1"));
 console.log(fails ? "FAILS: " + fails : "all pass"); process.exit(fails ? 1 : 0);
