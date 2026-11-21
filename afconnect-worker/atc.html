@@ -114,7 +114,7 @@ input::placeholder{color:var(--dim)}
   </div>
   <div id="main">
     <div id="scope"><div id="bgmap"></div><canvas id="rwcv"></canvas><div id="lblmap"></div><canvas id="radar"></canvas><div id="evlog"><div class="hd" id="evHd"></div><div class="bd" id="evBd"></div></div><div id="attr">© OSM · OpenFreeMap · Contains data from <a href="https://github.com/laegsgaardTroels/whatisflying-db" target="_blank" rel="noopener">What is flying?</a>, available under <a href="https://opendatacommons.org/licenses/odbl/1-0/" target="_blank" rel="noopener">ODbL 1.0</a>.</div></div>
-    <div id="gate"><div id="gateIn"><h2 id="gHead"></h2><div id="gList"></div>
+    <div id="gate"><div id="gateIn"><h2 id="gHead"></h2><div id="gMsg" class="m" style="min-height:18px;margin:0 0 6px;color:var(--amber)"></div><div id="gList"></div>
       <div id="gOpen" class="gform"><input id="gIcao" maxlength="8" autocapitalize="characters" placeholder="SBBR"><button id="gOpenBtn"></button></div>
       <div id="gWatchRow"><button id="gWatch"></button></div></div></div>
     <div id="strips">
@@ -186,7 +186,7 @@ function rel(a){var dy=(a.latitude-center.lat)*60,dx=(a.longitude-center.lon)*60
   return{dx:dx,dy:dy,dist:Math.hypot(dx,dy),brg:(Math.atan2(dx,dy)*180/Math.PI+360)%360}}
 function projLL(lat,lon){var dy=(lat-center.lat)*60,dx=(lon-center.lon)*60*Math.cos(center.lat*Math.PI/180);return[W/2+dx/nmpp,H/2-dy/nmpp]}
 function proj(a){return projLL(a.latitude,a.longitude)}
-function toast(t){var e=$('toast');e.textContent=t;e.className='on';clearTimeout(toast.t);toast.t=setTimeout(function(){e.className=''},2500)}
+function toast(t){var gm=$('gMsg');if(gm&&$('gate').style.display!=='none')gm.textContent=t;var e=$('toast');e.textContent=t;e.className='on';clearTimeout(toast.t);toast.t=setTimeout(function(){e.className=''},2500)}
 
 /* ---------- runway data (OurAirports, loaded in the browser and cached) ---------- */
 var RW=[],APT={},rwState='idle';
@@ -689,7 +689,7 @@ myTowers=myTowers.map(function(t){if(/_/.test(t.name))return t;if(!myApts.some(f
 function saveTowers(){try{localStorage.setItem('abflug_towers',JSON.stringify(myTowers));localStorage.setItem('afc_apts',JSON.stringify(myApts))}catch(e){}}
 var holder=localStorage.getItem('afc_holder');if(!holder){holder='h'+Math.random().toString(36).slice(2,12);try{localStorage.setItem('afc_holder',holder)}catch(e){}}
 $('trainBtn').onclick=function(){location.href='/train?key='+encodeURIComponent(key)+(LANG==='pt'?'&lang=pt':'')};
-function putTower(t,noHolder,http){var b={};for(var k in t)b[k]=t[k];if(!noHolder)b.holder=holder;else b.owner=holder;return (http?httpApi:api)('/api/atc/tower',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)})}
+function putTower(t,noHolder,http){var b={};for(var k in t)b[k]=t[k];if(!noHolder)b.holder=holder;else b.owner=holder;var o={method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)};if(http&&window.AbortController){var ab=new AbortController();o.signal=ab.signal;setTimeout(function(){ab.abort()},10000)}return (http?httpApi:api)('/api/atc/tower',o)}
 function nf(v){v=String(v||'').trim();if(/^\d{4,6}$/.test(v))v=v.slice(0,3)+'.'+v.slice(3);var m=/^(\d{3})\.(\d{1,3})$/.exec(v);if(!m)return'';var f=m[1]+'.'+(m[2]+'00').slice(0,3),n=+f;return n>=118&&n<=136.975?f:''}
 /* a pilot's chat/clip is heard when it is on one of my roles' frequencies, or either side is untuned; no roles or "All" = I hear all */
 function isHeard(f){if(!f||!myTowers.length||talkName==='*')return true;return myTowers.some(function(t){return !t.freq||t.freq===f})}
@@ -771,7 +771,7 @@ function claimRole(apt,r){var tw=ac.filter(function(a){return a.virtual_tower&&a
   var name=apt+'_'+r,t={name:name,freq:fq,latitude:tw.latitude,longitude:tw.longitude};
   putTower(t,false,true).then(function(x){return x.json().then(function(j){free();if(!x.ok){errToast(x,j);return}
     myTowers=myTowers.filter(function(o){return o.name!==name});myTowers.push(t);talkName=name;saveTowers();updateTalk();
-    toast(L('Role claimed: ','Função assumida: ')+apt+' '+r+(fq?' '+fq:''));logEv(L('You took ','Você assumiu ')+apt+' '+r+(fq?' '+fq:''),'out');observe=false;setMode('work');poll(true)})}).catch(function(){free();toast(L('Network error','Erro de rede'))})}
+    toast(L('Role claimed: ','Função assumida: ')+apt+' '+r+(fq?' '+fq:''));logEv(L('You took ','Você assumiu ')+apt+' '+r+(fq?' '+fq:''),'out');observe=false;setMode('work');poll(true)})}).catch(function(){free();toast(L('No answer from the server in 10 s - try again','Sem resposta do servidor em 10 s - tente de novo'))})}
 function openRole(name){talkName=name;updateTalk();renderTowerBox();var t=myTowers.filter(function(x){return x.name===name})[0];toast(L('Working as ','Atuando como ')+roleLabel(name)+(t&&t.freq?' '+t.freq:''))}
 function releaseRole(name){api('/api/atc/tower?name='+encodeURIComponent(name)+'&holder='+encodeURIComponent(holder),{method:'DELETE'}).then(function(r){
   myTowers=myTowers.filter(function(x){return x.name!==name});saveTowers();updateTalk();toast(L('Role released','Função liberada'));logEv(L('You left ','Você saiu de ')+roleLabel(name),'out');poll(true)})}
@@ -782,7 +782,7 @@ function closeTower(name){api('/api/atc/tower?name='+encodeURIComponent(name)+'&
 /* ---------- controller entry: airport list -> role selection -> work (one role at a time) ---------- */
 var ROLE_INFO={GND:['Ground','Solo'],TWR:['Tower','Torre'],APP:['Approach','Aproximação']};
 var ROLE_DESC={GND:['Taxi routes, pushback, taxi clearance','Rotas de táxi, pushback, autorização de táxi'],TWR:['Runway: line up, takeoff, landing, vectors','Pista: alinhar, decolar, pousar, vetores'],APP:['Radar vectors, altitude, direct, cleared ILS','Vetores, altitude, direto, ILS']};
-function setMode(m){uiMode=m;var b=$('twList');if(b)b._sig=null;renderGate();renderWork();renderTowerBox();renderStrips(true)}
+function setMode(m){uiMode=m;var gm=$('gMsg');if(gm)gm.textContent='';var b=$('twList');if(b)b._sig=null;renderGate();renderWork();renderTowerBox();renderStrips(true)}
 function gateSync(){if(uiMode==='work'&&!observe&&!myRoleList().length){setMode('list');return}renderGate();renderWork()}
 function activeApts(){return ac.filter(function(a){return a.virtual_tower}).map(function(a){return{n:String(a.callsign).replace(/^ATC_/,''),a:a}}).sort(function(x,y){return x.n<y.n?-1:1})}
 function gateSig(){var o=[uiMode,gApt];activeApts().forEach(function(x){o.push(x.n+':'+(x.a.positions||[]).map(function(p){return p.pos+(p.claimed?'c':'')+(p.freq||'')+(p.ctl||p.nick||'')}).join('.')+(x.a.owner_hid===myHid?'o':''))});return o.join('|')+(isMember?'m':'')}
