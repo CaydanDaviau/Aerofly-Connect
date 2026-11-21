@@ -214,27 +214,37 @@ document.addEventListener('visibilitychange',function(){if(!document.hidden){if(
 // ---- tap another aircraft: details popup ----
 var popup=null;
 function row(parent,k,v){if(v===''||v==null)return;var d=document.createElement('div');var b=document.createElement('b');b.textContent=k+' ';d.appendChild(b);d.appendChild(document.createTextNode(v));parent.appendChild(d)}
+function gsStr(v){v=Number(v);return isFinite(v)&&v>=0?Math.round(v)+' kt':''}
+map.on('click','own',function(e){
+  if(!own)return;
+  var a=lastTraffic.filter(function(x){return x.self})[0]||{};
+  // live values from the app / own track win over the last traffic snapshot
+  a=Object.assign({},a,{callsign:own.callsign||a.callsign,altitude_ft:own.alt!=null?own.alt:a.altitude_ft,ground_speed:own.gs!=null&&isFinite(Number(own.gs))?own.gs:a.ground_speed,eta_min:own.eta!=null&&isFinite(Number(own.eta))&&own.eta>=0?own.eta:a.eta_min});
+  showPlanePopup(a,e.lngLat)});
 map.on('click','planes',function(e){
   var f=e.features&&e.features[0];if(!f)return;
   var a=lastTraffic.filter(function(x){return String(x.icao_address||x.callsign)===f.properties.id})[0];if(!a)return;
+  showPlanePopup(a,e.lngLat)});
+function showPlanePopup(a,lngLat){
   var box=document.createElement('div');box.style.cssText='font:12px system-ui,sans-serif;color:#111;line-height:1.45';
   var t=document.createElement('div');t.style.cssText='font:700 14px system-ui,sans-serif';t.textContent=(a.callsign||a.icao_address)+(a.nick?' \u00b7 '+a.nick:'');box.appendChild(t);
   row(box,'Aircraft:',a.airplane_model||'');
   row(box,'Route:',[a.departure_airport,a.arrival_airport].filter(Boolean).join(' → '));
   row(box,'ALT:',altStr(a.altitude_ft));
+  row(box,'GS:',gsStr(a.ground_speed));
   row(box,'ETE:',a.eta_min!=null?etaStr(a.eta_min):'');row(box,'ETA:',a.eta_min!=null?etaClock(a.eta_min):'');
   row(box,'Landing:',a.landing_fpm!=null?fpmStr(a.landing_fpm):'');
   row(box,'Squawk:',a.assigned_squawk||'');
   if(popup)popup.remove();
-  popup=new maplibregl.Popup({closeButton:true,maxWidth:'220px',offset:14}).setLngLat(e.lngLat).setDOMContent(box).addTo(map);
+  popup=new maplibregl.Popup({closeButton:true,maxWidth:'220px',offset:14}).setLngLat(lngLat).setDOMContent(box).addTo(map);
   var pp=popup;pp.on('close',function(){if(popup===pp){popup=null;routeId=null;tapRoute=null;tapTaxi=null;showRoute();showTaxi()}});
   routeId=null;tapRoute=null;tapTaxi=null;showRoute();showTaxi();
   if(a.has_taxi&&!a.self){var tid=String(a.icao_address||'');routeId=routeId||null;
     fetch(BASE+'/api/taxi?icao_address='+encodeURIComponent(tid),{headers:hdrs()}).then(function(r){return r.ok?r.json():null}).then(function(j){if(popup===pp&&j){tapTaxi=j;showTaxi()}}).catch(function(){})}
-  if(a.has_route){var id=String(a.icao_address||'');routeId=id;
+  if(a.has_route&&!a.self){var id=String(a.icao_address||'');routeId=id;
     fetch(BASE+'/api/route?icao_address='+encodeURIComponent(id),{headers:hdrs()})
       .then(function(r){return r.ok?r.json():null}).then(function(j){if(routeId===id&&j){tapRoute=j.points;showRoute()}}).catch(function(){})}
-});
+}
 var ownTaxi=null,tapTaxi=null,taxiAt=0,taxiBusy=false;
 function checkOwnTaxi(a){
   if(!a||!a.has_taxi){if(ownTaxi){ownTaxi=null;showTaxi()}return}
