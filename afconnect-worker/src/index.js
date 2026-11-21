@@ -13,19 +13,19 @@ const TTL_MS = 60_000;
 const ASSIGN_TTL_MS = 12 * 3600_000;
 const TOWER_TTL_MS = 120_000;   // an airport expires this long after its owner's page last refreshed it (the page sends a heartbeat every 45 s)
 const MAX_TOWERS = 50;
-// Positions of one airport: key = ICAO (TWR, kept for old towers) or ICAO_DEL / _GND / _APP / _CTR.
+// Positions of one airport: key = ICAO (TWR, kept for old towers) or ICAO_GND / _APP / _CTR.
 // A claimed position (the page sends a `holder` id + heartbeat) is freed POS_TTL_MS after the last heartbeat.
 const ROLE_COOLDOWN_MS = 120_000;
 const POS_TTL_MS = 120_000;
-const POS_NAMES = ["DEL", "GND", "TWR", "APP", "CTR"];
+const POS_NAMES = ["GND", "TWR", "APP", "CTR"];
 const HANDOFF_TTL_MS = 120_000, PEND_TTL_MS = 120_000;
-const POS_SPOKEN = { DEL: "delivery", GND: "ground", TWR: "tower", APP: "approach", CTR: "center" };
+const POS_SPOKEN = { GND: "ground", TWR: "tower", APP: "approach", CTR: "center" };
 // Which positions can answer each request when staffed (next one up covers the one below it).
-const COVER = { clearance: ["DEL", "GND", "TWR"], pushback: ["GND", "TWR"], taxi: ["GND", "TWR"], takeoff: ["TWR"], land: ["TWR"], climb: ["APP", "TWR", "CTR"], descent: ["APP", "TWR", "CTR"] };
+const COVER = { clearance: ["GND", "TWR"], pushback: ["GND", "TWR"], taxi: ["GND", "TWR"], takeoff: ["TWR"], land: ["TWR"], climb: ["APP", "TWR", "CTR"], descent: ["APP", "TWR", "CTR"] };
 const parseTowerName = s => {
-  const m = /^([A-Z0-9]{2,8}?)(?:_(DEL|GND|TWR|APP|CTR))?$/.exec(String(s || "").trim().toUpperCase());
+  const m = /^([A-Z0-9]{2,8}?)(?:_(GND|TWR|APP|CTR))?$/.exec(String(s || "").trim().toUpperCase());
   if (!m) return null;
-  const pos = m[2] || "APT";   // plain ICAO = the airport itself (symbol, ATIS); roles are ICAO_DEL / _GND / _TWR / _APP / _CTR
+  const pos = m[2] || "APT";   // plain ICAO = the airport itself (symbol, ATIS); roles are ICAO_GND / _TWR / _APP / _CTR
   return { apt: m[1], pos, name: pos === "APT" ? m[1] : m[1] + "_" + pos };
 };
 // short public id for a holder id (ids themselves are secrets: they are what proves you own a role)
@@ -40,7 +40,7 @@ const WARN_DEFAULT = 2;   // warnings per UTC day before penalties/violations co
 const PEN_LIMIT = 10, VIO_LIMIT = 3, PEN_TIMEOUT_MS = 30 * 60_000, VIO_TIMEOUT_MS = 6 * 3600_000;
 const DEM_STAT = { 1: "gw", 2: "ops", 3: "app_s" };   // stat that is lost (grade drops one level) when an ATC causes a mid-air collision
 // Controller grades: everyone starts at Ground (DEL/GND); Network members have every role. Stats never go down, so grades never drop.
-const ROLE_GRADE = { DEL: 0, GND: 0, TWR: 1, APP: 2, CTR: 3 };
+const ROLE_GRADE = { GND: 0, TWR: 1, APP: 2, CTR: 3 };
 const GRADE_NAMES = ["Ground", "Tower", "Approach", "Center"];
 const GRADE_REQ = [null, { atc_s: 3 * 3600, gw: 50 }, { atc_s: 10 * 3600, ops: 50 }, { app_s: 30 * 3600 }];
 const PILOT_GRADES = [["Captain", 100 * 3600, 100], ["Commercial", 25 * 3600, 25], ["Private", 5 * 3600, 5], ["Student", 0, 0]];
@@ -66,7 +66,7 @@ const normCallsign = cs => {
 // How the Android app decides to draw a tower (TrafficClassification.detectControlTower):
 // callsign contains "ATC_" AND (airplane_model is a 3-4 char airport code OR airplane_livery is a function name).
 const towerFields = cs => {
-  const m = /^ATC_([A-Z0-9]+)(?:_(?:DEL|GND|TWR|APP|CTR))?$/.exec(cs || "");
+  const m = /^ATC_([A-Z0-9]+)(?:_(?:GND|TWR|APP|CTR))?$/.exec(cs || "");
   if (!m) return null;
   return { airplane_model: /^[A-Z0-9]{3,4}$/.test(m[1]) ? m[1] : "", airplane_livery: "TOWER", livery: "TOWER" };
 };
@@ -298,7 +298,7 @@ export default {
   },
 };
 
-const AIRSPACE_NM = { DEL: 5, GND: 5, TWR: 15, APP: 50 };
+const AIRSPACE_NM = { GND: 5, TWR: 15, APP: 50 };
 const TOK_TTL_MS = 90 * 86_400_000;
 export class Hub {
   constructor(ctx) {
@@ -1018,7 +1018,7 @@ export class Hub {
   handlersOf(c, now) {
     const h = this.handlerOf(c);
     if (h) return new Set([h.holder]);
-    const air = c.pos.phase !== "ground" && c.pos.phase !== "runway", ok = air ? ["TWR", "APP", "CTR"] : ["DEL", "GND", "TWR"];
+    const air = c.pos.phase !== "ground" && c.pos.phase !== "runway", ok = air ? ["TWR", "APP", "CTR"] : ["GND", "TWR"];
     const roles = [...this.towers.values()].filter(t => t.holder && ok.includes(t.pos) && now - t.at <= POS_TTL_MS && !!t.member === !!c.member);
     const la = Number(c.pos.latitude), lo = Number(c.pos.longitude);
     const cover = roles.filter(r => { if (r.pos === "CTR") return false; const a = this.towers.get(r.apt) || r; return haversineMi(Number(a.latitude), Number(a.longitude), la, lo) / 1.15078 <= (AIRSPACE_NM[r.pos] || 50); });
@@ -1640,7 +1640,7 @@ export class Hub {
       const pn = parseTowerName(d.name);
       const lat = Number(d.latitude), lon = Number(d.longitude);
       if (!pn || !(Math.abs(lat) <= 90) || !(Math.abs(lon) <= 180))
-        return json({ error: "need name (2-8 letters/digits, optional _DEL/_GND/_TWR/_APP/_CTR), latitude and longitude" }, 400);
+        return json({ error: "need name (2-8 letters/digits, optional _GND/_TWR/_APP/_CTR), latitude and longitude" }, 400);
       const name = pn.name, old = this.towers.get(name), now = Date.now();
       const holder = String(d.holder || "").slice(0, 40), who = holder || String(d.owner || "").slice(0, 40);
       const lk = this.lockedApt(who, now);

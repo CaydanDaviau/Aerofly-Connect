@@ -8,7 +8,7 @@ const call = async (method, path, body, key = "k1", hdr = {}) => { const r = awa
 TEST.skipGrades = false; TEST.warnLimit = 0;
 const claim = (pos, key = "k1", hdr = {}) => call("PUT", "/api/atc/tower", { name: "SBBR_" + pos, holder: "h-" + key, latitude: -15.87, longitude: -47.92 }, key, hdr);
 let r = await claim("GND"); t("everyone starts with GND", r.s === 200);
-r = await claim("DEL"); t("DEL allowed (cooldown aside)", r.s === 200 || (r.s === 409 && r.j.error === "role_cooldown"));
+r = await claim("GND"); t("GND allowed (cooldown aside)", r.s === 200 || (r.s === 409 && r.j.error === "role_cooldown"));
 r = await claim("TWR"); t("TWR needs grade", r.s === 409 && r.j.error === "grade_required" && r.j.need === "Tower" && r.j.next_req.some(x => x.k === "gw" && x.need === 50));
 r = await claim("TWR", "k1", { "X-Member": "1" }); t("network member has every role", r.s === 200 || (r.s === 409 && r.j.error === "role_cooldown"));
 const pf = hub.profGet("k1"); pf.atc_s = 3 * 3600; pf.gw = 49;
