@@ -35,6 +35,7 @@ const TIMEOUT_REPEAT_MS = 60 * 60_000;   // repeated the same (UTC) day
 // Unauthorised actions: taxi / altitude = 1 penalty point; runway / landing = 1 violation. Both counters reset daily (UTC).
 // 10 penalties = 30 min timeout, 3 violations = 6 h timeout (counter restarts at 0 after the timeout).
 const VIOL_PTS = { taxi: 1, alt: 3 };
+const WARN_DEFAULT = 2;   // warnings per UTC day before penalties/violations count (public section)
 const PEN_LIMIT = 10, VIO_LIMIT = 3, PEN_TIMEOUT_MS = 30 * 60_000, VIO_TIMEOUT_MS = 6 * 3600_000;
 const DEM_STAT = { 1: "gw", 2: "ops", 3: "app_s" };   // stat that is lost (grade drops one level) when an ATC causes a mid-air collision
 // Controller grades: everyone starts at Ground (DEL/GND); Network members have every role. Stats never go down, so grades never drop.
@@ -42,7 +43,7 @@ const ROLE_GRADE = { DEL: 0, GND: 0, TWR: 1, APP: 2, CTR: 3 };
 const GRADE_NAMES = ["Ground", "Tower", "Approach", "Center"];
 const GRADE_REQ = [null, { atc_s: 3 * 3600, gw: 50 }, { atc_s: 10 * 3600, ops: 50 }, { app_s: 30 * 3600 }];
 const PILOT_GRADES = [["Captain", 100 * 3600, 100], ["Commercial", 25 * 3600, 25], ["Private", 5 * 3600, 5], ["Student", 0, 0]];
-export const TEST = { skipGrades: false };   // tests turn the role gate off
+export const TEST = { skipGrades: false, warnLimit: null };   // tests turn the role gate off
 function atcGrade(p) { if (p && Number.isInteger(p.gov)) return p.gov; let g = 0; while (g < 3) { const r = GRADE_REQ[g + 1]; if (!p || Object.keys(r).some(k => (p[k] || 0) < r[k])) break; g++; } return g; }
 function pilotGrade(p) { const f = p ? p.flight_s || 0 : 0, n = p ? p.flights || 0 : 0; return (PILOT_GRADES.find(x => f >= x[1] && n >= x[2]) || PILOT_GRADES[3])[0]; }
 const CRASH_SHOW_MS = 10 * 60_000;     // the X stays on the maps this long
@@ -448,7 +449,7 @@ export class Hub {
   // Profile: nickname + flight time (airborne) + ATC time (holding a role), per app key. Saved at most once a minute.
   pkey(key) { const t = this.toks.get(key); return t ? "a:" + t.acct : key; }
   profPeek(key) { return this.prof.get(this.pkey(key)); }
-  profGet(key) { key = this.pkey(key); let p = this.prof.get(key); if (!p) { p = { nick: "", flight_s: 0, atc_s: 0, flights: 0, saved: 0 }; this.prof.set(key, p); } if (!p.flights) p.flights = 0; for (const f of ["landings", "violations", "vpts", "timeouts", "gw", "ops", "app_s", "cviol", "pen", "vio", "dem"]) if (!p[f]) p[f] = 0; const day = new Date().toISOString().slice(0, 10); if (p.pday !== day) { p.pday = day; p.pen = 0; p.vio = 0; } return p; }
+  profGet(key) { key = this.pkey(key); let p = this.prof.get(key); if (!p) { p = { nick: "", flight_s: 0, atc_s: 0, flights: 0, saved: 0 }; this.prof.set(key, p); } if (!p.flights) p.flights = 0; for (const f of ["landings", "violations", "vpts", "timeouts", "gw", "ops", "app_s", "cviol", "pen", "vio", "dem"]) if (!p[f]) p[f] = 0; const day = new Date().toISOString().slice(0, 10); if (p.pday !== day) { p.pday = day; p.pen = 0; p.vio = 0; p.warn = 0; } return p; }
   profAdd(key, field, secs, now) {
     if (!key || !(secs > 0)) return;
     const p = this.profGet(key); p[field] += secs;
@@ -662,7 +663,7 @@ export class Hub {
     if (bp && bp.banned) return json({ error: "banned", banned: true, reason: bp.banned.reason || "" }, 403);
     if (lk && now < lk.until) {
       const cr0 = this.crashes.get(key);
-      return json({ error: lk.reason === "crash" || lk.reason === "midair" ? "crashed" : "timeout", crashed: true, reason: lk.reason, until: lk.until, remaining_s: Math.ceil((lk.until - now) / 1000), latitude: cr0 ? cr0.latitude : lk.latitude, longitude: cr0 ? cr0.longitude : lk.longitude, landing_fpm: cr0 ? cr0.landing_fpm : lk.landing_fpm }, 423);
+      return json({ error: lk.reason === "crash" || lk.reason === "midair" ? "crashed" : "timeout", crashed: true, reason: lk.reason, until: lk.until, remaining_s: Math.ceil((lk.until - now) / 1000), note: lk.note || "", latitude: cr0 ? cr0.latitude : lk.latitude, longitude: cr0 ? cr0.longitude : lk.longitude, landing_fpm: cr0 ? cr0.landing_fpm : lk.landing_fpm }, 423);
     }
     const cr = this.crashes.get(key);
     if (!cr || now >= cr.until) return null;
@@ -832,6 +833,18 @@ export class Hub {
     }
   }
 
+  // Public pilots get 2 warnings per UTC day (with the reason) before an unauthorised action counts. Returns true when it was only a warning.
+  warnPilot(key, c, type, now) {
+    const pf = this.profGet(key), WARN_LIMIT = TEST.warnLimit ?? WARN_DEFAULT;
+    if ((pf.warn || 0) >= WARN_LIMIT) return false;
+    pf.warn = (pf.warn || 0) + 1; pf.saved = now; this.ctx.storage.put("prof:" + this.pkey(key), pf);
+    const pt = c.lang === "pt", n = pf.warn, heavy = type === "runway" || type === "landing";
+    const why = { taxi: ["moving without taxi clearance", "movimento sem autorização de táxi"], alt: ["altitude change without a climb/descent clearance (request one in the overlay)", "mudança de altitude sem autorização de subida/descida (peça no overlay)"], runway: ["on the runway without takeoff clearance", "na pista sem autorização de decolagem"], landing: ["landing without clearance", "pouso sem autorização"] }[type] || ["unauthorised action", "ação não autorizada"];
+    const text = pt ? `AVISO ${n}/${WARN_LIMIT}: ${why[1]}. Na próxima conta como ${heavy ? "violação e timeout" : "penalidade"}.` : `WARNING ${n}/${WARN_LIMIT}: ${why[0]}. Next time it counts as a ${heavy ? "violation and timeout" : "penalty"}.`;
+    this.addMsg(c, text, "auto", { urgent: true });
+    return true;
+  }
+
   violate(key, c, st, type, apt, rwy, now, notify) {
     if (c.emerg && now < c.emerg.until) return;
     const net = !!c.member;   // ATC Network: tags and calls stay, but no counters, penalties or timeouts   // declared emergency: no unauthorised-action calls
@@ -841,7 +854,8 @@ export class Hub {
       st.viol[type] = { said: st.viol[type].said, logged: now };
       this.violations.push({ at: now, callsign: normCallsign(c.plan.callsign ?? c.pos.callsign), icao: c.pos.icao_address, type, airport: apt, runway: rwy });
       if (this.violations.length > MAX_VIOL) this.violations.shift();
-      if (firstOne && !net) {   // counters: taxi / altitude = penalty, runway / landing = violation; thresholds give timeouts
+      if (firstOne && !net && this.warnPilot(key, c, type, now)) { /* warning only: no points, no timeout */ }
+      else if (firstOne && !net) {   // counters: taxi / altitude = penalty, runway / landing = violation; thresholds give timeouts
         const pf = this.profGet(key); let ms = 0, why = "";
         if (VIOL_PTS[type]) { pf.vpts += VIOL_PTS[type]; pf.pen += VIOL_PTS[type]; if (pf.pen >= PEN_LIMIT) { pf.pen = 0; ms = PEN_TIMEOUT_MS; why = "penalties"; } }
         else { pf.violations += 1; pf.vio += 1; if (pf.vio >= VIO_LIMIT) { pf.vio = 0; ms = VIO_TIMEOUT_MS; why = "violations"; } else { this.ctx.storage.put("prof:" + this.pkey(key), pf); ms = this.strike(key); why = type === "landing" ? "landing_no_clnc" : "runway_no_clnc"; } }
@@ -1268,6 +1282,25 @@ export class Hub {
       const taxi = { text: ttext, kind: "ctl", apt: role.apt, points: pts.map(q => [Math.round(q[0] * 1e6) / 1e6, Math.round(q[1] * 1e6) / 1e6]), end: { lat: to.lat, lon: to.lon, label }, held: false, by: role.name || role.apt, at: Date.now(), until: Date.now() + 20 * 60_000 };
       if (!d.preview) { target.taxi = taxi; this.gwCredit(key, icao, Date.now()); if (d.msg === true && ttext) this.addMsg(target, ttext, "msg", {}); }
       return json({ success: true, preview: !!d.preview, ...taxi });
+    }
+    // Private network only: a credentialed controller times a pilot out (no penalty, violation or other mark on the account).
+    if ((m === "PUT" || m === "POST") && p === "/api/atc/timeout") {
+      if (request.headers.get("X-Member") !== "1") return json({ error: "network_only" }, 403);
+      if (this.noCred(request)) return json({ error: "atc_credential" }, 403);
+      const d = await request.json().catch(() => ({}));
+      if (!this.activeAtcHolder(String(d.holder || ""))) return json({ error: "division_required" }, 409);
+      const icao = String(d.icao_address || "").toUpperCase();
+      const pe = [...this.clients.entries()].find(([, c]) => c.pos && c.pos.icao_address === icao);
+      if (!pe || !pe[1].member) return json({ error: "aircraft not found" }, 404);
+      const [tk, target] = pe, cs = normCallsign(target.plan.callsign ?? target.pos.callsign), pk = this.pkey(tk), now = Date.now();
+      { const ob = this.airspaceBlock(String(d.holder || ""), target); if (ob) return json(ob, 409); }
+      const mins = Math.round(Number(d.minutes) || 5);
+      if (!(mins >= 1 && mins <= 120)) return json({ error: "bad_minutes" }, 400);
+      const note = String(d.reason || "").trim().slice(0, 80) || "ATC timeout";
+      const lk = { until: now + mins * 60_000, reason: "atc", at: now, note, latitude: target.pos.latitude, longitude: target.pos.longitude };
+      this.locks.set(pk, lk); await this.ctx.storage.put("lock:" + pk, lk);
+      this.clients.delete(tk);
+      return json({ success: true, callsign: cs, minutes: mins });
     }
     if ((m === "PUT" || m === "POST") && p === "/api/atc/squawk") {
       if (this.noCred(request)) return json({ error: "atc_credential" }, 403);

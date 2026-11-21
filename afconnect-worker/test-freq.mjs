@@ -1,6 +1,6 @@
 // Mock-based tests for the /ws routing + push (run: node test-ws.mjs)
 import worker, { Hub, TEST } from "./src/index.js";
-TEST.skipGrades = true;
+TEST.skipGrades = true; TEST.warnLimit = 0;
 const store = new Map(); const socks = [];
 const mkWs = () => { const w = { sent: [], att: null, closed: false, send(x) { this.sent.push(x); }, close() { this.closed = true; }, serializeAttachment(a) { this.att = JSON.parse(JSON.stringify(a)); }, deserializeAttachment() { return this.att; } }; return w; };
 let autoResp = null;
