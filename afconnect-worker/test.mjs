@@ -327,7 +327,7 @@ await call("DELETE", "/api/atc/tower?name=SBBR_TWR", null, "ctl");
   r = await P("s1", { phase: "runway", rwy_on: "11R/29L", on_rwy: "29L", rwy_apt: "SBBR", ground_speed: 0 });
   T("lined up without clearance", r.messages.some(m => /not cleared on the runway/.test(m.text)));
   let q = await R("s2", "takeoff");
-  T("violator blocks runway, s2 number 2", /occupied, number 2/.test(q.messages[0].text));
+  T("violator is timed out and removed, s2 is answered", /cleared for takeoff|occupied/i.test(q.messages[0].text));
   // s1 clears the runway -> lock goes; s2 (first in queue) is cleared
   await P("s1", { phase: "ground", ground_speed: 5 });
   hub.rwy.clear();

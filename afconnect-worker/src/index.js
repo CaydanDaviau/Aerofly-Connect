@@ -861,7 +861,7 @@ export class Hub {
       const d = haversineMi(lat, lon, pos.latitude, pos.longitude);
       if (d <= rad) {
         const callsign = normCallsign(c.plan.callsign ?? pos.callsign);
-        out.push({ ...pos, ...c.plan, callsign, ...towerFields(callsign), member: !!c.member, ...(!c.member && this.nickOf(ck) ? { nick: this.nickOf(ck) } : {}), has_route: !!c.route, has_taxi: !!(c.taxi && Date.now() < c.taxi.until), ...this.handFields(c), freq: c.pos.freq || "", assigned_squawk: c.assigned ? c.assigned.squawk : null, emergency: !!(c.emerg && Date.now() < c.emerg.until), no_clnc: !!(c.viol && Date.now() - c.viol.at < VIOL_SHOW_MS), clnc: c.viol && Date.now() - c.viol.at < VIOL_SHOW_MS ? c.viol.type : "", clr: this.clrOf(c, Date.now()), ...(ck === key ? { self: true } : {}), distance_miles: Math.round(d * 10) / 10 });
+        out.push({ ...pos, ...c.plan, callsign, ...towerFields(callsign), member: !!c.member, ...(this.nickOf(ck) ? { nick: this.nickOf(ck) } : {}), has_route: !!c.route, has_taxi: !!(c.taxi && Date.now() < c.taxi.until), ...this.handFields(c), freq: c.pos.freq || "", assigned_squawk: c.assigned ? c.assigned.squawk : null, emergency: !!(c.emerg && Date.now() < c.emerg.until), no_clnc: !!(c.viol && Date.now() - c.viol.at < VIOL_SHOW_MS), clnc: c.viol && Date.now() - c.viol.at < VIOL_SHOW_MS ? c.viol.type : "", clr: this.clrOf(c, Date.now()), ...(ck === key ? { self: true } : {}), distance_miles: Math.round(d * 10) / 10 });
       }
     }
     // one symbol per airport; its staffed roles are listed in `positions`
@@ -877,7 +877,7 @@ export class Hub {
       const d = haversineMi(lat, lon, base.latitude, base.longitude);
       if (d > rad) continue;
       const e = towerAircraft({ ...base, name: a, pos: "APT", holder: undefined, freq: "" }, d);
-      e.positions = g.roles.map(r => ({ pos: r.pos || "TWR", freq: r.freq || "", ...(r.freq ? this.freqRoster(r.freq, vm) : {}), claimed: !!r.holder, hid: r.holder ? hid(r.holder) : "", ctl: r.holder ? (r.ctl || "") : "", nick: r.holder && !r.member ? (r.nick || "") : "" }));
+      e.positions = g.roles.map(r => ({ pos: r.pos || "TWR", freq: r.freq || "", ...(r.freq ? this.freqRoster(r.freq, vm) : {}), claimed: !!r.holder, hid: r.holder ? hid(r.holder) : "", ctl: r.holder ? (r.ctl || "") : "", nick: r.holder ? (r.nick || "") : "" }));
       e.owner_hid = g.anchor && g.anchor.owner ? hid(g.anchor.owner) : "";
       e.bans = g.anchor && g.anchor.bans ? Object.values(g.anchor.bans).map(b => ({ hid: b.hid, pos: b.pos })) : [];
       e.claimed = g.roles.some(r => r.holder);
@@ -1615,7 +1615,7 @@ export class Hub {
         }
       }
       const atis = old && old.atis;
-      const t = { name, apt: pn.apt, pos: pn.pos, freq, holder: holder || undefined, ctl: holder ? (this.ctlName(request) || undefined) : undefined, nick: holder && request.headers.get("X-Member") !== "1" ? (this.nickOf(key) || undefined) : undefined, oip: (old && old.oip) || ipt || undefined, latitude: lat, longitude: lon, altitude_ft: Number(d.altitude_ft) || 0, at: now, member: request.headers.get("X-Member") === "1", atis };
+      const t = { name, apt: pn.apt, pos: pn.pos, freq, holder: holder || undefined, ctl: holder ? (this.ctlName(request) || undefined) : undefined, nick: holder ? (this.nickOf(key) || undefined) : undefined, oip: (old && old.oip) || ipt || undefined, latitude: lat, longitude: lon, altitude_ft: Number(d.altitude_ft) || 0, at: now, member: request.headers.get("X-Member") === "1", atis };
       if (pn.pos === "APT") {   // the creator owns the airport (kept across re-PUTs); bans live on the airport record
         const ow = (old && old.owner) || String(d.owner || "").slice(0, 40);
         if (ow) t.owner = ow;
