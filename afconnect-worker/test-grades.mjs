@@ -41,16 +41,17 @@ let pp = hub.profGet("p1"); t("taxi = 1 penalty, no violation, no timeout", pp.p
 hub.violate("p1", c, st, "taxi", "SBBR", "", Date.now() + 61_000, () => {});
 t("same episode not counted twice", pp.pen === 1);
 ({ c, st } = mk()); hub.violate("p1", c, st, "alt", "SBBR", "", Date.now(), () => {});
-t("altitude = penalty only", pp.pen === 2 && pp.vio === 0);
+t("altitude = 3 penalty points", pp.pen === 4 && pp.vio === 0);
 ({ c, st } = mk()); hub.violate("p1", c, st, "runway", "SBBR", "27", Date.now(), () => {});
-t("runway = 1 violation, no timeout yet", pp.vio === 1 && pp.pen === 2 && !hub.locks.get("p1"));
-for (let i = 0; i < 8; i++) { ({ c, st } = mk()); hub.violate("p1", c, st, "taxi", "SBBR", "", Date.now(), () => {}); }
+t("runway = 1 violation + 5 min timeout", pp.vio === 1 && pp.pen === 4 && hub.locks.get("p1") && Math.abs(hub.locks.get("p1").until - Date.now() - 300_000) < 3000);
+hub.locks.delete("p1");
+for (let i = 0; i < 6; i++) { ({ c, st } = mk()); hub.violate("p1", c, st, "taxi", "SBBR", "", Date.now(), () => {}); }
 let lk = hub.locks.get("p1"); t("10 penalties = 30 min timeout", lk && lk.reason === "penalties" && Math.abs(lk.until - Date.now() - 1_800_000) < 3000 && pp.pen === 0);
 r = await call("PUT", "/api/position", { latitude: 1, longitude: 2 }, "p1"); t("position refused with 423", r.s === 423 && r.j.reason === "penalties" && r.j.remaining_s > 1700);
 r = await call("PUT", "/api/flightplan", { callsign: "TST" }, "p1"); t("flight plan refused too", r.s === 423);
 hub.locks.delete("p1");
 ({ c, st } = mk()); hub.violate("p1", c, st, "landing", "SBBR", "27", Date.now(), () => {});
-t("landing = violation 2, no timeout", pp.vio === 2 && !hub.locks.get("p1"));
+t("landing = violation 2 + 1 h timeout", pp.vio === 2 && Math.abs(hub.locks.get("p1").until - Date.now() - 3_600_000) < 3000);hub.locks.delete("p1");
 ({ c, st } = mk()); hub.violate("p1", c, st, "runway", "SBBR", "27", Date.now(), () => {});
 lk = hub.locks.get("p1"); t("3 violations = 6 h timeout", lk && lk.reason === "violations" && Math.abs(lk.until - Date.now() - 21_600_000) < 3000 && pp.vio === 0);
 hub.locks.delete("p1"); pp.pen = 4; pp.vio = 2; pp.pday = "2000-01-01"; pp = hub.profGet("p1");

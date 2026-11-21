@@ -34,7 +34,7 @@ const TIMEOUT_MS = 5 * 60_000;           // crash or landing without clearance: 
 const TIMEOUT_REPEAT_MS = 60 * 60_000;   // repeated the same (UTC) day
 // Unauthorised actions: taxi / altitude = 1 penalty point; runway / landing = 1 violation. Both counters reset daily (UTC).
 // 10 penalties = 30 min timeout, 3 violations = 6 h timeout (counter restarts at 0 after the timeout).
-const VIOL_PTS = { taxi: 1, alt: 1 };
+const VIOL_PTS = { taxi: 1, alt: 3 };
 const PEN_LIMIT = 10, VIO_LIMIT = 3, PEN_TIMEOUT_MS = 30 * 60_000, VIO_TIMEOUT_MS = 6 * 3600_000;
 const DEM_STAT = { 1: "gw", 2: "ops", 3: "app_s" };   // stat that is lost (grade drops one level) when an ATC causes a mid-air collision
 // Controller grades: everyone starts at Ground (DEL/GND); Network members have every role. Stats never go down, so grades never drop.
@@ -641,7 +641,7 @@ export class Hub {
   }
   lockMs(key, reason, now, ms, extra) {
     const lk = { until: now + ms, reason, at: now, ...(extra || {}) }, pk = this.pkey(key), p = this.profGet(key);
-    p.timeouts = (p.timeouts || 0) + 1; p.saved = now; this.ctx.storage.put("prof:" + pk, p);
+    if (!extra || !extra.noCount) p.timeouts = (p.timeouts || 0) + 1; p.saved = now; this.ctx.storage.put("prof:" + pk, p);
     this.locks.set(pk, lk); this.ctx.storage.put("lock:" + pk, lk); return lk;
   }
   // ATC caused a mid-air collision: permanent demotion by one level (the stat of that tier is lost, so it has to be earned again)
@@ -811,7 +811,7 @@ export class Hub {
       const vs = Number(p.vertical_speed_ft_min) || 0, alt = Number(p.altitude_ft) || 0, a = st.alt;
       if (now > st.grace && p.terminal !== true && !(g.land > now)) {
         // with an assigned altitude: going through it; without one: a sustained climb/descent after the first 3 minutes of flight
-        const bad = a ? ((vs > 300 && alt > a.ft + 300) || (vs < -300 && alt < a.ft - 300)) : (now - st.airAt > 180_000 && Math.abs(vs) > 500);
+        const bad = a ? ((vs > 300 && alt > a.ft + 500) || (vs < -300 && alt < a.ft - 500)) : (now - st.airAt > 180_000 && Math.abs(vs) > 500);
         if (bad) { if (!st.altBad) st.altBad = now; if (now - st.altBad > 15_000) this.violate(key, c, st, "alt", apt, "", now, quiet); } else st.altBad = 0;
       }
     } else {
@@ -840,10 +840,10 @@ export class Hub {
       if (this.violations.length > MAX_VIOL) this.violations.shift();
       if (firstOne) {   // counters: taxi / altitude = penalty, runway / landing = violation; thresholds give timeouts
         const pf = this.profGet(key); let ms = 0, why = "";
-        if (VIOL_PTS[type]) { pf.vpts += 1; pf.pen += 1; if (pf.pen >= PEN_LIMIT) { pf.pen = 0; ms = PEN_TIMEOUT_MS; why = "penalties"; } }
-        else { pf.violations += 1; pf.vio += 1; if (pf.vio >= VIO_LIMIT) { pf.vio = 0; ms = VIO_TIMEOUT_MS; why = "violations"; } }
+        if (VIOL_PTS[type]) { pf.vpts += VIOL_PTS[type]; pf.pen += VIOL_PTS[type]; if (pf.pen >= PEN_LIMIT) { pf.pen = 0; ms = PEN_TIMEOUT_MS; why = "penalties"; } }
+        else { pf.violations += 1; pf.vio += 1; if (pf.vio >= VIO_LIMIT) { pf.vio = 0; ms = VIO_TIMEOUT_MS; why = "violations"; } else { this.ctx.storage.put("prof:" + this.pkey(key), pf); ms = this.strike(key); why = type === "landing" ? "landing_no_clnc" : "runway_no_clnc"; } }
         pf.saved = now; this.ctx.storage.put("prof:" + this.pkey(key), pf);
-        if (ms) { this.lockMs(key, why, now, ms, { latitude: c.pos.latitude, longitude: c.pos.longitude }); this.clients.delete(key); }
+        if (ms) { this.lockMs(key, why, now, ms, { latitude: c.pos.latitude, longitude: c.pos.longitude, noCount: why.endsWith("_no_clnc") }); this.clients.delete(key); }
       }
     }
     c.viol = { type, at: now };
