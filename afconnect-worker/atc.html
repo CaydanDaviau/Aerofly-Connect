@@ -70,6 +70,25 @@ input::placeholder{color:var(--dim)}
 .ptt{touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;background:#1b5e3a;color:#fff;border:1px solid #3dff7a;border-radius:6px;padding:8px 12px;font-weight:700}
 .ptt.rec{background:#c0392b;border-color:#ff8a80}.ptt.off{opacity:.4}
 #voiceBtn.on{border-color:#3dff7a;color:#3dff7a}
+#main{position:relative}
+#gate{position:absolute;inset:0;z-index:20;background:var(--bg);overflow:auto;padding:14px;display:none}
+#gateIn{max-width:520px;margin:0 auto}
+#gate h2{margin:4px 0 10px;font-size:15px;letter-spacing:.12em;color:var(--cy)}
+#gate .row{display:flex;justify-content:space-between;align-items:center;gap:8px}
+#gate .gcard{cursor:pointer}#gate .gcard.nc{cursor:default}
+#gate .gcard b{font-size:14px}
+#gate .roles{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}
+#gate .tag{padding:1px 6px;border:1px solid var(--faint);border-radius:10px;font-size:11px;color:var(--dim)}
+#gate .tag.t{border-color:var(--amber);color:var(--amber)}
+#gate .gform{display:flex;gap:6px;margin:10px 0}
+#gate .gform input{width:110px;letter-spacing:.1em}
+#gate .desc{color:var(--dim);font-size:11px;margin-top:2px}
+#evlog{position:absolute;left:6px;top:6px;z-index:4;width:min(330px,70%);font-size:10px;background:rgba(4,7,4,.72);border:1px solid var(--faint);border-radius:4px}
+#evlog .hd{padding:2px 6px;color:var(--dim);cursor:pointer;user-select:none}
+#evlog .bd{max-height:88px;overflow:auto;padding:0 6px 3px}
+#evlog .e{color:var(--fg)}#evlog .e.out{color:var(--cy)}#evlog .e.warn{color:var(--amber)}#evlog .e.bad{color:var(--red)}
+#evlog .e i{font-style:normal;color:var(--dim)}
+#talkRow{display:none!important}
 </style>
 </head>
 <body>
@@ -94,11 +113,15 @@ input::placeholder{color:var(--dim)}
     <span id="status">offline</span>
   </div>
   <div id="main">
-    <div id="scope"><div id="bgmap"></div><canvas id="rwcv"></canvas><div id="lblmap"></div><canvas id="radar"></canvas><div id="attr">© OSM · OpenFreeMap · Contains data from <a href="https://github.com/laegsgaardTroels/whatisflying-db" target="_blank" rel="noopener">What is flying?</a>, available under <a href="https://opendatacommons.org/licenses/odbl/1-0/" target="_blank" rel="noopener">ODbL 1.0</a>.</div></div>
+    <div id="scope"><div id="bgmap"></div><canvas id="rwcv"></canvas><div id="lblmap"></div><canvas id="radar"></canvas><div id="evlog"><div class="hd" id="evHd"></div><div class="bd" id="evBd"></div></div><div id="attr">© OSM · OpenFreeMap · Contains data from <a href="https://github.com/laegsgaardTroels/whatisflying-db" target="_blank" rel="noopener">What is flying?</a>, available under <a href="https://opendatacommons.org/licenses/odbl/1-0/" target="_blank" rel="noopener">ODbL 1.0</a>.</div></div>
+    <div id="gate"><div id="gateIn"><h2 id="gHead"></h2><div id="gList"></div>
+      <div id="gOpen" class="gform"><input id="gIcao" maxlength="8" autocapitalize="characters" placeholder="SBBR"><button id="gOpenBtn"></button></div>
+      <div id="gWatchRow"><button id="gWatch"></button></div></div></div>
     <div id="strips">
       <div id="twrbox" class="strip twr">
-        <div class="h"><span class="cs">Towers</span></div>
-        <div class="ctl"><input id="twIcao" maxlength="8" placeholder="SBBR" autocapitalize="characters" style="width:96px;letter-spacing:.1em">
+        <div class="h"><span class="cs" id="wkTitle">Towers</span></div>
+        <div class="ctl" id="wkCtl"><button id="wkFreq"></button><button id="wkLeave"></button></div>
+        <div class="ctl" style="display:none"><input id="twIcao" maxlength="8" placeholder="SBBR" autocapitalize="characters" style="width:96px;letter-spacing:.1em">
           <button id="twOpen">Open airport</button></div>
         <div id="talkRow" class="m" style="display:none;margin-top:4px">Talk on <select id="talkOn"></select></div>
         <div id="twList" style="display:none"></div>
@@ -439,15 +462,11 @@ function drawHdgBug(){   /* heading the controller is giving the selected aircra
   g.restore()}
 function draw(){
   syncBg();if(bgOK)g.clearRect(0,0,W,H);else{g.fillStyle='#2b2b2b';g.fillRect(0,0,W,H)}
-  var maxR=Math.hypot(W,H)/2*nmpp,steps=[1,2,5,10,20,25,50,100,200,500,1000],step=steps[steps.length-1];
-  for(var i=0;i<steps.length;i++){if(steps[i]/nmpp>=55){step=steps[i];break}}
-  g.lineWidth=1;g.font='10px ui-monospace,monospace';g.textBaseline='bottom';
-  for(var r=step;r<=maxR;r+=step){var px=r/nmpp;
-    g.strokeStyle='rgba(61,255,122,.26)';g.beginPath();g.arc(W/2,H/2,px,0,6.2832);g.stroke();
-    g.fillStyle='rgba(61,255,122,.55)';g.fillText(r+'',W/2+3,H/2-px-1)}
-  g.strokeStyle='rgba(61,255,122,.26)';g.beginPath();g.moveTo(W/2,0);g.lineTo(W/2,H);g.moveTo(0,H/2);g.lineTo(W,H/2);g.stroke();
-  g.fillStyle='rgba(61,255,122,.55)';g.textBaseline='top';g.fillText('N',W/2+4,3);
-  g.fillText(step+' nm rings',6,H-14);
+  var maxR=Math.hypot(W,H)/2*nmpp,steps=[1,2,5,10,20,50,100,200,500,1000],step=steps[steps.length-1];
+  for(var i=0;i<steps.length;i++){if(steps[i]/nmpp>=70){step=steps[i];break}}
+  g.lineWidth=1;g.font='10px ui-monospace,monospace';g.strokeStyle='rgba(61,255,122,.22)';g.fillStyle='rgba(61,255,122,.5)';
+  for(var r=step;r<=maxR*1.2&&r<=3000;r+=step){var px=r/nmpp;g.beginPath();g.arc(W/2,H/2,px,0,6.2832);g.stroke();g.fillText(r+'',W/2+px+2,H/2-2)}
+  g.textBaseline='top';
   var gM=g;if(bgOK){g=gR;gR.clearRect(0,0,W,H)}try{drawRunways(maxR)}finally{g=gM}   /* no map underlay: runways stay on the radar canvas */
   drawFixes(maxR);
   drawRoute(maxR);drawTaxi(maxR);drawHdgBug();drawAirspace();
@@ -534,7 +553,7 @@ function showLogin(msg){$('keyErr').textContent=msg||'';$('keyIn').value='';$('l
 
 /* ---------- strips ---------- */
 function renderStrips(force){
-  var f=document.activeElement;if(!force&&(pttBusy||f&&(f.id==='sqin'||f.id==='msgin'||f.id==='altin'||f.id==='hdgin'||f.id==='urg'||f.id==='hoto'||f.closest&&f.closest('.twmount'))))return;
+  var f=document.activeElement;if(!force&&(pttBusy||f&&(f.id==='sqin'||f.id==='msgin'||f.id==='altin'||f.id==='hdgin'||f.id==='dirin'||f.id==='ilssel'||f.id==='urg'||f.id==='hoto'||f.closest&&f.closest('.twmount'))))return;
   var list=ac.map(function(a){return{a:a,r:rel(a)}}).sort(function(x,y){var sx=x.a.icao_address===sel?0:1,sy=y.a.icao_address===sel?0:1;return sx-sy||x.r.dist-y.r.dist});
   if(!list.length){$('list').innerHTML='<div class="empty">'+L('No traffic.','Sem tráfego.')+'</div>';return}
   $('list').innerHTML=list.map(function(o){var a=o.a,r=o.r,id=a.icao_address,tw=isTwr(a),isSel=id===sel;
@@ -549,6 +568,7 @@ function renderStrips(force){
       (a.phase==='air'||!can('taxi')?'':'<div class="ctl">'+(txMode===id?(txPrev&&txPrev.id===id?'<button data-act="txsend">'+L('Send route','Enviar rota')+'</button>':'<span class="m">'+L('Click the destination on the radar','Clique no destino no radar')+'</span>')+'<button data-act="txcancel">'+L('Cancel','Cancelar')+'</button>':'<button data-act="txr">'+L('Taxi route','Rota de táxi')+'</button>'+(a.has_taxi?'<button data-act="txclr">'+L('Clear route','Limpar rota')+'</button>':''))+'</div>')+
       (can('hdg')?'<div class="ctl hdg"><button data-act="hdgs" data-d="-10">&lsaquo;10</button><button data-act="hdgs" data-d="-5">&lsaquo;5</button><input id="hdgin" inputmode="numeric" maxlength="3" value="'+hdgVal(a)+'"><button data-act="hdgs" data-d="5">5&rsaquo;</button><button data-act="hdgs" data-d="10">10&rsaquo;</button></div>':'')+
       (can('hdg')?'<div class="ctl hdg"><button data-act="hdgsend" data-t="L">&larr; '+L('Left','Esq.')+'</button><button data-act="hdgsend" data-t="F">'+L('Fly heading','Voar proa')+'</button><button data-act="hdgsend" data-t="R">'+L('Right','Dir.')+' &rarr;</button></div>':'')+
+      (can('hdg')?dirIls(a):'')+
       '<div class="ctl"><input id="msgin" maxlength="300" placeholder="'+L('Message to pilot','Mensagem ao piloto')+'"><label class="urg"><input type="checkbox" id="urg"'+(urgent?' checked':'')+'> '+L('Urgent','Urgente')+'</label><button data-act="msg">'+L('Send','Enviar')+'</button></div>':'';
     var ho=handUi(a,isSel&&!tw);
     var vc=vclips.filter(function(v){return v.icao_address===id&&isHeard(v.freq)}).slice(-3).map(function(v){return'<div class="mlog chat"><b>'+L('PILOT voice','PILOTO voz')+'</b> '+Math.round((v.ms||0)/1000)+' s <button data-act="vplay" data-clip="'+esc(v.id)+'">&#9654;</button></div>'}).join('');
@@ -566,8 +586,8 @@ $('strips').addEventListener('click',function(e){
   var btn=e.target.closest('button'),strip=e.target.closest('.strip');if(!strip)return;var id=strip.getAttribute('data-id');
   if(btn){var act=btn.getAttribute('data-act'),v=($('sqin')||{}).value||'';
     if(act==='set'){if(!/^[0-7]{4}$/.test(v)){toast(L('4 digits, each 0-7','4 dígitos, cada um 0-7'));return}assign(id,v)}
-    else if(act==='vplay')playClip(btn.getAttribute('data-clip'));else if(act==='txr'){txMode=id;txPrev=null;renderStrips(true);draw()}else if(act==='txcancel'){txMode='';txPrev=null;renderStrips(true);draw()}else if(act==='txsend')txSend(id);else if(act==='txclr')txClear(id);else if(act==='msg')sendMsg(id);else if(act==='clr'){var ca=ac.filter(function(x){return x.icao_address===id})[0];clrSend(id,btn.getAttribute('data-t'),!(ca&&ca.clr&&ca.clr[btn.getAttribute('data-t')]))}else if(act==='altset'){var av=($('altin')||{}).value||'';if(!av){toast(L('Type an altitude (100 = FL100, 5000 = ft)','Digite uma altitude (100 = FL100, 5000 = ft)'));return}clrSend(id,'alt',true,av)}else if(act==='altclr')clrSend(id,'alt',false);else if(act==='tout')toutSend(id);else if(act==='hdgs')hdgStep(id,Number(btn.getAttribute('data-d')));else if(act==='hdgsend')hdgSend(id,btn.getAttribute('data-t'));else if(act==='hosend')handoffSend(id);else if(act==='hoacc')handoffReply(id,true);else if(act==='hodec')handoffReply(id,false);else if(act==='auto')assign(id,'');else if(act==='clear')clearSq(id);return}
-  if(e.target.id==='sqin'||e.target.id==='msgin'||e.target.id==='altin'||e.target.id==='hdgin'||e.target.id==='urg'||e.target.id==='ptt'||e.target.id==='hoto')return;
+    else if(act==='vplay')playClip(btn.getAttribute('data-clip'));else if(act==='txr'){txMode=id;txPrev=null;renderStrips(true);draw()}else if(act==='txcancel'){txMode='';txPrev=null;renderStrips(true);draw()}else if(act==='txsend')txSend(id);else if(act==='txclr')txClear(id);else if(act==='msg')sendMsg(id);else if(act==='clr'){var ca=ac.filter(function(x){return x.icao_address===id})[0];clrSend(id,btn.getAttribute('data-t'),!(ca&&ca.clr&&ca.clr[btn.getAttribute('data-t')]))}else if(act==='altset'){var av=($('altin')||{}).value||'';if(!av){toast(L('Type an altitude (100 = FL100, 5000 = ft)','Digite uma altitude (100 = FL100, 5000 = ft)'));return}clrSend(id,'alt',true,av)}else if(act==='altclr')clrSend(id,'alt',false);else if(act==='tout')toutSend(id);else if(act==='hdgs')hdgStep(id,Number(btn.getAttribute('data-d')));else if(act==='hdgsend')hdgSend(id,btn.getAttribute('data-t'));else if(act==='hosend')handoffSend(id);else if(act==='hoacc')handoffReply(id,true);else if(act==='hodec')handoffReply(id,false);else if(act==='dirto')dirSend(id);else if(act==='ils')ilsSend(id);else if(act==='auto')assign(id,'');else if(act==='clear')clearSq(id);return}
+  if(e.target.id==='sqin'||e.target.id==='msgin'||e.target.id==='altin'||e.target.id==='hdgin'||e.target.id==='dirin'||e.target.id==='ilssel'||e.target.id==='urg'||e.target.id==='ptt'||e.target.id==='hoto')return;
   if(sel!==id){txMode='';txPrev=null}sel=(strip.classList.contains('twr')&&sel===id)?null:id;renderStrips(true);draw()});
 var group='';try{var gp=new URLSearchParams(location.search).get('group');group=gp!==null?gp:(localStorage.getItem('afc_group')||'');if(gp!==null){if(group)localStorage.setItem('afc_group',group);else localStorage.removeItem('afc_group')}}catch(e){}
 var atcCode='';try{var ap=new URLSearchParams(location.search).get('atc');atcCode=ap!==null?ap:(localStorage.getItem('afc_atc')||'');if(ap!==null){if(atcCode)localStorage.setItem('afc_atc',atcCode);else localStorage.removeItem('afc_atc')}}catch(e){}
@@ -586,7 +606,7 @@ function api(path,opt){opt=opt||{};var m=(opt.method||'GET').toUpperCase();
 function assign(id,sq){var body={icao_address:id,holder:holder,freq:talkFreq()};if(sq)body.squawk=sq;
   api('/api/atc/squawk',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
    .then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j,s:r.status}})})
-   .then(function(o){toast(o.ok?L('Assigned ','Atribuído ')+o.j.squawk:(o.j.error==='not_tuned'||o.j.error==='outside_airspace')?NOTTUNED(o.j):o.j.error==='division_required'?L('Claim a role first','Assuma uma função primeiro'):L('Error: ','Erro: ')+(o.j.error||o.s));poll(true)})
+   .then(function(o){if(o.ok)logEv('\u2192 '+csOf(id)+': squawk '+o.j.squawk,'out');toast(o.ok?L('Assigned ','Atribuído ')+o.j.squawk:(o.j.error==='not_tuned'||o.j.error==='outside_airspace')?NOTTUNED(o.j):o.j.error==='division_required'?L('Claim a role first','Assuma uma função primeiro'):L('Error: ','Erro: ')+(o.j.error||o.s));poll(true)})
    .catch(function(){toast(L('Network error','Erro de rede'))})}
 function nocText(t){return t==='taxi'?L('NO TAXI CLNC','SEM AUT. TÁXI'):t==='runway'?L('NO T/O CLNC','SEM AUT. DECOLAGEM'):t==='landing'?L('NO LDG CLNC','SEM AUT. POUSO'):t==='alt'?L('NO ALT CLNC','SEM AUT. ALT'):L('NO CLNC','SEM AUT.')}
 function altTxt(ft){return ft>=TA?'FL'+p3(Math.round(ft/100)):ft+' ft'}
@@ -596,6 +616,16 @@ function clrBtn(a,t,en,pt){var on=a.clr&&a.clr[t];return'<button data-act="clr" 
 function roleSet(){var l=myRoleList(),m=l.filter(function(r){return r.name===talkName});if(m.length)l=m;var o={};l.forEach(function(r){o[r.pos]=1});return o}
 /* which commands a strip offers: GND = taxi, TWR = runway + heading, APP = vectors/altitude/ILS; no role or CTR = everything */
 function can(f){var r=roleSet();if(!Object.keys(r).length||r.CTR)return true;var m={taxi:'GND',rwy:'TWR',hdg:'TWR APP',alt:'APP TWR',land:'TWR APP'}[f]||'';return m.split(' ').some(function(p){return r[p]})}
+var dirVal={},ilsVal={};
+function routeFixes(id){var c=routeCache[id],p=c&&c.d&&c.d.points||[],o=[];p.forEach(function(q){var n=q[3]?String(q[3]).toUpperCase():'';if(/^[A-Z0-9]{2,6}$/.test(n)&&o.indexOf(n)<0)o.push(n)});return o.slice(0,80)}
+function curRole(){var l=myRoleList();return l.filter(function(r){return r.name===talkName})[0]||l[0]||null}
+function ctlApt(){var r=curRole();if(r)return r.apt;var best=null,bd=1e9;ac.forEach(function(x){if(!x.virtual_tower)return;var d=Math.hypot(x.latitude-center.lat,x.longitude-center.lon);if(d<bd){bd=d;best=String(x.callsign).replace(/^ATC_/,'')}});return best}
+function aptRwys(apt){var o=[];RW.forEach(function(r){if(r[0]===apt)[r[1],r[4]].forEach(function(i){if(i&&o.indexOf(i)<0)o.push(i)})});return o.sort()}
+function dirIls(a){var id=a.icao_address,fx=routeFixes(id),rw=aptRwys(ctlApt());if(!ilsVal[id]||rw.indexOf(ilsVal[id])<0)ilsVal[id]=rw[0]||'';
+  return'<div class="ctl"><input id="dirin" list="dirlist" maxlength="6" autocapitalize="characters" placeholder="'+L('Waypoint','Waypoint')+'" value="'+esc(dirVal[id]||'')+'" style="width:96px"><datalist id="dirlist">'+fx.map(function(n){return'<option value="'+esc(n)+'">'}).join('')+'</datalist><button data-act="dirto">'+L('Direct','Direto')+'</button></div>'+
+   (rw.length?'<div class="ctl"><select id="ilssel">'+rw.map(function(r){return'<option'+(r===ilsVal[id]?' selected':'')+'>'+esc(r)+'</option>'}).join('')+'</select><button data-act="ils">'+L('Cleared ILS','Autorizar ILS')+'</button></div>':'')}
+function dirSend(id){var v=String(($('dirin')||{}).value||dirVal[id]||'').trim().toUpperCase();if(!/^[A-Z0-9]{2,6}$/.test(v)){toast(L('Type a waypoint, e.g. a fix from the route','Digite um waypoint, ex.: um fixo da rota'));return}dirVal[id]=v;postMsg(id,L('Proceed direct ','Prossiga direto ')+v)}
+function ilsSend(id){var v=($('ilssel')||{}).value||ilsVal[id];if(!v){toast(L('No runway data for this airport','Sem dados de pista deste aeroporto'));return}postMsg(id,L('Cleared ILS approach runway ','Autorizado aproximação ILS pista ')+v)}
 function clrCtl(a){var air=a.phase==='air',any=!a.phase,h='<div class="ctl clrs">';
   if((!air||any)&&can('taxi'))h+=clrBtn(a,'taxi','Taxi OK','Táxi OK');
   if((!air||any)&&can('rwy'))h+=clrBtn(a,'takeoff','T/O OK','Dec. OK');
@@ -612,7 +642,7 @@ function toutSend(id){var body={icao_address:id,holder:holder,freq:talkFreq(),mi
 function clrSend(id,t,on,alt){var body={icao_address:id,type:t,on:on,holder:holder,freq:talkFreq(),msg:autoMsg};if(alt)body.altitude=alt;
   api('/api/atc/clearance',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
    .then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j,s:r.status}})})
-   .then(function(o){toast(o.ok?L('Clearance updated','Autorização atualizada'):(o.j.error==='not_tuned'||o.j.error==='outside_airspace')?NOTTUNED(o.j):o.j.error==='division_required'?L('Claim a role first','Assuma uma função primeiro'):o.j.error==='bad_altitude'?L('Altitude: 100 = FL100, 5000 = ft','Altitude: 100 = FL100, 5000 = ft'):L('Error: ','Erro: ')+(o.j.error||o.s));poll(true)})
+   .then(function(o){if(o.ok)logEv('\u2192 '+csOf(id)+': '+L('clearance ','autorização ')+t+(on===false?' off':''),'out');toast(o.ok?L('Clearance updated','Autorização atualizada'):(o.j.error==='not_tuned'||o.j.error==='outside_airspace')?NOTTUNED(o.j):o.j.error==='division_required'?L('Claim a role first','Assuma uma função primeiro'):o.j.error==='bad_altitude'?L('Altitude: 100 = FL100, 5000 = ft','Altitude: 100 = FL100, 5000 = ft'):L('Error: ','Erro: ')+(o.j.error||o.s));poll(true)})
    .catch(function(){toast(L('Network error','Erro de rede'))})}
 var hdgSel={};
 function hdgNorm(n){n=Math.round(n)%360;if(n<=0)n+=360;return n}
@@ -623,13 +653,33 @@ function hdgSend(id,t){var v=hdgCur(id);hdgSel[id]=v;var h=p3(v),el=$('hdgin');i
   postMsg(id,t==='L'?L('Turn left heading ','Vire à esquerda proa ')+h:t==='R'?L('Turn right heading ','Vire à direita proa ')+h:L('Fly heading ','Voe proa ')+h,null)}
 function sendMsg(id){var el=$('msgin'),t=(el.value||'').trim();if(!t){toast(L('Type a message','Digite uma mensagem'));return}
   postMsg(id,t,el)}
+var evs=[],evOpen=true,evSeen=null;
+function csOf(id){var a=ac.filter(function(x){return x.icao_address===id})[0];return a?(a.callsign||id):id}
+function logEv(t,cls){evs.push({t:new Date().toISOString().substr(11,8)+'Z',x:t,c:cls||''});if(evs.length>150)evs.shift();renderLog()}
+function renderLog(){var h=$('evHd'),b=$('evBd');h.textContent=(evOpen?'\u25BE ':'\u25B8 ')+L('Event log','Registro')+' ('+evs.length+')';b.style.display=evOpen?'':'none';if(!evOpen)return;
+  var atEnd=b.scrollTop+b.clientHeight>=b.scrollHeight-8;
+  b.innerHTML=evs.slice(-60).map(function(e){return'<div class="e '+e.c+'"><i>'+e.t+'</i> '+esc(e.x)+'</div>'}).join('');if(atEnd)b.scrollTop=b.scrollHeight}
+$('evHd').onclick=function(){evOpen=!evOpen;renderLog()};renderLog();
+function evDiff(){var cur={},emg={},nm={};
+  ac.forEach(function(a){if(isTwr(a))return;cur[a.icao_address]=1;if(a.emergency)emg[a.icao_address]=1});
+  msgs.forEach(function(x){nm[x.id]=x.status});
+  if(evSeen===null){evSeen={ac:cur,msg:nm,emg:emg,clnc:{},cf:{}};ac.forEach(function(a){if(a.clnc)evSeen.clnc[a.icao_address]=a.clnc;if(confl[a.icao_address]&&confl[a.icao_address].lvl===2)evSeen.cf[a.icao_address]=1});return}
+  ac.forEach(function(a){if(isTwr(a))return;var id=a.icao_address,cs=a.callsign||id;
+    if(!evSeen.ac[id])logEv(L('New track ','Novo tráfego ')+cs+(a.airplane_model?' ('+a.airplane_model+')':''),'');
+    if(a.emergency&&!evSeen.emg[id])logEv('MAYDAY '+cs,'bad');
+    if(a.clnc){if(evSeen.clnc[id]!==a.clnc)logEv(nocText(a.clnc)+' '+cs,'warn');evSeen.clnc[id]=a.clnc}else delete evSeen.clnc[id];
+    var cf=confl[id]&&confl[id].lvl===2;if(cf&&!evSeen.cf[id])logEv(L('Separation loss ','Perda de separação ')+cs,'bad');if(cf)evSeen.cf[id]=1;else delete evSeen.cf[id]});
+  msgs.forEach(function(x){var prev=evSeen.msg[x.id],cs=csOf(x.icao_address);
+    if(prev===undefined){if((x.kind==='chat'||x.kind==='request')&&x.status==='request')logEv(cs+': '+x.text,'')}
+    else if(prev!==x.status&&(x.status==='wilco'||x.status==='unable'))logEv(cs+': '+(x.status==='wilco'?'Wilco':'Unable'),'')});
+  evSeen.ac=cur;evSeen.msg=nm;evSeen.emg=emg}
 function postMsg(id,t,el){
   api('/api/atc/message',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({icao_address:id,text:t,urgent:urgent,freq:talkFreq(),holder:holder})})
-   .then(function(r){return r.json().then(function(j){if(!r.ok){toast((j.error==='not_tuned'||j.error==='outside_airspace')?NOTTUNED(j):L('Error: ','Erro: ')+(j.error||r.status));return}if(el)el.value='';toast(L('Sent','Enviado'));poll(true)})})
+   .then(function(r){return r.json().then(function(j){if(!r.ok){toast((j.error==='not_tuned'||j.error==='outside_airspace')?NOTTUNED(j):L('Error: ','Erro: ')+(j.error||r.status));return}if(el)el.value='';toast(L('Sent','Enviado'));logEv('\u2192 '+csOf(id)+': '+t,'out');poll(true)})})
    .catch(function(){toast(L('Network error','Erro de rede'))})}
-$('strips').addEventListener('input',function(e){if(e.target.id==='hdgin'&&sel){var v=parseInt(e.target.value,10);if(v>=0&&v<=360){hdgSel[sel]=hdgNorm(v);draw()}}});
-$('strips').addEventListener('change',function(e){if(e.target.id==='urg')urgent=e.target.checked});
-$('strips').addEventListener('keydown',function(e){if(e.key==='Enter'&&e.target.id==='altin'){var s0=e.target.closest('.strip');if(s0&&e.target.value)clrSend(s0.getAttribute('data-id'),'alt',true,e.target.value)}if(e.key==='Enter'&&e.target.id==='msgin'){var s=e.target.closest('.strip');if(s)sendMsg(s.getAttribute('data-id'))}});
+$('strips').addEventListener('input',function(e){if(e.target.id==='dirin'&&sel){e.target.value=e.target.value.toUpperCase();dirVal[sel]=e.target.value}if(e.target.id==='hdgin'&&sel){var v=parseInt(e.target.value,10);if(v>=0&&v<=360){hdgSel[sel]=hdgNorm(v);draw()}}});
+$('strips').addEventListener('change',function(e){if(e.target.id==='ilssel'&&sel)ilsVal[sel]=e.target.value;if(e.target.id==='urg')urgent=e.target.checked});
+$('strips').addEventListener('keydown',function(e){if(e.key==='Enter'&&e.target.id==='altin'){var s0=e.target.closest('.strip');if(s0&&e.target.value)clrSend(s0.getAttribute('data-id'),'alt',true,e.target.value)}if(e.key==='Enter'&&e.target.id==='dirin'){var s1=e.target.closest('.strip');if(s1)dirSend(s1.getAttribute('data-id'))}if(e.key==='Enter'&&e.target.id==='msgin'){var s=e.target.closest('.strip');if(s)sendMsg(s.getAttribute('data-id'))}});
 function clearSq(id){api('/api/atc/squawk?icao_address='+encodeURIComponent(id)+'&holder='+encodeURIComponent(holder)+'&freq='+encodeURIComponent(talkFreq()),{method:'DELETE'}).then(function(r){return r.json().then(function(j){toast(r.ok?L('Cleared','Removido'):(j.error==='not_tuned'||j.error==='outside_airspace')?NOTTUNED(j):j.error==='division_required'?L('Claim a role first','Assuma uma função primeiro'):L('Error: ','Erro: ')+(j.error||r.status));poll(true)})})}
 
 /* ---------- virtual towers ---------- */
@@ -703,26 +753,79 @@ function GRADEMSG(j){var parts=(j.next_req||[]).map(function(q){var n=RQN[q.k]||
   return L('Your grade ('+j.grade+') cannot take '+j.role+'. Next grade, '+j.next_grade+': ','Seu nível ('+j.grade+') não pode assumir '+j.role+'. Próximo nível, '+j.next_grade+': ')+parts}
 function errToast(r,j){toast(j.error==='atc_credential'?L('You need an ATC credential to control in the network (ATC Credential button)','Você precisa de uma credencial ATC para controlar na rede (botão ATC Credential)'):j.error==='member_tower'?MEMBER_MSG():j.error==='position_taken'?TAKEN(j):j.error==='locked_to_airport'?LOCKED(j):j.error==='banned'?BANNED(j):j.error==='not_owner'?NOTOWNER(j):j.error==='one_tower'?ONETOWER(j):j.error==='approval_required'?L('Approval required: the airport lead must approve you. Press Claim again after approval','Aprovação necessária: o líder do aeroporto precisa aprovar você. Aperte Assumir de novo depois'):j.error==='grade_required'?GRADEMSG(j):j.error==='role_cooldown'?L('Wait '+j.remaining_s+' s before taking another division','Aguarde '+j.remaining_s+' s para assumir outra divisão'):L('Error: ','Erro: ')+(j.error||r.status))}
 /* open an airport: one symbol on every radar and map; roles are claimed from its row */
-$('twOpen').onclick=function(){var icao=$('twIcao').value.trim().toUpperCase();
+$('twOpen').onclick=function(){openAirport($('twIcao').value)};
+function openAirport(raw){var icao=String(raw||'').trim().toUpperCase();
   if(!/^[A-Z0-9]{2,8}$/.test(icao)){toast(L('Enter an airport code, e.g. SBBR','Digite um código de aeroporto, ex.: SBBR'));return}
   var ap=APT[icao],t={name:icao,latitude:+(ap?ap.lat:center.lat).toFixed(5),longitude:+(ap?ap.lon:center.lon).toFixed(5)};
   if(!ap)toast(rwState==='ready'?'Unknown airport - tower placed at scope center':'Airport data not loaded - tower placed at scope center');
   putTower(t,true).then(function(r){return r.json().then(function(j){if(!r.ok){errToast(r,j);return}
     myApts=myApts.filter(function(x){return x.name!==icao});myApts.push(t);saveTowers();
-    if(ap)toast(L('Airport '+icao+' open - claim a role below','Aeroporto '+icao+' aberto - assuma uma função abaixo'));$('twIcao').value='';poll(true)})}).catch(function(){toast(L('Network error','Erro de rede'))})};
+    if(ap)toast(L('Airport '+icao+' open - choose a role','Aeroporto '+icao+' aberto - escolha uma função'));$('twIcao').value='';$('gIcao').value='';gApt=icao;setMode('roles');poll(true)})}).catch(function(){toast(L('Network error','Erro de rede'))})}
+var uiMode='list',gApt='',observe=false;
 function claimRole(apt,r){var tw=ac.filter(function(a){return a.virtual_tower&&a.callsign==='ATC_'+apt})[0];if(!tw)return;
-  var inp=document.querySelector('[data-f="'+apt+'_'+r+'"]'),raw=inp?inp.value.trim():'',fq=raw?nf(raw):'';if(!raw){fq=defFreq(apt,r);if(fq&&inp)inp.value=fq}
+  var inp=document.querySelector('#gate [data-f="'+apt+'_'+r+'"]')||document.querySelector('[data-f="'+apt+'_'+r+'"]'),raw=inp?inp.value.trim():'',fq=raw?nf(raw):'';if(!raw){fq=defFreq(apt,r);if(fq&&inp)inp.value=fq}
   if(raw&&!fq){toast(L('Frequency must be 118.000-136.975','Frequência deve ser 118.000-136.975'));return}
   var name=apt+'_'+r,t={name:name,freq:fq,latitude:tw.latitude,longitude:tw.longitude};
   putTower(t).then(function(x){return x.json().then(function(j){if(!x.ok){errToast(x,j);return}
     myTowers=myTowers.filter(function(o){return o.name!==name});myTowers.push(t);talkName=name;saveTowers();updateTalk();
-    toast(L('Role claimed: ','Função assumida: ')+apt+' '+r+(fq?' '+fq:''));poll(true)})}).catch(function(){toast(L('Network error','Erro de rede'))})}
+    toast(L('Role claimed: ','Função assumida: ')+apt+' '+r+(fq?' '+fq:''));logEv(L('You took ','Você assumiu ')+apt+' '+r+(fq?' '+fq:''),'out');observe=false;setMode('work');poll(true)})}).catch(function(){toast(L('Network error','Erro de rede'))})}
 function openRole(name){talkName=name;updateTalk();renderTowerBox();var t=myTowers.filter(function(x){return x.name===name})[0];toast(L('Working as ','Atuando como ')+roleLabel(name)+(t&&t.freq?' '+t.freq:''))}
 function releaseRole(name){api('/api/atc/tower?name='+encodeURIComponent(name)+'&holder='+encodeURIComponent(holder),{method:'DELETE'}).then(function(r){
-  myTowers=myTowers.filter(function(x){return x.name!==name});saveTowers();updateTalk();toast(L('Role released','Função liberada'));poll(true)})}
+  myTowers=myTowers.filter(function(x){return x.name!==name});saveTowers();updateTalk();toast(L('Role released','Função liberada'));logEv(L('You left ','Você saiu de ')+roleLabel(name),'out');poll(true)})}
 function closeTower(name){api('/api/atc/tower?name='+encodeURIComponent(name)+'&holder='+encodeURIComponent(holder),{method:'DELETE'}).then(function(r){
   if(r.status===403||r.status===409)return r.json().then(function(j){if(j.error==='position_taken')toast(L('A role is staffed by another controller - only they can release it first','Uma função está ocupada por outro controlador - ele precisa liberar antes'));else errToast(r,j)});
   myApts=myApts.filter(function(x){return x.name!==name});myTowers=myTowers.filter(function(x){return x.name.indexOf(name+'_')!==0});saveTowers();updateTalk();toast(L('Airport closed','Aeroporto fechado'));poll(true)})}
+
+/* ---------- controller entry: airport list -> role selection -> work (one role at a time) ---------- */
+var ROLE_INFO={GND:['Ground','Solo'],TWR:['Tower','Torre'],APP:['Approach','Aproximação']};
+var ROLE_DESC={GND:['Taxi routes, pushback, taxi clearance','Rotas de táxi, pushback, autorização de táxi'],TWR:['Runway: line up, takeoff, landing, vectors','Pista: alinhar, decolar, pousar, vetores'],APP:['Radar vectors, altitude, direct, cleared ILS','Vetores, altitude, direto, ILS']};
+function setMode(m){uiMode=m;var b=$('twList');if(b)b._sig=null;renderGate();renderWork();renderTowerBox();renderStrips(true)}
+function gateSync(){if(uiMode==='work'&&!observe&&!myRoleList().length){setMode('list');return}renderGate();renderWork()}
+function activeApts(){return ac.filter(function(a){return a.virtual_tower}).map(function(a){return{n:String(a.callsign).replace(/^ATC_/,''),a:a}}).sort(function(x,y){return x.n<y.n?-1:1})}
+function gateSig(){var o=[uiMode,gApt];activeApts().forEach(function(x){o.push(x.n+':'+(x.a.positions||[]).map(function(p){return p.pos+(p.claimed?'c':'')+(p.freq||'')+(p.ctl||p.nick||'')}).join('.')+(x.a.owner_hid===myHid?'o':''))});return o.join('|')+(isMember?'m':'')}
+function renderGate(){var g=$('gate');
+  if(uiMode==='work'){g.style.display='none';return}
+  g.style.display='block';var sig=gateSig();if(g._sig===sig)return;g._sig=sig;
+  var keep={};[].forEach.call(g.querySelectorAll('[data-f]'),function(i){keep[i.getAttribute('data-f')]=i.value});
+  var list=$('gList'),h='';$('gOpenBtn').textContent=L('Open airport','Abrir aeroporto');$('gWatch').textContent=L('Just watch the radar','Só observar o radar');
+  $('gOpen').style.display=$('gWatchRow').style.display=uiMode==='list'?'':'none';
+  if(uiMode==='list'){$('gHead').textContent=L('Controller - choose an airport','Controlador - escolha um aeroporto');
+    var ap=activeApts();
+    if(!ap.length)h='<div class="m" style="margin:8px 0">'+L('No active airports. Open one below.','Nenhum aeroporto ativo. Abra um abaixo.')+'</div>';
+    ap.forEach(function(x){var pl=x.a.positions||[];
+      h+='<div class="strip gcard" data-apt="'+esc(x.n)+'"><div class="row"><b>'+esc(x.n)+'</b><span class="m">'+(x.a.owner_hid===myHid?L('yours','seu'):'')+'</span></div><div class="roles">'+
+        ['GND','TWR','APP'].map(function(r){var p=pl.filter(function(q){return q.pos===r})[0];return'<span class="tag'+(p&&p.claimed?' t':'')+'">'+r+(p&&p.claimed?' ● '+esc(p.ctl||p.nick||''):' ○')+(p&&p.freq?' '+esc(p.freq):'')+'</span>'}).join('')+'</div></div>'});
+    list.innerHTML=h;return}
+  var tw=aptOf(gApt),pl=tw.positions||[],canMod=tw.owner_hid===myHid||isMember;
+  $('gHead').innerHTML='<button id="gBack">&larr; '+L('Airports','Aeroportos')+'</button> &nbsp;'+esc(gApt)+' <span class="m">'+L('choose your role','escolha sua função')+'</span>';
+  ['GND','TWR','APP'].forEach(function(r){var nm=gApt+'_'+r,p=pl.filter(function(q){return q.pos===r})[0],taken=p&&p.claimed;
+    h+='<div class="strip gcard nc"><div class="row"><span><b>'+L(ROLE_INFO[r][0],ROLE_INFO[r][1])+'</b> <span class="m">'+r+' &middot; '+(taken?L('taken','ocupada')+(p.ctl||p.nick?' &middot; '+esc(p.ctl||p.nick):'')+(p.freq?' '+esc(p.freq):''):L('free','livre'))+'</span></span><span>'+
+      (taken?(canMod?'<button data-kick="'+esc(gApt)+'|'+r+'">'+L('Kick','Expulsar')+'</button>':''):'<input data-f="'+esc(nm)+'" maxlength="7" placeholder="'+esc(defFreq(gApt,r)||'121.900')+'" inputmode="decimal" style="width:70px"> <button data-take="'+esc(gApt)+'|'+r+'">'+L('Take role','Assumir')+'</button>')+
+      '</span></div><div class="desc">'+L(ROLE_DESC[r][0],ROLE_DESC[r][1])+'</div></div>'});
+  if(canMod)h+='<div style="margin-top:8px"><button data-close="'+esc(gApt)+'">'+L('Close airport','Fechar aeroporto')+'</button></div>';
+  list.innerHTML=h;[].forEach.call(g.querySelectorAll('[data-f]'),function(i){var v=keep[i.getAttribute('data-f')];if(v)i.value=v})}
+$('gate').addEventListener('click',function(e){var b=e.target.closest('button'),c=e.target.closest('.gcard[data-apt]');
+  if(b){var n;
+    if(b.id==='gBack'){setMode('list');return}
+    if(b.id==='gOpenBtn'){openAirport($('gIcao').value);return}
+    if(b.id==='gWatch'){observe=true;setMode('work');return}
+    if(n=b.getAttribute('data-take')){var q=n.split('|');claimRole(q[0],q[1]);return}
+    if(n=b.getAttribute('data-kick')){var kq=n.split('|');if(confirm(L('Remove the controller on '+kq[0]+' '+kq[1]+' and block them from this airport?','Remover o controlador de '+kq[0]+' '+kq[1]+' e bloqueá-lo neste aeroporto?')))kickAct('/api/atc/kick',{airport:kq[0],pos:kq[1]},L('Controller removed and blocked','Controlador removido e bloqueado'));return}
+    if(n=b.getAttribute('data-close')){closeTower(n);setMode('list');return}
+    return}
+  if(c){gApt=c.getAttribute('data-apt');setMode('roles')}});
+$('gIcao').addEventListener('keydown',function(e){if(e.key==='Enter')openAirport(this.value)});
+function renderWork(){var r=curRole(),t=$('wkTitle'),all=talkName==='*';
+  if(uiMode!=='work'){return}
+  t.textContent=r?(r.apt+' · '+L(ROLE_INFO[r.pos]?ROLE_INFO[r.pos][0]:r.pos,ROLE_INFO[r.pos]?ROLE_INFO[r.pos][1]:r.pos)):L('Observing','Observando');
+  var fb=$('wkFreq'),mine=r&&myTowers.filter(function(x){return x.name===r.name})[0];
+  fb.style.display=r?'':'none';fb.textContent=all?L('Freq: ALL','Freq: TODAS'):L('Freq: ','Freq: ')+(mine&&mine.freq?mine.freq:L('none','nenhuma'));
+  $('wkLeave').textContent=r?L('Leave role','Sair da função'):L('Back','Voltar')}
+$('wkFreq').onclick=function(){var r=curRole();if(!r)return;talkName=talkName==='*'?r.name:'*';updateTalk();renderWork();renderStrips(true);draw()};
+$('wkLeave').onclick=function(){var r=curRole();if(r)releaseRole(r.name);observe=false;talkName='';setMode('list')};
+if(myRoleList().length){uiMode='work';talkName=talkName||myRoleList()[0].name}
+$('gate').style.display=uiMode==='work'?'none':'block';
+renderGate();renderWork();
 /* ---------- handoff between roles of one airport ---------- */
 var hoSel='';
 function myRoleList(){return myTowers.filter(function(t){return /^[A-Z0-9]{2,8}_(GND|TWR|APP|CTR)$/.test(t.name)}).map(function(t){var q=t.name.split('_');return{apt:q[0],pos:q[1],name:t.name}})}
@@ -801,7 +904,7 @@ function isOwned(a){var n=String(a.callsign).replace(/^ATC_/,'');return a.owner_
 function renderTowerBox(){var box=$('twList'),names=ac.filter(function(a){return a.virtual_tower}).map(function(a){return String(a.callsign).replace(/^ATC_/,'')});
   for(var k in atisUI)if(names.indexOf(k)<0)delete atisUI[k];
   var twOf=function(n){return ac.filter(function(x){return x.virtual_tower&&x.callsign==='ATC_'+n})[0]||{}};
-  var sig=names.map(function(n){var t=twOf(n);return n+(atisUI[n]&&atisUI[n].open?'+':'')+(t.owner_hid===myHid||isMember?'o':'')+(t.bans||[]).map(function(b){return b.hid+b.pos}).join('')+(t.approval?'A':'a')+(t.pending||[]).map(function(p){return p.hid+p.pos}).join('')+(t.positions||[]).map(function(p){return p.pos+(p.claimed?'c':'')+(p.freq||'')+(p.ctl||p.nick||'')+(myTowers.some(function(x){return x.name===n+'_'+p.pos})?'m':'')}).join('.')}).join(',')+'|'+myTowers.map(function(x){return x.name}).join('.')+'|'+talkName+'#';
+  var sig=names.map(function(n){var t=twOf(n);return n+(atisUI[n]&&atisUI[n].open?'+':'')+(t.owner_hid===myHid||isMember?'o':'')+(t.bans||[]).map(function(b){return b.hid+b.pos}).join('')+(t.approval?'A':'a')+uiMode+(t.pending||[]).map(function(p){return p.hid+p.pos}).join('')+(t.positions||[]).map(function(p){return p.pos+(p.claimed?'c':'')+(p.freq||'')+(p.ctl||p.nick||'')+(myTowers.some(function(x){return x.name===n+'_'+p.pos})?'m':'')}).join('.')}).join(',')+'|'+myTowers.map(function(x){return x.name}).join('.')+'|'+talkName+'#';
   if(box._sig===sig)return;box._sig=sig;   /* unchanged: leave the DOM alone so typed text is kept */
   twRows={};
   if(!names.length)return;
@@ -809,6 +912,7 @@ function renderTowerBox(){var box=$('twList'),names=ac.filter(function(a){return
     var h='<div class="row"><span>ATC_'+esc(n)+' <span class="m">'+L('airport','aeroporto')+'</span></span><span><button data-atis="'+esc(n)+'">ATIS'+(u&&u.data?' '+esc(u.data.letter):'')+'</button> <button data-name="'+esc(n)+'">'+L('Close','Fechar')+'</button></span></div>';
     var canMod=tw0.owner_hid===myHid||isMember;
     ['GND','TWR','APP','CTR'].forEach(function(r){var nm=n+'_'+r,p=pl.filter(function(x){return x.pos===r})[0],mine=myTowers.some(function(x){return x.name===nm}),taken=p&&p.claimed&&!mine,act=mine&&talkName===nm;
+      if(uiMode==='work'&&!(taken&&canMod))return;   /* roles are chosen on the entry screen; only owner/members keep Kick */
       h+='<div class="row" style="margin-top:3px"><span><b>'+r+'</b> <span class="m">'+(mine?L('you','você'):taken?L('taken','ocupada'):L('free','livre'))+(p&&p.freq?' '+esc(p.freq):'')+(p&&p.claimed&&(p.ctl||p.nick)?' &middot; '+esc(p.ctl||p.nick):'')+'</span></span><span>'
         +(mine?'<button data-open="'+esc(nm)+'"'+(act?' style="border-color:#4FE3D0;color:#4FE3D0"':'')+'>'+(act?L('Open ✓','Aberta ✓'):L('Open','Abrir'))+'</button> <button data-rel="'+esc(nm)+'">'+L('Release','Liberar')+'</button>'
         :taken?(canMod?'<button data-kick="'+esc(n)+'|'+r+'">'+L('Kick','Expulsar')+'</button>':''):'<input data-f="'+esc(nm)+'" maxlength="7" placeholder="'+esc(defFreq(n,r)||'121.900')+'" inputmode="decimal" style="width:70px"> <button data-claim="'+esc(n)+'|'+r+'">'+L('Claim','Assumir')+'</button>')+'</span></div>'});
@@ -887,8 +991,8 @@ function applyTraffic(j){
     if(!manual){var tw=ac.filter(isTwr)[0];if(tw){center.lat=tw.latitude;center.lon=tw.longitude}
       else if(!centroidDone&&ac.length){center.lat=ac.reduce(function(s,a){return s+a.latitude},0)/ac.length;
         center.lon=ac.reduce(function(s,a){return s+a.longitude},0)/ac.length;centroidDone=true}}
-    computeConfl();
-    var nT=ac.filter(isTwr).length,nA=ac.length-nT;setStatus(nA+L(' aircraft',' aeronaves')+' · '+nT+L(nT===1?' tower':' towers',nT===1?' torre':' torres')+(isMember?L(' · private ATC Network section',' · seção privada da ATC Network'):'')+grpMsg,true);draw();renderStrips();renderTowerBox()}
+    computeConfl();evDiff();
+    var nT=ac.filter(isTwr).length,nA=ac.length-nT;setStatus(nA+L(' aircraft',' aeronaves')+' · '+nT+L(nT===1?' tower':' towers',nT===1?' torre':' torres')+(isMember?L(' · private ATC Network section',' · seção privada da ATC Network'):'')+grpMsg,true);draw();renderStrips();renderTowerBox();gateSync()}
 /* ---------- voice (push-to-talk, both directions) ---------- */
 var voiceOn=true,vclips=[],heard=null,pttBusy=false,actx=null,rec=null,lastBuf=null,liveRx={};
 try{voiceOn=localStorage.getItem('afc_voice')!=='0'}catch(e){}
