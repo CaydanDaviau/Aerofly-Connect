@@ -820,9 +820,10 @@ export class Hub {
           if (!cleared || busy) this.violate(key, c, st, "landing", apt, lr, now, () => say(ph.vLand(lr), true));
         }
         st.gr.land = 0; st.gr.taxi = now + 30 * 60_000;
-        if (apt && apt === arr && /^[A-Z]{4}$/.test(apt)) st.rollout = apt;   // taxi route to the gate follows once the speed is down
+        const lapt = up(p.rwy_apt) || arr;   // after touchdown apt may fall back to the departure airport (no runway match): the arrival is the right one
+        if (lapt && lapt === arr && /^[A-Z]{4}$/.test(lapt)) st.rollout = lapt;   // taxi route to the gate follows once the speed is down
         c.emerg = null;   // an emergency ends on the ground (its landing is never a violation)
-        if (cleared && !busy && apt && apt === arr) { const f = this.pf(p.fq_arr, arr, ["GND"]); say(ph.welcome(apt, f), false, "Ground" + (f ? " " + f : "")); }
+        if (cleared && !busy && lapt && lapt === arr) { const f = this.pf(p.fq_arr, arr, ["GND"]); say(ph.welcome(apt, f), false, "Ground" + (f ? " " + f : "")); }
       } else if (now > st.grace) {
         if (cur === "ground" && gs >= 10 && !(st.gr.taxi > now) && !(st.gr.takeoff > now))
           this.violate(key, c, st, "taxi", apt, "", now, () => say(ph.vTaxi, true));
