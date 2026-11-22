@@ -47,6 +47,8 @@ const TRAIN_LV = 10;
 const GRADE_REQ = [null, { lv_twr: TRAIN_LV }, { lv_app: TRAIN_LV }, { app_s: 30 * 3600 }];
 const OLD_GRADE_REQ = [null, { atc_s: 3 * 3600, gw: 50 }, { atc_s: 10 * 3600, ops: 50 }];   // only to grandfather controllers who already earned a grade
 const PILOT_GRADES = [["Captain", 100 * 3600, 100], ["Commercial", 25 * 3600, 25], ["Private", 5 * 3600, 5], ["Student", 0, 0]];
+// Role gate by controller grade: OFF = everyone can take every role. Grades, training and progress keep working; set on:true to lock roles again.
+export const GATE = { on: false };
 export const TEST = { skipGrades: false, warnLimit: null };   // tests turn the role gate off
 function atcGrade(p) { if (p && Number.isInteger(p.gov)) return p.gov; let g = 0; while (g < 3) { const r = GRADE_REQ[g + 1]; if (!p || Object.keys(r).some(k => (p[k] || 0) < r[k])) break; g++; } return g; }
 function pilotGrade(p) { const f = p ? p.flight_s || 0 : 0, n = p ? p.flights || 0 : 0; return (PILOT_GRADES.find(x => f >= x[1] && n >= x[2]) || PILOT_GRADES[3])[0]; }
@@ -1686,7 +1688,7 @@ export class Hub {
         if (isNew) await this.ctx.storage.put("tower:" + pn.apt, aptRec);
         return json({ error: "approval_required", airport: pn.apt, position: pn.pos }, 409);
       }
-      if (holder && pn.pos !== "APT" && request.headers.get("X-Member") !== "1" && !TEST.skipGrades && (ROLE_GRADE[pn.pos] || 0) > atcGrade(this.profPeek(key))) {   // controller grade limits the roles (Network members have all)
+      if (holder && pn.pos !== "APT" && request.headers.get("X-Member") !== "1" && GATE.on && !TEST.skipGrades && (ROLE_GRADE[pn.pos] || 0) > atcGrade(this.profPeek(key))) {   // controller grade limits the roles (Network members have all)
         const gi = this.gradeInfo(this.profPeek(key));
         return json({ error: "grade_required", role: pn.pos, need: GRADE_NAMES[ROLE_GRADE[pn.pos]], grade: gi.atc_grade_name, next_grade: gi.next_grade, next_req: gi.next_req }, 409);
       }
