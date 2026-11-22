@@ -791,7 +791,7 @@ var uiMode='list',gApt='',observe=false,claimBusy=false;
 function claimRole(apt,r){var tw=ac.filter(function(a){return a.virtual_tower&&a.callsign==='ATC_'+apt})[0]||{},ap0=APT[apt];if(tw.latitude==null){if(ap0){tw={latitude:ap0.lat,longitude:ap0.lon}}else{tw={latitude:center.lat,longitude:center.lon}}}
   if(claimBusy)return;claimBusy=true;toast(L('Taking role...','Assumindo função...'));var bt=document.querySelector('#gate [data-take="'+apt+'|'+r+'"]');if(bt)bt.disabled=true;
   var free=function(){claimBusy=false;if(bt)bt.disabled=false};
-  var inp=document.querySelector('#gate [data-f="'+apt+'_'+r+'"]')||document.querySelector('[data-f="'+apt+'_'+r+'"]'),raw=inp?inp.value.trim():'',fq=raw?nf(raw):'';if(!raw){fq=defFreq(apt,r);if(fq&&inp)inp.value=fq}
+  var inp=document.querySelector('#gate [data-f="'+apt+'_'+r+'"]')||document.querySelector('[data-f="'+apt+'_'+r+'"]'),raw=inp?inp.value.trim():'',fq=raw?nf(raw):'';if(!raw){fq=defFreq(apt,r==='ALL'?'TWR':r);if(fq&&inp)inp.value=fq}
   if(raw&&!fq){free();toast(L('Frequency must be 118.000-136.975','Frequência deve ser 118.000-136.975'));return}
   var name=apt+'_'+r,t={name:name,freq:fq,latitude:tw.latitude,longitude:tw.longitude};
   putTower(t,false,true).then(function(x){return x.json().then(function(j){free();if(!x.ok){errToast(x,j);return}
@@ -829,7 +829,7 @@ function renderGate(){var g=$('gate');
       (taken?(canMod?'<button data-kick="'+esc(gApt)+'|'+r+'">'+L('Kick','Expulsar')+'</button>':''):'<input data-f="'+esc(nm)+'" maxlength="7" placeholder="'+esc(defFreq(gApt,r)||'121.900')+'" inputmode="decimal" style="width:70px"> <button data-take="'+esc(gApt)+'|'+r+'">'+L('Take role','Assumir')+'</button>')+
       '</span></div><div class="desc">'+L(ROLE_DESC[r][0],ROLE_DESC[r][1])+'</div></div>'});
   if(canMod&&ROLES.ALL.owner){var pa=pl.filter(function(q){return q.pos==='ALL'})[0],ta=pa&&pa.claimed&&!(pa.hid&&pa.hid===myHid);
-    h+='<div class="strip gcard nc"><div class="row"><span><b>'+L(ROLES.ALL.en.split(' ')[0].toUpperCase(),'TODAS')+'</b> <span class="m">'+L('all roles at once','todas as funções')+(ta?' &middot; '+L('taken','ocupada'):'')+'</span></span><span>'+(ta?'':'<button data-take="'+esc(gApt)+'|ALL">'+L('Take ALL','Assumir TODAS')+'</button>')+'</span></div><div class="desc">'+L(ROLE_DESC.ALL[0],ROLE_DESC.ALL[1])+'</div></div>'}
+    h+='<div class="strip gcard nc"><div class="row"><span><b>'+L(ROLES.ALL.en.split(' ')[0].toUpperCase(),'TODAS')+'</b> <span class="m">'+L('all roles at once','todas as funções')+(ta?' &middot; '+L('taken','ocupada'):'')+'</span></span><span>'+(ta?'':'<input data-f="'+esc(gApt)+'_ALL" maxlength="7" placeholder="'+esc(defFreq(gApt,'TWR')||'118.300')+'" inputmode="decimal" style="width:70px"> <button data-take="'+esc(gApt)+'|ALL">'+L('Take ALL','Assumir TODAS')+'</button>')+'</span></div><div class="desc">'+L(ROLE_DESC.ALL[0],ROLE_DESC.ALL[1])+'</div></div>'}
   if(canMod)h+='<div style="margin-top:8px"><button data-close="'+esc(gApt)+'">'+L('Close airport','Fechar aeroporto')+'</button></div>';
   list.innerHTML=h;[].forEach.call(g.querySelectorAll('[data-f]'),function(i){var v=keep[i.getAttribute('data-f')];if(v)i.value=v})}
 $('gate').addEventListener('click',function(e){var b=e.target.closest('button'),c=e.target.closest('.gcard[data-apt]');

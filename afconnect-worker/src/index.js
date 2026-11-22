@@ -1588,7 +1588,7 @@ export class Hub {
       }
       // A human controller wins: a tower named like the airport, or one close to the aircraft.
       if (this.humanCovers(c, apt, type)) {
-        const msg = this.addMsg(c, "Requests " + REQ_LABEL[type] + (altFt ? " " + (altFt >= TRANS_ALT ? "FL" + Math.round(altFt / 100) : altFt + " ft") : "") + (rwy && !altFt ? ", runway " + rwy : ""), "request", {});
+        const msg = this.addMsg(c, "Requests " + REQ_LABEL[type] + (altFt ? " " + (altFt >= TRANS_ALT ? "FL" + Math.round(altFt / 100) : altFt + " ft") : "") + (rwy && !altFt ? ", runway " + rwy : ""), "request", { freq: c.pos.freq || "" });
         msg.status = "request";
         return json({ success: true, mode: "controller", id: msg.id });
       }
