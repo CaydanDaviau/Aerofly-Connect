@@ -32,12 +32,12 @@ const parseTowerName = s => {
 const hid = h => { let x = 2166136261; for (const ch of String(h || "")) x = Math.imul(x ^ ch.charCodeAt(0), 16777619) >>> 0; return x.toString(36).slice(0, 6); };
 const MAX_TRAFFIC = 500;
 const TIMEOUT_MS = 5 * 60_000;           // crash or landing without clearance: first time that day
-const TIMEOUT_REPEAT_MS = 60 * 60_000;   // repeated the same (UTC) day
+const TIMEOUT_REPEAT_MS = 5 * 60_000;    // repeated the same (UTC) day (same as the first: 5 min)
 // Unauthorised actions: taxi / altitude = 1 penalty point; runway / landing = 1 violation. Both counters reset daily (UTC).
-// 10 penalties = 30 min timeout, 3 violations = 6 h timeout (counter restarts at 0 after the timeout).
+// 10 penalties = 5 min timeout, 3 violations = 15 min timeout (counter restarts at 0 after the timeout).
 const VIOL_PTS = { taxi: 1, alt: 3 };
 const WARN_DEFAULT = 2;   // warnings per UTC day before penalties/violations count (public section)
-const PEN_LIMIT = 10, VIO_LIMIT = 3, PEN_TIMEOUT_MS = 30 * 60_000, VIO_TIMEOUT_MS = 6 * 3600_000;
+const PEN_LIMIT = 10, VIO_LIMIT = 3, PEN_TIMEOUT_MS = 5 * 60_000, VIO_TIMEOUT_MS = 15 * 60_000;
 const DEM_STAT = { 1: "gw", 2: "ops", 3: "app_s" };   // stat that is lost (grade drops one level) when an ATC causes a mid-air collision
 // Controller grades: everyone starts at Ground (DEL/GND); Network members have every role. Stats never go down, so grades never drop.
 const ROLE_GRADE = { GND: 0, TWR: 1, APP: 2, CTR: 3, ALL: 0 };
@@ -664,7 +664,7 @@ export class Hub {
     return null;
   }
 
-  // Timeout (crash or landing without clearance): kept per account/profile, so a second device cannot skip it. First one a (UTC) day = 5 min, repeats = 1 h.
+  // Timeout (crash or landing without clearance): kept per account/profile, so a second device cannot skip it. Always 5 min (first and repeats).
   strike(key) {
     const p = this.profGet(key), day = new Date().toISOString().slice(0, 10);
     if (p.sday !== day) { p.sday = day; p.sn = 0; }
