@@ -853,7 +853,7 @@ $('gate').style.display=uiMode==='work'?'none':'block';
 renderGate();renderWork();
 /* ---------- handoff between roles of one airport ---------- */
 var hoSel='';
-function myRoleList(){return myTowers.filter(function(t){return /^[A-Z0-9]{2,8}_(GND|TWR|APP|CTR)$/.test(t.name)}).map(function(t){var q=t.name.split('_');return{apt:q[0],pos:q[1],name:t.name}})}
+function myRoleList(){return myTowers.filter(function(t){return new RegExp('^[A-Z0-9]{2,8}_('+Object.keys(ROLES).join('|')+')$').test(t.name)}).map(function(t){var q=t.name.split('_');return{apt:q[0],pos:q[1],name:t.name}})}
 function aptOf(apt){return ac.filter(function(x){return x.virtual_tower&&x.callsign==='ATC_'+apt})[0]||{}}
 function handUi(a,showSend){
   var out='',mine=myRoleList();
