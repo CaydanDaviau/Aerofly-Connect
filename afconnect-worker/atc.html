@@ -39,6 +39,7 @@ input::placeholder{color:var(--dim)}
 .strip .h{display:flex;justify-content:space-between;gap:8px}
 .strip .cs{font-weight:700;font-size:14px}
 .strip .m{color:var(--dim)}
+.strip .pt{font-size:11px;color:var(--cy);letter-spacing:.5px}
 .strip .route{color:var(--fg);word-break:break-word}
 .ok{color:var(--fg)}.warn{color:var(--amber)}.bad{color:var(--red)}
 .ctl{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;align-items:center}
@@ -552,6 +553,9 @@ $('keySave').onclick=function(){var k=$('keyIn').value.trim();if(!k)return;key=k
 function showLogin(msg){$('keyErr').textContent=msg||'';$('keyIn').value='';$('login').style.display='flex'}
 
 /* ---------- strips ---------- */
+function phaseTag(a){return a.phase==='air'?'AIR':a.phase?'GND':''}
+/* ARR / DEP relative to the airport I work (like training mode); empty when it is neither */
+function flowTag(a){var ap=ctlApt();if(!ap)return'';var A=String(a.arrival_airport||'').toUpperCase(),D=String(a.departure_airport||'').toUpperCase();return A===ap?'ARR':D===ap?'DEP':''}
 function renderStrips(force){
   var f=document.activeElement;if(!force&&(pttBusy||f&&(f.id==='sqin'||f.id==='msgin'||f.id==='altin'||f.id==='hdgin'||f.id==='dirin'||f.id==='ilssel'||f.id==='urg'||f.id==='hoto'||f.closest&&f.closest('.twmount'))))return;
   var list=ac.map(function(a){return{a:a,r:rel(a)}}).sort(function(x,y){var sx=x.a.icao_address===sel?0:1,sy=y.a.icao_address===sel?0:1;return sx-sy||x.r.dist-y.r.dist});
@@ -566,21 +570,21 @@ function renderStrips(force){
       '<div class="ctl"><button class="ptt'+(voiceOn&&a.voice!==false?'':' off')+'" id="ptt" data-icao="'+esc(id)+'" data-cs="'+esc(a.callsign||id)+'" data-voice="'+(a.voice===false?'0':'1')+'">'+(a.voice===false?L('Pilot voice off','Voz do piloto desligada'):L('Hold to talk','Segure para falar'))+'</button></div>'+
       clrCtl(a)+
       (a.phase==='air'||!can('taxi')?'':'<div class="ctl">'+(txMode===id?(txPrev&&txPrev.id===id?'<button data-act="txsend">'+L('Send route','Enviar rota')+'</button>':'<span class="m">'+L('Click the destination on the radar','Clique no destino no radar')+'</span>')+'<button data-act="txcancel">'+L('Cancel','Cancelar')+'</button>':'<button data-act="txr">'+L('Taxi route','Rota de táxi')+'</button>'+(a.has_taxi?'<button data-act="txclr">'+L('Clear route','Limpar rota')+'</button>':''))+'</div>')+
-      (can('hdg')?'<div class="ctl hdg"><button data-act="hdgs" data-d="-10">&lsaquo;10</button><button data-act="hdgs" data-d="-5">&lsaquo;5</button><input id="hdgin" inputmode="numeric" maxlength="3" value="'+hdgVal(a)+'"><button data-act="hdgs" data-d="5">5&rsaquo;</button><button data-act="hdgs" data-d="10">10&rsaquo;</button></div>':'')+
-      (can('hdg')?'<div class="ctl hdg"><button data-act="hdgsend" data-t="L">&larr; '+L('Left','Esq.')+'</button><button data-act="hdgsend" data-t="F">'+L('Fly heading','Voar proa')+'</button><button data-act="hdgsend" data-t="R">'+L('Right','Dir.')+' &rarr;</button></div>':'')+
+      (can('hdg')?'<div class="ctl hdg"><button data-act="hdgs" data-d="-5">&lsaquo;5</button><input id="hdgin" inputmode="numeric" maxlength="3" value="'+hdgVal(a)+'"><button data-act="hdgs" data-d="5">5&rsaquo;</button></div>':'')+
+      (can('hdg')?'<div class="ctl hdg"><button data-act="hdgsend" data-t="L">&larr; '+L('Left','Esq.')+'</button><button data-act="hdgsend" data-t="F">'+L('Fly HDG','Voar HDG')+'</button><button data-act="hdgsend" data-t="R">'+L('Right','Dir.')+' &rarr;</button></div>':'')+
       (can('hdg')?dirIls(a):'')+
       '<div class="ctl"><input id="msgin" maxlength="300" placeholder="'+L('Message to pilot','Mensagem ao piloto')+'"><label class="urg"><input type="checkbox" id="urg"'+(urgent?' checked':'')+'> '+L('Urgent','Urgente')+'</label><button data-act="msg">'+L('Send','Enviar')+'</button></div>':'';
     var ho=handUi(a,isSel&&!tw);
     var vc=vclips.filter(function(v){return v.icao_address===id&&isHeard(v.freq)}).slice(-3).map(function(v){return'<div class="mlog chat"><b>'+L('PILOT voice','PILOTO voz')+'</b> '+Math.round((v.ms||0)/1000)+' s <button data-act="vplay" data-clip="'+esc(v.id)+'">&#9654;</button></div>'}).join('');
     var ml=vc+msgs.filter(function(m){return m.icao_address===id&&(m.kind!=='chat'||isHeard(m.freq))}).slice(-3).map(function(m){return m.kind==='chat'?'<div class="mlog chat"><b>'+L('PILOT','PILOTO')+':</b> '+esc(m.text)+'</div>':'<div class="mlog">&rsaquo; '+esc(m.text)+' &mdash; <b class="'+esc(m.status)+'">'+esc(m.status.toUpperCase())+'</b></div>'}).join('');
     return'<div class="strip'+(isSel?' sel':'')+(tw?' twr':(asg?'':' nocode'))+(a.no_clnc?' noclnc'+(a.clnc?' nc-'+a.clnc:''):'')+(a.emergency?' emerg':'')+(isDim(a)?' dim':'')+'" data-id="'+esc(id)+'">'+
-      '<div class="h"><span class="cs">'+esc(a.callsign||id)+(!tw&&a.nick?' <span class="m">'+esc(a.nick)+'</span>':'')+(tw?(isSel||isOwned(a)?' &#9660;':' &#9654;'):'')+(a.emergency?'<span class="mayday">MAYDAY</span>':'')+(a.no_clnc?'<span class="noc'+(a.clnc?' nc-'+a.clnc:'')+'">'+nocText(a.clnc)+'</span>':'')+'</span><span class="m">'+Math.round(r.dist)+' nm / '+p3(r.brg)+'&deg;'+(tw?'':' &middot; '+(a.freq?esc(a.freq)+' ':'')+esc(ctrlOf(a)))+'</span></div>'+
-      (tw?'':'<div>'+altStr(a.altitude_ft)+' &middot; '+Math.round(Number(a.ground_speed)||0)+' kt &middot; HDG '+p3(Number(a.heading_mag!=null?a.heading_mag:a.heading_true)||0)+'&deg;'+(a.heading_mag==null?'T':'')+' &middot; '+(Number(a.vertical_speed_ft_min)>100?'&uarr;':Number(a.vertical_speed_ft_min)<-100?'&darr;':'&rarr;')+' '+vsStr(a.vertical_speed_ft_min)+'</div>')+
-      (tw?'':'<div>'+st+'</div>')+
-      (tw?'':clrLine(a))+
-      (!tw&&(a.airplane_model||a.departure_runway||a.arrival_runway)?'<div class="m">'+(a.airplane_model?esc(a.airplane_model):'')+((a.departure_runway||a.arrival_runway)?(a.airplane_model?' &middot; ':'')+'RWY '+esc(a.departure_runway||'--')+' &rarr; '+esc(a.arrival_runway||'--'):'')+'</div>':'')+
-      (route||cruise?'<div class="route">'+route+(cruise?' &middot; '+L('cruise ','cruzeiro ')+esc(cruise):'')+'</div>':'')+
-      (nxt?'<div class="m">'+nxt+'</div>':'')+(a.flightplan_route?'<div class="m">'+esc(a.flightplan_route)+'</div>':'')+ho+ml+ctl+(tw&&(isSel||isOwned(a))?'<div class="twmount" data-mount="'+esc(String(a.callsign).replace(/^ATC_/,''))+'"></div>':'')+'</div>'}).join('');mountTowers()}
+      '<div class="h"><span class="cs">'+esc(a.callsign||id)+(!tw&&a.nick?' <span class="m">'+esc(a.nick)+'</span>':'')+(tw?(isSel||isOwned(a)?' &#9660;':' &#9654;'):'')+(a.emergency?'<span class="mayday">MAYDAY</span>':'')+(a.no_clnc?'<span class="noc'+(a.clnc?' nc-'+a.clnc:'')+'">'+nocText(a.clnc)+'</span>':'')+'</span><span class="m">'+(tw||isSel?Math.round(r.dist)+' nm / '+p3(r.brg)+'&deg;'+(tw?'':' &middot; '+(a.freq?esc(a.freq)+' ':'')+esc(ctrlOf(a)))+(tw?'':' &middot; '):'')+(tw?'':'<b class="pt">'+phaseTag(a)+'</b>'+(flowTag(a)?' <b class="pt">'+flowTag(a)+'</b>':''))+'</span></div>'+
+      (tw||!isSel?'':'<div>'+altStr(a.altitude_ft)+' &middot; '+Math.round(Number(a.ground_speed)||0)+' kt &middot; HDG '+p3(Number(a.heading_mag!=null?a.heading_mag:a.heading_true)||0)+'&deg;'+(a.heading_mag==null?'T':'')+' &middot; '+(Number(a.vertical_speed_ft_min)>100?'&uarr;':Number(a.vertical_speed_ft_min)<-100?'&darr;':'&rarr;')+' '+vsStr(a.vertical_speed_ft_min)+'</div>')+
+      (tw||!isSel?'':'<div>'+st+'</div>')+
+      (tw||!isSel?'':clrLine(a))+
+      (!tw&&isSel&&(a.airplane_model||a.departure_runway||a.arrival_runway)?'<div class="m">'+(a.airplane_model?esc(a.airplane_model):'')+((a.departure_runway||a.arrival_runway)?(a.airplane_model?' &middot; ':'')+'RWY '+esc(a.departure_runway||'--')+' &rarr; '+esc(a.arrival_runway||'--'):'')+'</div>':'')+
+      (isSel&&(route||cruise)?'<div class="route">'+route+(cruise?' &middot; '+L('cruise ','cruzeiro ')+esc(cruise):'')+'</div>':'')+
+      (isSel&&nxt?'<div class="m">'+nxt+'</div>':'')+(isSel&&a.flightplan_route?'<div class="m">'+esc(a.flightplan_route)+'</div>':'')+(isSel||tw?ho+ml:(a.handoff_to?ho:''))+ctl+(tw&&(isSel||isOwned(a))?'<div class="twmount" data-mount="'+esc(String(a.callsign).replace(/^ATC_/,''))+'"></div>':'')+'</div>'}).join('');mountTowers()}
 $('strips').addEventListener('click',function(e){
   if(e.target.closest('.twmount')){twClick(e);return}
   var btn=e.target.closest('button'),strip=e.target.closest('.strip');if(!strip)return;var id=strip.getAttribute('data-id');
@@ -588,7 +592,8 @@ $('strips').addEventListener('click',function(e){
     if(act==='set'){if(!/^[0-7]{4}$/.test(v)){toast(L('4 digits, each 0-7','4 dígitos, cada um 0-7'));return}assign(id,v)}
     else if(act==='vplay')playClip(btn.getAttribute('data-clip'));else if(act==='txr'){txMode=id;txPrev=null;renderStrips(true);draw()}else if(act==='txcancel'){txMode='';txPrev=null;renderStrips(true);draw()}else if(act==='txsend')txSend(id);else if(act==='txclr')txClear(id);else if(act==='msg')sendMsg(id);else if(act==='clr'){var ca=ac.filter(function(x){return x.icao_address===id})[0];clrSend(id,btn.getAttribute('data-t'),!(ca&&ca.clr&&ca.clr[btn.getAttribute('data-t')]))}else if(act==='altset'){var av=($('altin')||{}).value||'';if(!av){toast(L('Type an altitude (100 = FL100, 5000 = ft)','Digite uma altitude (100 = FL100, 5000 = ft)'));return}clrSend(id,'alt',true,av)}else if(act==='altclr')clrSend(id,'alt',false);else if(act==='tout')toutSend(id);else if(act==='hdgs')hdgStep(id,Number(btn.getAttribute('data-d')));else if(act==='hdgsend')hdgSend(id,btn.getAttribute('data-t'));else if(act==='hosend')handoffSend(id);else if(act==='hoacc')handoffReply(id,true);else if(act==='hodec')handoffReply(id,false);else if(act==='dirto')dirSend(id);else if(act==='ils')ilsSend(id);else if(act==='auto')assign(id,'');else if(act==='clear')clearSq(id);return}
   if(e.target.id==='sqin'||e.target.id==='msgin'||e.target.id==='altin'||e.target.id==='hdgin'||e.target.id==='dirin'||e.target.id==='ilssel'||e.target.id==='urg'||e.target.id==='ptt'||e.target.id==='hoto')return;
-  if(sel!==id){txMode='';txPrev=null}sel=(strip.classList.contains('twr')&&sel===id)?null:id;renderStrips(true);draw()});
+  if(sel===id&&!strip.classList.contains('twr')&&!e.target.closest('.h'))return;
+  if(sel!==id){txMode='';txPrev=null}sel=sel===id?null:id;renderStrips(true);draw()});
 var group='';try{var gp=new URLSearchParams(location.search).get('group');group=gp!==null?gp:(localStorage.getItem('afc_group')||'');if(gp!==null){if(group)localStorage.setItem('afc_group',group);else localStorage.removeItem('afc_group')}}catch(e){}
 var atcCode='';try{var ap=new URLSearchParams(location.search).get('atc');atcCode=ap!==null?ap:(localStorage.getItem('afc_atc')||'');if(ap!==null){if(atcCode)localStorage.setItem('afc_atc',atcCode);else localStorage.removeItem('afc_atc')}}catch(e){}
 function httpApi(path,opt){opt=opt||{};opt.headers=Object.assign({'X-API-Key':key},group?{'X-Group':group}:{},atcCode?{'X-Atc':atcCode}:{},opt.headers||{});return fetch(path,opt)}
@@ -614,8 +619,23 @@ function clrLine(a){var c=a.clr;if(!c)return'';var t=[];if(c.taxi)t.push(L('TAXI
   return t.length?'<div class="m clr">'+L('CLR: ','AUT: ')+t.join(' &middot; ')+'</div>':''}
 function clrBtn(a,t,en,pt){var on=a.clr&&a.clr[t];return'<button data-act="clr" data-t="'+t+'" class="'+(on?'on':'')+'">'+(on?'&#10003; ':'')+L(en,pt)+'</button>'}
 function roleSet(){var l=myRoleList(),m=l.filter(function(r){return r.name===talkName});if(m.length)l=m;var o={};l.forEach(function(r){o[r.pos]=1});return o}
-/* which commands a strip offers: GND = taxi, TWR = runway + heading, APP = vectors/altitude/ILS; no role or CTR = everything */
-function can(f){var r=roleSet();if(!Object.keys(r).length||r.CTR)return true;var m={taxi:'GND',rwy:'TWR',hdg:'TWR APP',alt:'APP TWR',land:'TWR APP',ils:'APP'}[f]||'';return m.split(' ').some(function(p){return r[p]})}
+/* ---------- ROLES: the single place that defines roles, their airspace and what each may do ----------
+   claim: shown as a slot in the role screen; owner: only the airport owner (or a network member) may take it.
+   do: actions the role may use on a strip. Holding ALL, CTR or no role (observer) = every action. */
+var ROLES={
+  GND:{claim:1,asp:5, en:'Ground',pt:'Solo',do:['taxi'],
+       d:['Taxi routes, pushback, taxi clearance','Rotas de táxi, pushback, autorização de táxi']},
+  TWR:{claim:1,asp:15,en:'Tower',pt:'Torre',do:['rwy','hdg','alt','land'],
+       d:['Runway: line up, takeoff, landing, vectors','Pista: alinhar, decolar, pousar, vetores']},
+  APP:{claim:1,asp:50,en:'Approach',pt:'Aproximação',do:['hdg','alt','land','ils'],
+       d:['Radar vectors, altitude, direct, cleared ILS','Vetores, altitude, direto, ILS']},
+  CTR:{asp:0,en:'Center',pt:'Centro',all:1,d:['','']},   /* not claimable yet (needs a region) */
+  ALL:{owner:1,asp:50,en:'All roles',pt:'Todas as funções',all:1,
+       d:['Ground, Tower and Approach in one. Does not take the other slots.','Solo, Torre e Aproximação em um. Não ocupa as outras vagas.']}};
+var CLAIM_ROLES=Object.keys(ROLES).filter(function(k){return ROLES[k].claim});
+var ROLE_INFO={},ROLE_DESC={},AS={};Object.keys(ROLES).forEach(function(k){ROLE_INFO[k]=[ROLES[k].en,ROLES[k].pt];ROLE_DESC[k]=ROLES[k].d;if(ROLES[k].asp)AS[k]=ROLES[k].asp});
+function roleSet(){var l=myRoleList(),m=l.filter(function(r){return r.name===talkName});if(m.length)l=m;var o={};l.forEach(function(r){o[r.pos]=1});return o}
+function can(f){var r=roleSet(),ks=Object.keys(r);if(!ks.length)return true;return ks.some(function(k){var R=ROLES[k];return R&&(R.all||R.do.indexOf(f)>=0)})}
 var dirVal={},ilsVal={};
 function routeFixes(id){var c=routeCache[id],p=c&&c.d&&c.d.points||[],o=[];p.forEach(function(q){var n=q[3]?String(q[3]).toUpperCase():'';if(/^[A-Z0-9]{2,6}$/.test(n)&&o.indexOf(n)<0)o.push(n)});return o.slice(0,80)}
 function curRole(){var l=myRoleList();return l.filter(function(r){return r.name===talkName})[0]||l[0]||null}
@@ -663,14 +683,16 @@ $('evHd').onclick=function(){evOpen=!evOpen;renderLog()};renderLog();
 function evDiff(){var cur={},emg={},nm={};
   ac.forEach(function(a){if(isTwr(a))return;cur[a.icao_address]=1;if(a.emergency)emg[a.icao_address]=1});
   msgs.forEach(function(x){nm[x.id]=x.status});
-  if(evSeen===null){evSeen={ac:cur,msg:nm,emg:emg,clnc:{},cf:{}};ac.forEach(function(a){if(a.clnc)evSeen.clnc[a.icao_address]=a.clnc;if(confl[a.icao_address]&&confl[a.icao_address].lvl===2)evSeen.cf[a.icao_address]=1});return}
+  if(evSeen===null){evSeen={ac:cur,msg:nm,emg:emg,clnc:{},cf:{},in:{}};ac.forEach(function(a){if(!isTwr(a)&&myAsp()&&myAsp().length&&!outsideAsp(a))evSeen.in[a.icao_address]=1;if(a.clnc)evSeen.clnc[a.icao_address]=a.clnc;if(confl[a.icao_address]&&confl[a.icao_address].lvl===2)evSeen.cf[a.icao_address]=1});return}
   ac.forEach(function(a){if(isTwr(a))return;var id=a.icao_address,cs=a.callsign||id;
-    if(!evSeen.ac[id])logEv(L('New track ','Novo tráfego ')+cs+(a.airplane_model?' ('+a.airplane_model+')':''),'');
+    var inn=myAsp()&&myAsp().length&&!outsideAsp(a);   /* with a role: log when a plane enters my airspace; without: first sighting */
+    if(myRoleList().length){if(inn&&!evSeen.in[id])logEv(L('Inbound ','Chegando ')+cs+(a.airplane_model?' ('+a.airplane_model+')':''),'');if(inn)evSeen.in[id]=1;else delete evSeen.in[id]}
+    else if(!evSeen.ac[id])logEv(L('New track ','Novo tráfego ')+cs+(a.airplane_model?' ('+a.airplane_model+')':''),'');
     if(a.emergency&&!evSeen.emg[id])logEv('MAYDAY '+cs,'bad');
     if(a.clnc){if(evSeen.clnc[id]!==a.clnc)logEv(nocText(a.clnc)+' '+cs,'warn');evSeen.clnc[id]=a.clnc}else delete evSeen.clnc[id];
     var cf=confl[id]&&confl[id].lvl===2;if(cf&&!evSeen.cf[id])logEv(L('Separation loss ','Perda de separação ')+cs,'bad');if(cf)evSeen.cf[id]=1;else delete evSeen.cf[id]});
   msgs.forEach(function(x){var prev=evSeen.msg[x.id],cs=csOf(x.icao_address);
-    if(prev===undefined){if((x.kind==='chat'||x.kind==='request')&&x.status==='request')logEv(cs+': '+x.text,'')}
+    if(prev===undefined){if((x.kind==='chat'||x.kind==='request')&&x.status==='request'&&isHeard(x.freq))logEv(cs+': '+x.text,'')}
     else if(prev!==x.status&&(x.status==='wilco'||x.status==='unable'))logEv(cs+': '+(x.status==='wilco'?'Wilco':'Unable'),'')});
   evSeen.ac=cur;evSeen.msg=nm;evSeen.emg=emg}
 function postMsg(id,t,el){
@@ -710,7 +732,7 @@ function ctrlOf(a){if(!a.freq)return'ALL';
 /* dimmed = tuned to a frequency none of my roles use (never an emergency, tower, or when I talk on All) */
 function isDim(a){return!a.virtual_tower&&!a.emergency&&((dimOn&&!!a.freq&&!isHeard(a.freq))||outsideAsp(a))}
 /* airspace: DEL/GND 5 nm, TWR 15 nm, APP 50 nm around the airport (same numbers as the Worker); CTR = everywhere */
-var AS={GND:5,TWR:15,APP:50},aspAc=null,aspVal=null;
+var aspAc=null,aspVal=null;
 function nmBetween(la1,lo1,la2,lo2){return Math.hypot((la2-la1)*60,(lo2-lo1)*60*Math.cos((la1+la2)/2*Math.PI/180))}
 function myAsp(){   /* my live roles as circles; null = I hold CTR (nothing is outside) */
   if(aspAc===ac)return aspVal;
@@ -725,7 +747,7 @@ function outsideAsp(a){if(a.virtual_tower||a.emergency)return false;var m=myAsp(
 function drawAirspace(){   /* selected airport: all three circles, mine highlighted */
   var s=sel&&ac.filter(function(x){return x.icao_address===sel})[0];if(!s||!s.virtual_tower)return;
   var mine={};(s.positions||[]).forEach(function(q){if(q.claimed&&q.hid&&q.hid===myHid)mine[q.pos]=1});
-  var ctr=!!mine.CTR,c=proj(s),rings=[['APP 50',50,ctr||mine.APP],['TWR 15',15,ctr||mine.TWR],['GND 5',5,ctr||mine.GND]];
+  var ctr=!!(mine.CTR||mine.ALL),c=proj(s),rings=[['APP 50',50,ctr||mine.APP],['TWR 15',15,ctr||mine.TWR],['GND 5',5,ctr||mine.GND]];
   g.save();g.font='10px ui-monospace,monospace';g.textBaseline='bottom';g.textAlign='center';
   for(var i=0;i<rings.length;i++){var r=rings[i][1]/nmpp,hi=!!rings[i][2];if(r<4)continue;
     g.beginPath();g.arc(c[0],c[1],r,0,6.2832);
@@ -780,8 +802,6 @@ function closeTower(name){api('/api/atc/tower?name='+encodeURIComponent(name)+'&
   myApts=myApts.filter(function(x){return x.name!==name});myTowers=myTowers.filter(function(x){return x.name.indexOf(name+'_')!==0});saveTowers();updateTalk();toast(L('Airport closed','Aeroporto fechado'));poll(true)})}
 
 /* ---------- controller entry: airport list -> role selection -> work (one role at a time) ---------- */
-var ROLE_INFO={GND:['Ground','Solo'],TWR:['Tower','Torre'],APP:['Approach','Aproximação'],ALL:['All roles','Todas as funções']};
-var ROLE_DESC={GND:['Taxi routes, pushback, taxi clearance','Rotas de táxi, pushback, autorização de táxi'],TWR:['Runway: line up, takeoff, landing, vectors','Pista: alinhar, decolar, pousar, vetores'],APP:['Radar vectors, altitude, direct, cleared ILS','Vetores, altitude, direto, ILS'],ALL:['Ground, Tower and Approach in one. Does not take the other slots.','Solo, Torre e Aproximação em um. Não ocupa as outras vagas.']};
 function setMode(m){uiMode=m;var gm=$('gMsg');if(gm)gm.textContent='';var b=$('twList');if(b)b._sig=null;renderGate();renderWork();renderTowerBox();renderStrips(true)}
 function gateSync(){if(uiMode==='work'&&!observe&&!myRoleList().length){setMode('list');return}renderGate();renderWork()}
 function activeApts(){return ac.filter(function(a){return a.virtual_tower}).map(function(a){return{n:String(a.callsign).replace(/^ATC_/,''),a:a}}).sort(function(x,y){return x.n<y.n?-1:1})}
@@ -797,16 +817,16 @@ function renderGate(){var g=$('gate');
     if(!ap.length)h='<div class="m" style="margin:8px 0">'+L('No active airports. Open one below.','Nenhum aeroporto ativo. Abra um abaixo.')+'</div>';
     ap.forEach(function(x){var pl=x.a.positions||[];
       h+='<div class="strip gcard" data-apt="'+esc(x.n)+'"><div class="row"><b>'+esc(x.n)+'</b><span class="m">'+(x.a.owner_hid===myHid?L('yours','seu'):'')+'</span></div><div class="roles">'+
-        ['GND','TWR','APP'].map(function(r){var p=pl.filter(function(q){return q.pos===r})[0];return'<span class="tag'+(p&&p.claimed?' t':'')+'">'+r+(p&&p.claimed?' ● '+esc(p.ctl||p.nick||''):' ○')+(p&&p.freq?' '+esc(p.freq):'')+'</span>'}).join('')+'</div></div>'});
+        CLAIM_ROLES.map(function(r){var p=pl.filter(function(q){return q.pos===r})[0];return'<span class="tag'+(p&&p.claimed?' t':'')+'">'+r+(p&&p.claimed?' ● '+esc(p.ctl||p.nick||''):' ○')+(p&&p.freq?' '+esc(p.freq):'')+'</span>'}).join('')+'</div></div>'});
     list.innerHTML=h;return}
   var tw=aptOf(gApt),pl=tw.positions||[],canMod=tw.owner_hid===myHid||isMember;
   $('gHead').innerHTML='<button id="gBack">&larr; '+L('Airports','Aeroportos')+'</button> &nbsp;'+esc(gApt)+' <span class="m">'+L('choose your role','escolha sua função')+'</span>';
-  ['GND','TWR','APP'].forEach(function(r){var nm=gApt+'_'+r,p=pl.filter(function(q){return q.pos===r})[0],taken=p&&p.claimed;
+  CLAIM_ROLES.forEach(function(r){var nm=gApt+'_'+r,p=pl.filter(function(q){return q.pos===r})[0],taken=p&&p.claimed;
     h+='<div class="strip gcard nc"><div class="row"><span><b>'+L(ROLE_INFO[r][0],ROLE_INFO[r][1])+'</b> <span class="m">'+r+' &middot; '+(taken?L('taken','ocupada')+(p.ctl||p.nick?' &middot; '+esc(p.ctl||p.nick):'')+(p.freq?' '+esc(p.freq):''):L('free','livre'))+'</span></span><span>'+
       (taken?(canMod?'<button data-kick="'+esc(gApt)+'|'+r+'">'+L('Kick','Expulsar')+'</button>':''):'<input data-f="'+esc(nm)+'" maxlength="7" placeholder="'+esc(defFreq(gApt,r)||'121.900')+'" inputmode="decimal" style="width:70px"> <button data-take="'+esc(gApt)+'|'+r+'">'+L('Take role','Assumir')+'</button>')+
       '</span></div><div class="desc">'+L(ROLE_DESC[r][0],ROLE_DESC[r][1])+'</div></div>'});
-  if(canMod){var pa=pl.filter(function(q){return q.pos==='ALL'})[0],ta=pa&&pa.claimed&&!(pa.hid&&pa.hid===myHid);
-    h+='<div class="strip gcard nc"><div class="row"><span><b>'+L('ALL','TODAS')+'</b> <span class="m">'+L('all roles at once','todas as funções')+(ta?' &middot; '+L('taken','ocupada'):'')+'</span></span><span>'+(ta?'':'<button data-take="'+esc(gApt)+'|ALL">'+L('Take ALL','Assumir TODAS')+'</button>')+'</span></div><div class="desc">'+L(ROLE_DESC.ALL[0],ROLE_DESC.ALL[1])+'</div></div>'}
+  if(canMod&&ROLES.ALL.owner){var pa=pl.filter(function(q){return q.pos==='ALL'})[0],ta=pa&&pa.claimed&&!(pa.hid&&pa.hid===myHid);
+    h+='<div class="strip gcard nc"><div class="row"><span><b>'+L(ROLES.ALL.en.split(' ')[0].toUpperCase(),'TODAS')+'</b> <span class="m">'+L('all roles at once','todas as funções')+(ta?' &middot; '+L('taken','ocupada'):'')+'</span></span><span>'+(ta?'':'<button data-take="'+esc(gApt)+'|ALL">'+L('Take ALL','Assumir TODAS')+'</button>')+'</span></div><div class="desc">'+L(ROLE_DESC.ALL[0],ROLE_DESC.ALL[1])+'</div></div>'}
   if(canMod)h+='<div style="margin-top:8px"><button data-close="'+esc(gApt)+'">'+L('Close airport','Fechar aeroporto')+'</button></div>';
   list.innerHTML=h;[].forEach.call(g.querySelectorAll('[data-f]'),function(i){var v=keep[i.getAttribute('data-f')];if(v)i.value=v})}
 $('gate').addEventListener('click',function(e){var b=e.target.closest('button'),c=e.target.closest('.gcard[data-apt]');
