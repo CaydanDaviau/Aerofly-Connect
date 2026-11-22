@@ -306,10 +306,10 @@ function drawRunways(maxR){   /* light runway bars over the map, plus the number
     if(Math.abs((r[2]-center.lat)*60)>lim||Math.abs((r[3]-center.lon)*60*cl)>lim)continue;
     var p1=projLL(r[2],r[3]),p2=projLL(r[5],r[6]),dx=p2[0]-p1[0],dy=p2[1]-p1[1],L=Math.hypot(dx,dy)||1,ux=dx/L,uy=dy/L;
     var w=Math.min(40,Math.max(3,(r[7]?r[7]*0.3048:45)/1852/nmpp));
-    if(nmpp<0.2&&L>=30){   /* extended centre lines, ticks every 2 nm (like /train) */
+    if(nmpp<0.6&&L>=30){   /* extended centre lines, ticks every 2 nm (like /train) */
       g.save();g.lineWidth=1;g.strokeStyle='rgba(122,233,255,.45)';g.fillStyle='rgba(122,233,255,.8)';g.font='10px ui-monospace,monospace';g.textAlign='start';g.textBaseline='middle';
-      [[p1,-1],[p2,1]].forEach(function(e){var q=e[0],sg=e[1],D=Math.min(12,maxR);g.setLineDash([8,6]);g.beginPath();g.moveTo(q[0],q[1]);g.lineTo(q[0]+sg*ux*D/nmpp,q[1]+sg*uy*D/nmpp);g.stroke();g.setLineDash([]);
-        for(var d=2;d<=D;d+=2){var tx=q[0]+sg*ux*d/nmpp,ty=q[1]+sg*uy*d/nmpp;g.beginPath();g.moveTo(tx-uy*4,ty+ux*4);g.lineTo(tx+uy*4,ty-ux*4);g.stroke();if(d%4===0&&nmpp<.1)g.fillText(d+'',tx+6,ty)}});
+      [[p1,-1],[p2,1]].forEach(function(e){var q=e[0],sg=e[1],D=Math.min(30,maxR);g.setLineDash([8,6]);g.beginPath();g.moveTo(q[0],q[1]);g.lineTo(q[0]+sg*ux*D/nmpp,q[1]+sg*uy*D/nmpp);g.stroke();g.setLineDash([]);
+        var stp=nmpp<0.12?2:5;for(var d=stp;d<=D;d+=stp){var tx=q[0]+sg*ux*d/nmpp,ty=q[1]+sg*uy*d/nmpp;g.beginPath();g.moveTo(tx-uy*4,ty+ux*4);g.lineTo(tx+uy*4,ty-ux*4);g.stroke();if(d%(stp*2)===0&&nmpp<.3)g.fillText(d+'',tx+6,ty)}});
       g.restore();g.font='bold 11px ui-monospace,monospace';g.textAlign='center';g.textBaseline='middle';g.lineJoin='round'}
     g.lineCap='butt';g.beginPath();g.moveTo(p1[0],p1[1]);g.lineTo(p2[0],p2[1]);
     g.strokeStyle='#d6d6d6';g.lineWidth=w+2;g.stroke();          // light outline
@@ -615,7 +615,7 @@ function clrLine(a){var c=a.clr;if(!c)return'';var t=[];if(c.taxi)t.push(L('TAXI
 function clrBtn(a,t,en,pt){var on=a.clr&&a.clr[t];return'<button data-act="clr" data-t="'+t+'" class="'+(on?'on':'')+'">'+(on?'&#10003; ':'')+L(en,pt)+'</button>'}
 function roleSet(){var l=myRoleList(),m=l.filter(function(r){return r.name===talkName});if(m.length)l=m;var o={};l.forEach(function(r){o[r.pos]=1});return o}
 /* which commands a strip offers: GND = taxi, TWR = runway + heading, APP = vectors/altitude/ILS; no role or CTR = everything */
-function can(f){var r=roleSet();if(!Object.keys(r).length||r.CTR)return true;var m={taxi:'GND',rwy:'TWR',hdg:'TWR APP',alt:'APP TWR',land:'TWR APP'}[f]||'';return m.split(' ').some(function(p){return r[p]})}
+function can(f){var r=roleSet();if(!Object.keys(r).length||r.CTR)return true;var m={taxi:'GND',rwy:'TWR',hdg:'TWR APP',alt:'APP TWR',land:'TWR APP',ils:'APP'}[f]||'';return m.split(' ').some(function(p){return r[p]})}
 var dirVal={},ilsVal={};
 function routeFixes(id){var c=routeCache[id],p=c&&c.d&&c.d.points||[],o=[];p.forEach(function(q){var n=q[3]?String(q[3]).toUpperCase():'';if(/^[A-Z0-9]{2,6}$/.test(n)&&o.indexOf(n)<0)o.push(n)});return o.slice(0,80)}
 function curRole(){var l=myRoleList();return l.filter(function(r){return r.name===talkName})[0]||l[0]||null}
@@ -623,7 +623,7 @@ function ctlApt(){var r=curRole();if(r)return r.apt;var best=null,bd=1e9;ac.forE
 function aptRwys(apt){var o=[];RW.forEach(function(r){if(r[0]===apt)[r[1],r[4]].forEach(function(i){if(i&&o.indexOf(i)<0)o.push(i)})});return o.sort()}
 function dirIls(a){var id=a.icao_address,fx=routeFixes(id),rw=aptRwys(ctlApt());if(!ilsVal[id]||rw.indexOf(ilsVal[id])<0)ilsVal[id]=rw[0]||'';
   return'<div class="ctl"><input id="dirin" list="dirlist" maxlength="6" autocapitalize="characters" placeholder="'+L('Waypoint','Waypoint')+'" value="'+esc(dirVal[id]||'')+'" style="width:96px"><datalist id="dirlist">'+fx.map(function(n){return'<option value="'+esc(n)+'">'}).join('')+'</datalist><button data-act="dirto">'+L('Direct','Direto')+'</button></div>'+
-   (rw.length?'<div class="ctl"><select id="ilssel">'+rw.map(function(r){return'<option'+(r===ilsVal[id]?' selected':'')+'>'+esc(r)+'</option>'}).join('')+'</select><button data-act="ils">'+L('Cleared ILS','Autorizar ILS')+'</button></div>':'')}
+   (rw.length&&can('ils')?'<div class="ctl"><select id="ilssel">'+rw.map(function(r){return'<option'+(r===ilsVal[id]?' selected':'')+'>'+esc(r)+'</option>'}).join('')+'</select><button data-act="ils">'+L('Cleared ILS','Autorizar ILS')+'</button></div>':'')}
 function dirSend(id){var v=String(($('dirin')||{}).value||dirVal[id]||'').trim().toUpperCase();if(!/^[A-Z0-9]{2,6}$/.test(v)){toast(L('Type a waypoint, e.g. a fix from the route','Digite um waypoint, ex.: um fixo da rota'));return}dirVal[id]=v;postMsg(id,L('Proceed direct ','Prossiga direto ')+v)}
 function ilsSend(id){var v=($('ilssel')||{}).value||ilsVal[id];if(!v){toast(L('No runway data for this airport','Sem dados de pista deste aeroporto'));return}postMsg(id,L('Cleared ILS approach runway ','Autorizado aproximação ILS pista ')+v)}
 function clrCtl(a){var air=a.phase==='air',any=!a.phase,h='<div class="ctl clrs">';
@@ -780,8 +780,8 @@ function closeTower(name){api('/api/atc/tower?name='+encodeURIComponent(name)+'&
   myApts=myApts.filter(function(x){return x.name!==name});myTowers=myTowers.filter(function(x){return x.name.indexOf(name+'_')!==0});saveTowers();updateTalk();toast(L('Airport closed','Aeroporto fechado'));poll(true)})}
 
 /* ---------- controller entry: airport list -> role selection -> work (one role at a time) ---------- */
-var ROLE_INFO={GND:['Ground','Solo'],TWR:['Tower','Torre'],APP:['Approach','Aproximação']};
-var ROLE_DESC={GND:['Taxi routes, pushback, taxi clearance','Rotas de táxi, pushback, autorização de táxi'],TWR:['Runway: line up, takeoff, landing, vectors','Pista: alinhar, decolar, pousar, vetores'],APP:['Radar vectors, altitude, direct, cleared ILS','Vetores, altitude, direto, ILS']};
+var ROLE_INFO={GND:['Ground','Solo'],TWR:['Tower','Torre'],APP:['Approach','Aproximação'],ALL:['All roles','Todas as funções']};
+var ROLE_DESC={GND:['Taxi routes, pushback, taxi clearance','Rotas de táxi, pushback, autorização de táxi'],TWR:['Runway: line up, takeoff, landing, vectors','Pista: alinhar, decolar, pousar, vetores'],APP:['Radar vectors, altitude, direct, cleared ILS','Vetores, altitude, direto, ILS'],ALL:['Ground, Tower and Approach in one. Does not take the other slots.','Solo, Torre e Aproximação em um. Não ocupa as outras vagas.']};
 function setMode(m){uiMode=m;var gm=$('gMsg');if(gm)gm.textContent='';var b=$('twList');if(b)b._sig=null;renderGate();renderWork();renderTowerBox();renderStrips(true)}
 function gateSync(){if(uiMode==='work'&&!observe&&!myRoleList().length){setMode('list');return}renderGate();renderWork()}
 function activeApts(){return ac.filter(function(a){return a.virtual_tower}).map(function(a){return{n:String(a.callsign).replace(/^ATC_/,''),a:a}}).sort(function(x,y){return x.n<y.n?-1:1})}
@@ -805,6 +805,8 @@ function renderGate(){var g=$('gate');
     h+='<div class="strip gcard nc"><div class="row"><span><b>'+L(ROLE_INFO[r][0],ROLE_INFO[r][1])+'</b> <span class="m">'+r+' &middot; '+(taken?L('taken','ocupada')+(p.ctl||p.nick?' &middot; '+esc(p.ctl||p.nick):'')+(p.freq?' '+esc(p.freq):''):L('free','livre'))+'</span></span><span>'+
       (taken?(canMod?'<button data-kick="'+esc(gApt)+'|'+r+'">'+L('Kick','Expulsar')+'</button>':''):'<input data-f="'+esc(nm)+'" maxlength="7" placeholder="'+esc(defFreq(gApt,r)||'121.900')+'" inputmode="decimal" style="width:70px"> <button data-take="'+esc(gApt)+'|'+r+'">'+L('Take role','Assumir')+'</button>')+
       '</span></div><div class="desc">'+L(ROLE_DESC[r][0],ROLE_DESC[r][1])+'</div></div>'});
+  if(canMod){var pa=pl.filter(function(q){return q.pos==='ALL'})[0],ta=pa&&pa.claimed&&!(pa.hid&&pa.hid===myHid);
+    h+='<div class="strip gcard nc"><div class="row"><span><b>'+L('ALL','TODAS')+'</b> <span class="m">'+L('all roles at once','todas as funções')+(ta?' &middot; '+L('taken','ocupada'):'')+'</span></span><span>'+(ta?'':'<button data-take="'+esc(gApt)+'|ALL">'+L('Take ALL','Assumir TODAS')+'</button>')+'</span></div><div class="desc">'+L(ROLE_DESC.ALL[0],ROLE_DESC.ALL[1])+'</div></div>'}
   if(canMod)h+='<div style="margin-top:8px"><button data-close="'+esc(gApt)+'">'+L('Close airport','Fechar aeroporto')+'</button></div>';
   list.innerHTML=h;[].forEach.call(g.querySelectorAll('[data-f]'),function(i){var v=keep[i.getAttribute('data-f')];if(v)i.value=v})}
 $('gate').addEventListener('click',function(e){var b=e.target.closest('button'),c=e.target.closest('.gcard[data-apt]');

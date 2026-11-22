@@ -17,13 +17,13 @@ const MAX_TOWERS = 50;
 // A claimed position (the page sends a `holder` id + heartbeat) is freed POS_TTL_MS after the last heartbeat.
 const ROLE_COOLDOWN_MS = 120_000;
 const POS_TTL_MS = 120_000;
-const POS_NAMES = ["GND", "TWR", "APP", "CTR"];
+const POS_NAMES = ["GND", "TWR", "APP", "CTR", "ALL"];   // ALL = the airport owner working every role at once (one record, does not occupy the other slots)
 const HANDOFF_TTL_MS = 120_000, PEND_TTL_MS = 120_000;
 const POS_SPOKEN = { GND: "ground", TWR: "tower", APP: "approach", CTR: "center" };
 // Which positions can answer each request when staffed (next one up covers the one below it).
-const COVER = { clearance: ["GND", "TWR"], pushback: ["GND", "TWR"], taxi: ["GND", "TWR"], takeoff: ["TWR"], land: ["TWR"], climb: ["APP", "TWR", "CTR"], descent: ["APP", "TWR", "CTR"] };
+const COVER = { clearance: ["GND", "TWR", "ALL"], pushback: ["GND", "TWR", "ALL"], taxi: ["GND", "TWR", "ALL"], takeoff: ["TWR", "ALL"], land: ["TWR", "ALL"], climb: ["APP", "TWR", "CTR", "ALL"], descent: ["APP", "TWR", "CTR", "ALL"] };
 const parseTowerName = s => {
-  const m = /^([A-Z0-9]{2,8}?)(?:_(GND|TWR|APP|CTR))?$/.exec(String(s || "").trim().toUpperCase());
+  const m = /^([A-Z0-9]{2,8}?)(?:_(GND|TWR|APP|CTR|ALL))?$/.exec(String(s || "").trim().toUpperCase());
   if (!m) return null;
   const pos = m[2] || "APT";   // plain ICAO = the airport itself (symbol, ATIS); roles are ICAO_GND / _TWR / _APP / _CTR
   return { apt: m[1], pos, name: pos === "APT" ? m[1] : m[1] + "_" + pos };
@@ -40,7 +40,7 @@ const WARN_DEFAULT = 2;   // warnings per UTC day before penalties/violations co
 const PEN_LIMIT = 10, VIO_LIMIT = 3, PEN_TIMEOUT_MS = 30 * 60_000, VIO_TIMEOUT_MS = 6 * 3600_000;
 const DEM_STAT = { 1: "gw", 2: "ops", 3: "app_s" };   // stat that is lost (grade drops one level) when an ATC causes a mid-air collision
 // Controller grades: everyone starts at Ground (DEL/GND); Network members have every role. Stats never go down, so grades never drop.
-const ROLE_GRADE = { GND: 0, TWR: 1, APP: 2, CTR: 3 };
+const ROLE_GRADE = { GND: 0, TWR: 1, APP: 2, CTR: 3, ALL: 0 };
 const GRADE_NAMES = ["Ground", "Tower", "Approach", "Center"];
 const GRADE_REQ = [null, { atc_s: 3 * 3600, gw: 50 }, { atc_s: 10 * 3600, ops: 50 }, { app_s: 30 * 3600 }];
 const PILOT_GRADES = [["Captain", 100 * 3600, 100], ["Commercial", 25 * 3600, 25], ["Private", 5 * 3600, 5], ["Student", 0, 0]];
@@ -66,7 +66,7 @@ const normCallsign = cs => {
 // How the Android app decides to draw a tower (TrafficClassification.detectControlTower):
 // callsign contains "ATC_" AND (airplane_model is a 3-4 char airport code OR airplane_livery is a function name).
 const towerFields = cs => {
-  const m = /^ATC_([A-Z0-9]+)(?:_(?:GND|TWR|APP|CTR))?$/.exec(cs || "");
+  const m = /^ATC_([A-Z0-9]+)(?:_(?:GND|TWR|APP|CTR|ALL))?$/.exec(cs || "");
   if (!m) return null;
   return { airplane_model: /^[A-Z0-9]{3,4}$/.test(m[1]) ? m[1] : "", airplane_livery: "TOWER", livery: "TOWER" };
 };
@@ -705,7 +705,14 @@ export class Hub {
   // type given: only a staffed position that can answer it counts (COVER chain); no type: any position of the airport.
   humanCovers(c, apt, type) {
     const ok = t => !!t.member === !!c.member && t.pos !== "APT" && (!type || !COVER[type] || COVER[type].includes(t.pos || "TWR"));
-    return [...this.towers.values()].some(t => ok(t) && ((apt && (t.apt || t.name) === apt) || haversineMi(t.latitude, t.longitude, c.pos.latitude, c.pos.longitude) <= TOWER_COVER_MI));
+    // In flight (tracking, climb, descent) a role only covers aircraft inside its own airspace (CTR: anywhere); farther out the auto-ATC answers.
+    const air = c.pos.phase === "air" && (!type || type === "climb" || type === "descent");
+    const inAsp = t => {
+      if (!air || t.pos === "CTR") return true;
+      const a = this.towers.get(t.apt) || t;
+      return haversineMi(Number(a.latitude), Number(a.longitude), c.pos.latitude, c.pos.longitude) / 1.15078 <= (AIRSPACE_NM[t.pos] || 50);
+    };
+    return [...this.towers.values()].some(t => ok(t) && ((apt && (t.apt || t.name) === apt && inAsp(t)) || haversineMi(t.latitude, t.longitude, c.pos.latitude, c.pos.longitude) <= TOWER_COVER_MI));
   }
   towerOf(apt) { for (const t of this.towers.values()) if ((t.apt || t.name) === apt) return t; return null; }
   // The airport this person (browser id `who` or IP tag) already has open as owner / role holder, or null.
@@ -1657,6 +1664,8 @@ export class Hub {
         if (mine && mine !== pn.apt) return json({ error: "one_tower", airport: mine }, 409);
       }
       if (old?.member && request.headers.get("X-Member") !== "1") return json({ error: "member_tower" }, 403);
+      // ALL (every role at once) is for the airport owner (or a network member) only
+      if (pn.pos === "ALL" && holder && !(aptRec && aptRec.owner === holder) && request.headers.get("X-Member") !== "1") return json({ error: "not_owner" }, 403);
       // one controller per position: a live claim by someone else blocks (heartbeats keep it alive)
       if (old && old.holder && holder && old.holder !== holder && now - old.at <= POS_TTL_MS) return json({ error: "position_taken", position: pn.pos, airport: pn.apt }, 409);
       if (old && old.holder && !holder && now - old.at <= POS_TTL_MS) return json({ error: "position_taken", position: pn.pos, airport: pn.apt }, 409);
@@ -1679,8 +1688,8 @@ export class Hub {
         if (old && old.holder === holder) { this.profAdd(key, "atc_s", Math.min(now - old.at, 60_000) / 1000, now); if (pn.pos === "APP") this.profAdd(key, "app_s", Math.min(now - old.at, 60_000) / 1000, now); }
         else {   // taking a NEW role: 2 minutes after the last one taken before another can be taken
           const lc = this.lastClaim.get(holder);
-          if (lc && lc.name !== name && now - lc.at < ROLE_COOLDOWN_MS) return json({ error: "role_cooldown", remaining_s: Math.ceil((ROLE_COOLDOWN_MS - (now - lc.at)) / 1000) }, 409);
-          this.lastClaim.set(holder, { name, at: now });
+          if (pn.pos !== "ALL" && lc && lc.name !== name && now - lc.at < ROLE_COOLDOWN_MS) return json({ error: "role_cooldown", remaining_s: Math.ceil((ROLE_COOLDOWN_MS - (now - lc.at)) / 1000) }, 409);
+          if (pn.pos !== "ALL") this.lastClaim.set(holder, { name, at: now });
         }
       }
       const atis = old && old.atis;
@@ -1764,7 +1773,7 @@ export class Hub {
       if (p === "/api/atc/handoff") { const ob = this.airspaceBlock(String(d.holder || "").slice(0, 40), target); if (ob) return json(ob, 409); }
       if (p === "/api/atc/handoff") {
         const to = String(d.to || "").toUpperCase();
-        if (!POS_NAMES.includes(to) || to === me.pos) return json({ error: "bad_target" }, 400);
+        if (!POS_NAMES.includes(to) || to === "ALL" || to === me.pos) return json({ error: "bad_target" }, 400);
         const tr = this.towers.get(me.apt + "_" + to);
         if (!tr || !tr.holder || now - tr.at > POS_TTL_MS) return json({ error: "not_staffed", position: to }, 409);
         const h = this.handlerOf(target);
