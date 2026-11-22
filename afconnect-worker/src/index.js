@@ -176,7 +176,7 @@ const PHRASE = {
     welcome: (a, f) => `Welcome to ${a}${f ? ", contact ground " + f : ""}`,
     goAround: r => `Go around, runway ${r} occupied`,
     vTaxi: "Stop, hold position, you are not cleared to taxi",
-    vRunway: "Hold position, you are not cleared on the runway, vacate",
+    vRunway: r => `Hold position, you are on ${r ? "runway " + r : "the runway"} without clearance, vacate`,
     vLand: r => `Landing without clearance${r ? " on runway " + r : ""}, vacate the runway`,
   },
   pt: {
@@ -204,7 +204,7 @@ const PHRASE = {
     welcome: (a, f) => `Bem-vindo a ${a}${f ? ", contate o solo " + f : ""}`,
     goAround: r => `Arremeta, pista ${r} ocupada`,
     vTaxi: "Pare, aguarde na posição, você não está autorizado a taxiar",
-    vRunway: "Aguarde na posição, você não está autorizado na pista, desocupe",
+    vRunway: r => `Aguarde na posição, você está ${r ? "na pista " + r : "na pista"} sem autorização, desocupe`,
     vLand: r => `Pouso sem autorização${r ? " na pista " + r : ""}, desocupe a pista`,
   },
 };
@@ -827,8 +827,8 @@ export class Hub {
       } else if (now > st.grace) {
         if (cur === "ground" && gs >= 10 && !(st.gr.taxi > now) && !(st.gr.takeoff > now))
           this.violate(key, c, st, "taxi", apt, "", now, () => say(ph.vTaxi, true));
-        if (cur === "runway" && !(st.gr.takeoff > now) && now - st.landedAt > 120_000 && (p.on_rwy || gs >= 15))
-          this.violate(key, c, st, "runway", apt, onRwys[0] || "", now, () => say(ph.vRunway, true));
+        if (cur === "runway" && !(st.gr.takeoff > now) && now - st.landedAt > 120_000 && (st.gr.taxi > now ? gs > 35 : (p.on_rwy || gs >= 15)))   // taxi clearance includes crossing / entering runways (as with a human controller); only > 35 kt counts as a takeoff attempt
+          this.violate(key, c, st, "runway", apt, onRwys[0] || "", now, () => say(ph.vRunway(spokenRwy(onRwys[0] || "")), true));
       }
     }
     if (st.rollout && cur !== "air" && prev !== "air" && gs < 35 && now - st.landedAt > 6000) {
