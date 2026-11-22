@@ -309,7 +309,7 @@ function drawRunways(maxR){   /* light runway bars over the map, plus the number
     var w=Math.min(40,Math.max(3,(r[7]?r[7]*0.3048:45)/1852/nmpp));
     if(nmpp<0.6&&L>=30){   /* extended centre lines, ticks every 2 nm (like /train) */
       g.save();g.lineWidth=1;g.strokeStyle='rgba(122,233,255,.45)';g.fillStyle='rgba(122,233,255,.8)';g.font='10px ui-monospace,monospace';g.textAlign='start';g.textBaseline='middle';
-      [[p1,-1],[p2,1]].forEach(function(e){var q=e[0],sg=e[1],D=Math.min(30,maxR);g.setLineDash([8,6]);g.beginPath();g.moveTo(q[0],q[1]);g.lineTo(q[0]+sg*ux*D/nmpp,q[1]+sg*uy*D/nmpp);g.stroke();g.setLineDash([]);
+      [[p1,-1],[p2,1]].forEach(function(e){var q=e[0],sg=e[1],D=Math.min(12,maxR);g.setLineDash([8,6]);g.beginPath();g.moveTo(q[0],q[1]);g.lineTo(q[0]+sg*ux*D/nmpp,q[1]+sg*uy*D/nmpp);g.stroke();g.setLineDash([]);
         var stp=nmpp<0.12?2:5;for(var d=stp;d<=D;d+=stp){var tx=q[0]+sg*ux*d/nmpp,ty=q[1]+sg*uy*d/nmpp;g.beginPath();g.moveTo(tx-uy*4,ty+ux*4);g.lineTo(tx+uy*4,ty-ux*4);g.stroke();if(d%(stp*2)===0&&nmpp<.3)g.fillText(d+'',tx+6,ty)}});
       g.restore();g.font='bold 11px ui-monospace,monospace';g.textAlign='center';g.textBaseline='middle';g.lineJoin='round'}
     g.lineCap='butt';g.beginPath();g.moveTo(p1[0],p1[1]);g.lineTo(p2[0],p2[1]);
