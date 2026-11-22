@@ -19,10 +19,10 @@ r = await call("GET", "/api/manager/players?q=goo", null, "m", M); t("search by 
 r = await call("GET", "/api/manager/players?q=afl", null, "m", M); t("search by callsign", r.j.players.length === 1 && r.j.players[0].nick === "Maverick");
 const id1 = (await call("GET", "/api/manager/players?q=maver", null, "m", M)).j.players[0].id;
 // promote / demote
-r = await call("POST", "/api/manager/player", { id: id1, action: "promote" }, "m", M); t("promote -> Tower, manual", r.s === 200 && r.j.player.atc_grade_name === "Tower" && r.j.player.grade_manual);
+r = await call("POST", "/api/manager/player", { id: id1, action: "promote" }, "m", M); t("promote -> Junior, manual", r.s === 200 && r.j.player.atc_grade_name === "Junior" && r.j.player.grade_manual);
 const claim = pos => call("PUT", "/api/atc/tower", { name: "SBBR_" + pos, holder: "h1", latitude: -15.87, longitude: -47.92 }, "dev1");
 r = await claim("TWR"); t("promoted player may claim TWR", r.s === 200);
-r = await call("POST", "/api/manager/player", { id: id1, action: "demote" }, "m", M); t("demote -> Ground", r.j.player.atc_grade_name === "Ground");
+r = await call("POST", "/api/manager/player", { id: id1, action: "demote" }, "m", M); t("demote -> Trainee", r.j.player.atc_grade_name === "Trainee");
 r = await call("POST", "/api/manager/player", { id: id1, action: "demote" }, "m", M); t("demote below Ground refused", r.s === 400 && r.j.error === "grade_limit");
 r = await call("POST", "/api/manager/player", { id: id1, action: "grade_auto" }, "m", M); t("auto grade clears manual", !r.j.player.grade_manual);
 // timeout

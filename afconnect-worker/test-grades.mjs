@@ -9,7 +9,7 @@ TEST.skipGrades = false; GATE.on = true; TEST.warnLimit = 0;
 const claim = (pos, key = "k1", hdr = {}) => call("PUT", "/api/atc/tower", { name: "SBBR_" + pos, holder: "h-" + key, latitude: -15.87, longitude: -47.92 }, key, hdr);
 let r = await claim("GND"); t("everyone starts with GND", r.s === 200);
 r = await claim("GND"); t("GND allowed (cooldown aside)", r.s === 200 || (r.s === 409 && r.j.error === "role_cooldown"));
-r = await claim("TWR"); t("TWR needs grade", r.s === 409 && r.j.error === "grade_required" && r.j.need === "Tower" && r.j.next_req.some(x => x.k === "lv_twr" && x.need === 10));
+r = await claim("TWR"); t("TWR needs grade", r.s === 409 && r.j.error === "grade_required" && r.j.need === "Junior" && r.j.next_req.some(x => x.k === "lv_twr" && x.need === 10));
 r = await claim("TWR", "k1", { "X-Member": "1" }); t("network member has every role", r.s === 200 || (r.s === 409 && r.j.error === "role_cooldown"));
 const pf = hub.profGet("k1"); pf.lv_twr = 9;
 r = await claim("TWR"); t("training level 9 on TWR: still blocked", r.s === 409 && r.j.error === "grade_required");
@@ -20,10 +20,10 @@ pf.lv_twr = 10;
 t("grade is Tower", hub.gradeInfo(hub.profGet("k1")).atc_grade === 1);
 store.clear(); hub.lastClaim.clear();
 r = await claim("TWR"); t("TWR allowed with training level 10", r.s === 200);
-r = await claim("APP"); t("APP blocked (needs APP training level 10)", r.s === 409 && r.j.error === "grade_required" && r.j.next_grade === "Approach" && r.j.next_req[0].k === "lv_app");
+r = await claim("APP"); t("APP blocked (needs APP training level 10)", r.s === 409 && r.j.error === "grade_required" && r.j.next_grade === "Senior" && r.j.next_req[0].k === "lv_app");
 hub.lastClaim.clear(); pf.lv_app = 10;
 r = await claim("APP"); t("APP allowed with APP training level 10", r.s === 200);
-hub.lastClaim.clear(); r = await claim("CTR"); t("CTR blocked without 30 h APP", r.s === 409 && r.j.next_grade === "Center" && r.j.next_req[0].k === "app_s");
+hub.lastClaim.clear(); r = await claim("CTR"); t("CTR blocked without 30 h APP", r.s === 409 && r.j.next_grade === "Chief" && r.j.next_req[0].k === "app_s");
 pf.app_s = 30 * 3600; hub.lastClaim.clear();
 r = await claim("CTR"); t("CTR allowed with 30 h APP", r.s === 200);
 // APP heartbeat counts APP time
@@ -33,7 +33,7 @@ await claim("APP"); t("APP heartbeat adds app_s", pf.app_s > before + 40);
 const o0 = pf.ops; hub.opsCredit("SBBR", Date.now()); t("own airport op credited to TWR/APP holder", pf.ops === o0 + 2);
 hub.opsCredit("SBXX", Date.now()); t("other airport: nothing", pf.ops === o0 + 2);
 // profile response
-r = await call("GET", "/api/profile", null, "k1"); t("profile: stats + grades", r.s === 200 && r.j.atc_grade_name === "Center" && "landings" in r.j && "violations" in r.j && r.j.pilot_grade === "Student");
+r = await call("GET", "/api/profile", null, "k1"); t("profile: stats + grades", r.s === 200 && r.j.atc_grade_name === "Chief" && "landings" in r.j && "violations" in r.j && r.j.pilot_grade === "Student");
 // violations + timeouts
 const mk = (key) => ({ c: { pos: { latitude: 1, longitude: 2 }, plan: { callsign: "TST" } }, st: { viol: {} } });
 await call("PUT", "/api/position", { latitude: 1, longitude: 2 }, "p1");

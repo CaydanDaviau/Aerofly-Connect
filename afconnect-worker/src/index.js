@@ -41,7 +41,7 @@ const PEN_LIMIT = 10, VIO_LIMIT = 3, PEN_TIMEOUT_MS = 5 * 60_000, VIO_TIMEOUT_MS
 const DEM_STAT = { 1: "lv_twr", 2: "lv_app", 3: "app_s" };   // stat that is lost (grade drops one level) when an ATC causes a mid-air collision
 // Controller grades: everyone starts at Ground (DEL/GND); Network members have every role. Stats never go down, so grades never drop.
 const ROLE_GRADE = { GND: 0, TWR: 1, APP: 2, CTR: 3, ALL: 0 };
-const GRADE_NAMES = ["Ground", "Tower", "Approach", "Center"];
+const GRADE_NAMES = ["Trainee", "Junior", "Senior", "Chief"];   // controller grades (progress only; roles are not locked while GATE.on is false)
 // Tower and Approach unlock by reaching training level 10 (lv_twr / lv_app, one session without strikes-out or collision); Center keeps the Approach-time requirement
 const TRAIN_LV = 10;
 const GRADE_REQ = [null, { lv_twr: TRAIN_LV }, { lv_app: TRAIN_LV }, { app_s: 30 * 3600 }];
@@ -145,7 +145,7 @@ function computeTA(a, b) {
 // ---- Auto-ATC (basic clearances for pilots when no human controller covers the airport) ----
 // Newest released app versions: bump when a new APK / PC build is published; clients older than this show an update notice.
 const FLIGHT_MIN_AIR_S = 180;   // airborne at least 3 min, then touchdown (no crash) = flight completed
-const LATEST = { android: "1.3.2", pc: "2.3.0" };
+const LATEST = { android: "1.3.3", pc: "2.3.0" };
 const REQ_TYPES = ["clearance", "pushback", "taxi", "takeoff", "land", "climb", "descent", "mayday", "mayday_cancel"];
 const MAYDAY_MS = 30 * 60_000, MAYDAY_NEAR_MI = 30;
 const REQ_LOCK_MS = { takeoff: 90_000, land: 120_000 };
