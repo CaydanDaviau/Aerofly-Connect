@@ -46,14 +46,14 @@ t("altitude = 3 penalty points", pp.pen === 4 && pp.vio === 0);
 t("runway = 1 violation + 5 min timeout", pp.vio === 1 && pp.pen === 4 && hub.locks.get("p1") && Math.abs(hub.locks.get("p1").until - Date.now() - 300_000) < 3000);
 hub.locks.delete("p1");
 for (let i = 0; i < 6; i++) { ({ c, st } = mk()); hub.violate("p1", c, st, "taxi", "SBBR", "", Date.now(), () => {}); }
-let lk = hub.locks.get("p1"); t("10 penalties = 30 min timeout", lk && lk.reason === "penalties" && Math.abs(lk.until - Date.now() - 1_800_000) < 3000 && pp.pen === 0);
-r = await call("PUT", "/api/position", { latitude: 1, longitude: 2 }, "p1"); t("position refused with 423", r.s === 423 && r.j.reason === "penalties" && r.j.remaining_s > 1700);
+let lk = hub.locks.get("p1"); t("10 penalties = 5 min timeout", lk && lk.reason === "penalties" && Math.abs(lk.until - Date.now() - 300_000) < 3000 && pp.pen === 0);
+r = await call("PUT", "/api/position", { latitude: 1, longitude: 2 }, "p1"); t("position refused with 423", r.s === 423 && r.j.reason === "penalties" && r.j.remaining_s > 250);
 r = await call("PUT", "/api/flightplan", { callsign: "TST" }, "p1"); t("flight plan refused too", r.s === 423);
 hub.locks.delete("p1");
 ({ c, st } = mk()); hub.violate("p1", c, st, "landing", "SBBR", "27", Date.now(), () => {});
-t("landing = violation 2 + 1 h timeout", pp.vio === 2 && Math.abs(hub.locks.get("p1").until - Date.now() - 3_600_000) < 3000);hub.locks.delete("p1");
+t("landing = violation 2 + 5 min timeout", pp.vio === 2 && Math.abs(hub.locks.get("p1").until - Date.now() - 300_000) < 3000);hub.locks.delete("p1");
 ({ c, st } = mk()); hub.violate("p1", c, st, "runway", "SBBR", "27", Date.now(), () => {});
-lk = hub.locks.get("p1"); t("3 violations = 6 h timeout", lk && lk.reason === "violations" && Math.abs(lk.until - Date.now() - 21_600_000) < 3000 && pp.vio === 0);
+lk = hub.locks.get("p1"); t("3 violations = 15 min timeout", lk && lk.reason === "violations" && Math.abs(lk.until - Date.now() - 900_000) < 3000 && pp.vio === 0);
 hub.locks.delete("p1"); pp.pen = 4; pp.vio = 2; pp.pday = "2000-01-01"; pp = hub.profGet("p1");
 t("counters reset daily", pp.pen === 0 && pp.vio === 0);
 // demotion when an ATC causes a mid-air
@@ -65,7 +65,7 @@ await call("PUT", "/api/position", { latitude: 1, longitude: 2, landing_fpm: -20
 t("crash = 5 min first time", Math.abs(hub.locks.get("p2").until - Date.now() - 300_000) < 3000);
 hub.locks.delete("p2"); hub.crashes.clear();
 await call("PUT", "/api/position", { latitude: 1, longitude: 2 }, "p2"); await call("PUT", "/api/position", { latitude: 1, longitude: 2, landing_fpm: -2000 }, "p2");
-t("second crash same day = 1 h", Math.abs(hub.locks.get("p2").until - Date.now() - 3_600_000) < 3000);
+t("second crash same day = 5 min", Math.abs(hub.locks.get("p2").until - Date.now() - 300_000) < 3000);
 // timeout follows the account on another device
 hub.locks.set("a:pedro", { until: Date.now() + 100_000, reason: "crash" }); hub.toks.set("afa_x", { acct: "pedro", at: Date.now() });
 r = await call("PUT", "/api/position", { latitude: 1, longitude: 2 }, "afa_x"); t("lock is per account (token)", r.s === 423);
