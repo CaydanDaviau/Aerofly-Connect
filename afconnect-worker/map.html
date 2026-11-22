@@ -25,7 +25,7 @@ body.pip #bar,body.pip #info,body.pip .maplibregl-ctrl-attrib{display:none!impor
 (function(){
 var P=new URLSearchParams(location.search), KEY=P.get('key')||'', BASE=location.origin, GROUP=(function(){var g=P.get('group');if(g!==null)return g;try{return localStorage.getItem('afc_group')||''}catch(e){return ''}})();
 function hdrs(){var h={'X-API-Key':KEY||'viewer'};if(GROUP)h['X-Group']=GROUP;return h}
-var STYLES=[['Liberty','https://tiles.openfreemap.org/styles/liberty'],['Positron','https://tiles.openfreemap.org/styles/positron'],['Bright','https://tiles.openfreemap.org/styles/bright']];
+var STYLES=[['Liberty','https://tiles.openfreemap.org/styles/liberty'],['Satellite',{version:8,glyphs:'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf',sources:{sat:{type:'raster',tileSize:256,maxzoom:19,attribution:'Imagery © Esri, Maxar, Earthstar Geographics',tiles:['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}']},omt:{type:'vector',url:'https://tiles.openfreemap.org/planet'}},layers:[{id:'sat',type:'raster',source:'sat'}]}],['Bright','https://tiles.openfreemap.org/styles/bright']];
 var si=0; try{si=Math.min(STYLES.length-1,Math.max(0,parseInt(localStorage.getItem('rv_style')||'0',10)||0))}catch(e){}
 var own=null, follow=true, hdgUp=false, trails={}, ttimes={}, lastTraffic=[], lastCrashes=[], towers=[], ready=false;
 var TRACE_MS=30*60*1000, GAP_MS=60000, TK='afc_trails_v1';
