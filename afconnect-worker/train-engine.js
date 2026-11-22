@@ -323,7 +323,7 @@ function createSim(o) {
     ev("cmd", r.say, a); return r;
   };
   // current assigned values for the UI
-  S.report = function () { return { role: role, apt: ap.icao, score: Math.round(S.score), handled: S.handled, strikes: S.strikes, dur: Math.round(S.t), over: !!S.over, level: S.level, lands: S.lands, deps: S.deps, ops: role === "twr" ? S.lands + S.deps : S.lands, goArounds: S.goArounds }; };
+  S.report = function () { return { role: role, apt: ap.icao, score: Math.round(S.score), handled: S.handled, strikes: S.strikes, dur: Math.round(S.t), over: !!S.over, reason: S.over ? S.over.reason : "", level: S.level, lands: S.lands, deps: S.deps, ops: role === "twr" ? S.lands + S.deps : S.lands, goArounds: S.goArounds }; };
   S.drain = function () { var e = S.events; S.events = []; return e; };
   return S;
 }

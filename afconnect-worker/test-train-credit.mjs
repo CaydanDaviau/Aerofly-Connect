@@ -35,7 +35,12 @@ p = reset(); p.tr.atc_day = 0; p.tr.ops_day = 0;
 r = await call("PUT", "/api/training/result", rep({ score: -4, ops: 6 })); t("negative score: no ops credit", !r.j.credited.ops && r.j.credited.atc_s > 0);
 // profile + grade effect
 p = reset(); const pq = await call("GET", "/api/profile"); t("profile shows training stats", pq.j.training.sessions >= 5 && pq.j.training.credited.atc_s > 0 && pq.j.training.best_twr === 80);
-const k2 = "k2"; const p2 = hub.profGet(k2); p2.atc_s = 3 * 3600 - 100; p2.gw = 50;
-t("before: Ground grade", hub.gradeInfo(p2).atc_grade === 0);
-r = await call("PUT", "/api/training/result", rep({ dur: 600 }), k2); t("training time pushes the account to Tower grade", r.j.atc_grade === 1);
+const big = o => rep({ handled: 54, dur: 1200, ops: 20, ...o });
+let q2 = hub.profGet("k2"); t("before: Ground grade", hub.gradeInfo(q2).atc_grade === 0);
+r = await call("PUT", "/api/training/result", big({ reason: "collision" }), "k2"); t("level 10 but ended by collision: no level", r.j.level === 10 && r.j.level_best === 0 && r.j.atc_grade === 0);
+r = await call("PUT", "/api/training/result", big({ strikes: 6, reason: "strikes" }), "k3"); t("ended by 6 strikes: no level", r.j.level_best === 0 && r.j.atc_grade === 0);
+r = await call("PUT", "/api/training/result", big({ handled: 48 }), "k4"); t("level 9: stored, no grade yet", r.j.level === 9 && r.j.level_best === 9 && r.j.atc_grade === 0);
+r = await call("PUT", "/api/training/result", big({ role: "app" }), "k4b"); t("APP level 10 alone does not give Tower", r.j.level_best === 10 && r.j.atc_grade === 0);
+r = await call("PUT", "/api/training/result", big(), "k5"); t("TWR level 10 in one session: Tower grade", r.j.level_best === 10 && r.j.atc_grade === 1);
+t("level cannot be faked by the page", (await call("PUT", "/api/training/result", big({ handled: 12, ops: 5, level: 10 }), "k6")).j.level === 3);
 console.log(fails ? fails + " FAIL" : "0 FAIL"); process.exit(fails ? 1 : 0);

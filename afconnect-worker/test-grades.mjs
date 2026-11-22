@@ -9,19 +9,20 @@ TEST.skipGrades = false; TEST.warnLimit = 0;
 const claim = (pos, key = "k1", hdr = {}) => call("PUT", "/api/atc/tower", { name: "SBBR_" + pos, holder: "h-" + key, latitude: -15.87, longitude: -47.92 }, key, hdr);
 let r = await claim("GND"); t("everyone starts with GND", r.s === 200);
 r = await claim("GND"); t("GND allowed (cooldown aside)", r.s === 200 || (r.s === 409 && r.j.error === "role_cooldown"));
-r = await claim("TWR"); t("TWR needs grade", r.s === 409 && r.j.error === "grade_required" && r.j.need === "Tower" && r.j.next_req.some(x => x.k === "gw" && x.need === 50));
+r = await claim("TWR"); t("TWR needs grade", r.s === 409 && r.j.error === "grade_required" && r.j.need === "Tower" && r.j.next_req.some(x => x.k === "lv_twr" && x.need === 10));
 r = await claim("TWR", "k1", { "X-Member": "1" }); t("network member has every role", r.s === 200 || (r.s === 409 && r.j.error === "role_cooldown"));
-const pf = hub.profGet("k1"); pf.atc_s = 3 * 3600; pf.gw = 49;
-r = await claim("TWR"); t("3 h but 49 ground work actions: still blocked", r.s === 409 && r.j.error === "grade_required");
+const pf = hub.profGet("k1"); pf.lv_twr = 9;
+r = await claim("TWR"); t("training level 9 on TWR: still blocked", r.s === 409 && r.j.error === "grade_required");
 for (let i = 0; i < 2; i++) hub.gwCredit("k1", "AC" + i, Date.now());
 hub.gwCredit("k1", "AC0", Date.now());   // same aircraft inside 10 min: not counted again
-t("ground work: once per aircraft per 10 min", hub.profGet("k1").gw === 51);
+t("ground work: once per aircraft per 10 min", hub.profGet("k1").gw === 2);
+pf.lv_twr = 10;
 t("grade is Tower", hub.gradeInfo(hub.profGet("k1")).atc_grade === 1);
 store.clear(); hub.lastClaim.clear();
-r = await claim("TWR"); t("TWR allowed with 3 h + 50 actions", r.s === 200);
-r = await claim("APP"); t("APP blocked (needs 10 h + 50 own ops)", r.s === 409 && r.j.error === "grade_required" && r.j.next_grade === "Approach");
-hub.lastClaim.clear(); pf.atc_s = 10 * 3600; pf.ops = 50;
-r = await claim("APP"); t("APP allowed with 10 h + 50 ops", r.s === 200);
+r = await claim("TWR"); t("TWR allowed with training level 10", r.s === 200);
+r = await claim("APP"); t("APP blocked (needs APP training level 10)", r.s === 409 && r.j.error === "grade_required" && r.j.next_grade === "Approach" && r.j.next_req[0].k === "lv_app");
+hub.lastClaim.clear(); pf.lv_app = 10;
+r = await claim("APP"); t("APP allowed with APP training level 10", r.s === 200);
 hub.lastClaim.clear(); r = await claim("CTR"); t("CTR blocked without 30 h APP", r.s === 409 && r.j.next_grade === "Center" && r.j.next_req[0].k === "app_s");
 pf.app_s = 30 * 3600; hub.lastClaim.clear();
 r = await claim("CTR"); t("CTR allowed with 30 h APP", r.s === 200);
@@ -57,8 +58,8 @@ lk = hub.locks.get("p1"); t("3 violations = 15 min timeout", lk && lk.reason ===
 hub.locks.delete("p1"); pp.pen = 4; pp.vio = 2; pp.pday = "2000-01-01"; pp = hub.profGet("p1");
 t("counters reset daily", pp.pen === 0 && pp.vio === 0);
 // demotion when an ATC causes a mid-air
-const dp = hub.profGet("ctlx"); dp.gw = 60; dp.atc_s = 4 * 3600; t("controller is Tower", hub.gradeInfo(dp).atc_grade === 1);
-hub.demote("ctlx", Date.now()); t("demotion: back to Ground, stat lost", hub.gradeInfo(hub.profGet("ctlx")).atc_grade === 0 && hub.profGet("ctlx").gw === 0);
+const dp = hub.profGet("ctlx"); dp.lv_twr = 10; t("controller is Tower", hub.gradeInfo(dp).atc_grade === 1);
+hub.demote("ctlx", Date.now()); t("demotion: back to Ground, stat lost", hub.gradeInfo(hub.profGet("ctlx")).atc_grade === 0 && hub.profGet("ctlx").lv_twr === 0);
 // crash counts as a strike and respects the repeat rule
 await call("PUT", "/api/position", { latitude: 1, longitude: 2 }, "p2"); hub.locks.clear();
 await call("PUT", "/api/position", { latitude: 1, longitude: 2, landing_fpm: -2000 }, "p2");

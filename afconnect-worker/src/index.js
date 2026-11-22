@@ -38,11 +38,14 @@ const TIMEOUT_REPEAT_MS = 5 * 60_000;    // repeated the same (UTC) day (same as
 const VIOL_PTS = { taxi: 1, alt: 3 };
 const WARN_DEFAULT = 2;   // warnings per UTC day before penalties/violations count (public section)
 const PEN_LIMIT = 10, VIO_LIMIT = 3, PEN_TIMEOUT_MS = 5 * 60_000, VIO_TIMEOUT_MS = 15 * 60_000;
-const DEM_STAT = { 1: "gw", 2: "ops", 3: "app_s" };   // stat that is lost (grade drops one level) when an ATC causes a mid-air collision
+const DEM_STAT = { 1: "lv_twr", 2: "lv_app", 3: "app_s" };   // stat that is lost (grade drops one level) when an ATC causes a mid-air collision
 // Controller grades: everyone starts at Ground (DEL/GND); Network members have every role. Stats never go down, so grades never drop.
 const ROLE_GRADE = { GND: 0, TWR: 1, APP: 2, CTR: 3, ALL: 0 };
 const GRADE_NAMES = ["Ground", "Tower", "Approach", "Center"];
-const GRADE_REQ = [null, { atc_s: 3 * 3600, gw: 50 }, { atc_s: 10 * 3600, ops: 50 }, { app_s: 30 * 3600 }];
+// Tower and Approach unlock by reaching training level 10 (lv_twr / lv_app, one session without strikes-out or collision); Center keeps the Approach-time requirement
+const TRAIN_LV = 10;
+const GRADE_REQ = [null, { lv_twr: TRAIN_LV }, { lv_app: TRAIN_LV }, { app_s: 30 * 3600 }];
+const OLD_GRADE_REQ = [null, { atc_s: 3 * 3600, gw: 50 }, { atc_s: 10 * 3600, ops: 50 }];   // only to grandfather controllers who already earned a grade
 const PILOT_GRADES = [["Captain", 100 * 3600, 100], ["Commercial", 25 * 3600, 25], ["Private", 5 * 3600, 5], ["Student", 0, 0]];
 export const TEST = { skipGrades: false, warnLimit: null };   // tests turn the role gate off
 function atcGrade(p) { if (p && Number.isInteger(p.gov)) return p.gov; let g = 0; while (g < 3) { const r = GRADE_REQ[g + 1]; if (!p || Object.keys(r).some(k => (p[k] || 0) < r[k])) break; g++; } return g; }
@@ -454,7 +457,7 @@ export class Hub {
   // Profile: nickname + flight time (airborne) + ATC time (holding a role), per app key. Saved at most once a minute.
   pkey(key) { const t = this.toks.get(key); return t ? "a:" + t.acct : key; }
   profPeek(key) { return this.prof.get(this.pkey(key)); }
-  profGet(key) { key = this.pkey(key); let p = this.prof.get(key); if (!p) { p = { nick: "", flight_s: 0, atc_s: 0, flights: 0, saved: 0 }; this.prof.set(key, p); } if (!p.flights) p.flights = 0; for (const f of ["landings", "violations", "vpts", "timeouts", "gw", "ops", "app_s", "cviol", "pen", "vio", "dem"]) if (!p[f]) p[f] = 0; const day = new Date().toISOString().slice(0, 10); if (p.pday !== day) { p.pday = day; p.pen = 0; p.vio = 0; p.warn = 0; } return p; }
+  profGet(key) { key = this.pkey(key); let p = this.prof.get(key); if (!p) { p = { nick: "", flight_s: 0, atc_s: 0, flights: 0, saved: 0 }; this.prof.set(key, p); } if (!p.flights) p.flights = 0; for (const f of ["landings", "violations", "vpts", "timeouts", "gw", "ops", "app_s", "cviol", "pen", "vio", "dem", "lv_twr", "lv_app"]) if (!p[f]) p[f] = 0; if (!p.lvmig) { p.lvmig = 1; let og = 0; while (og < 2 && Object.keys(OLD_GRADE_REQ[og + 1]).every(k => (p[k] || 0) >= OLD_GRADE_REQ[og + 1][k])) og++; if (og >= 1) p.lv_twr = Math.max(p.lv_twr, TRAIN_LV); if (og >= 2) p.lv_app = Math.max(p.lv_app, TRAIN_LV); } const day = new Date().toISOString().slice(0, 10); if (p.pday !== day) { p.pday = day; p.pen = 0; p.vio = 0; p.warn = 0; } return p; }
   profAdd(key, field, secs, now) {
     if (!key || !(secs > 0)) return;
     const p = this.profGet(key); p[field] += secs;
@@ -503,6 +506,9 @@ export class Hub {
     if (now - tr.last < 60_000) return json({ error: "too_fast" }, 429);
     tr.last = now; if (sid) { tr.sids.push(sid); if (tr.sids.length > 20) tr.sids.shift(); }
     tr.sessions++; tr.handled += handled; if (score > (tr["best_" + role] || 0)) tr["best_" + role] = score;
+    // training level of this session (1 + handled / 6, computed here, not trusted from the page); counts unless it ended by 6 strikes or a collision
+    const lvl = 1 + Math.floor(handled / 6), why = String(d.reason || "");
+    let lvUp = false; if (dur >= TRAIN.MIN_S && strikes < 6 && why !== "collision" && why !== "strikes" && score > 0 && lvl > (pf["lv_" + role] || 0)) { pf["lv_" + role] = Math.min(lvl, TRAIN_LV); lvUp = true; }
     const got = { atc_s: 0, app_s: 0, ops: 0 }; let reason = "";
     if (dur < TRAIN.MIN_S) reason = "too_short"; else if (handled < TRAIN.MIN_HANDLED) reason = "too_few_aircraft";
     else {
@@ -514,7 +520,7 @@ export class Hub {
       if (!got.atc_s && !got.ops && !got.app_s) reason = "cap_reached";
     }
     pf.saved = now; this.ctx.storage.put("prof:" + this.pkey(key), pf);
-    return json({ success: true, credited: got, reason, ...left(), ...this.gradeInfo(pf) });
+    return json({ success: true, credited: got, reason, level: lvl, level_best: pf["lv_" + role] || 0, level_need: TRAIN_LV, ...left(), ...this.gradeInfo(pf) });
   }
   // Grades + progress for /api/profile and the role gate
   gradeInfo(p) {
