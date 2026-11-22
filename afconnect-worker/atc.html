@@ -648,7 +648,7 @@ function dirSend(id){var v=String(($('dirin')||{}).value||dirVal[id]||'').trim()
 function ilsSend(id){var v=($('ilssel')||{}).value||ilsVal[id];if(!v){toast(L('No runway data for this airport','Sem dados de pista deste aeroporto'));return}postMsg(id,L('Cleared ILS approach runway ','Autorizado aproximação ILS pista ')+v)}
 /* "Line up and wait" is an instruction (message), not a clearance: it does not clear the takeoff */
 function lineUp(id){var a=ac.filter(function(x){return x.icao_address===id})[0]||{},r=String(a.departure_runway||'').trim().toUpperCase();
-  postMsg(id,r?L('Runway '+r+', line up and wait','Pista '+r+', alinhe e aguarde'):L('Line up and wait','Alinhe e aguarde'),null)}
+  postMsg(id,r?L('Line up runway '+r,'Alinhe pista '+r):L('Line up','Alinhe'),null)}
 function clrCtl(a){var air=a.phase==='air',any=!a.phase,h='<div class="ctl clrs">';
   if((!air||any)&&can('taxi'))h+=clrBtn(a,'taxi','Taxi OK','Táxi OK');
   if((!air||any)&&can('rwy'))h+='<button data-act="lineup">'+L('Line up & wait','Alinhar e aguardar')+'</button>'+clrBtn(a,'takeoff','T/O OK','Dec. OK');

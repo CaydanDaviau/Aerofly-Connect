@@ -71,12 +71,12 @@ const R = async (k, b) => { hub.clients.get(k).lastReq = 0; return call("PUT", "
 let r = await R("t1", { type: "pushback" });
 T("pushback approved", r.messages[0].text === "Pushback approved, expect runway 27");
 r = await R("t1", { type: "taxi" });
-T("taxi route with names", r.messages[0].text === "Taxi to runway 27 via Alpha, Bravo, hold short runway 27");
+T("taxi route with names", r.messages[0].text === "Taxi to holding point runway 27 via Alpha, Bravo");
 // second aircraft starts on the same taxiway: occupied/reserved edges -> give way note
 r = await R("t2", { type: "taxi" });
-T("second aircraft told to give way", /^Taxi to runway 27 via Alpha, Bravo, hold short runway 27, give way to TX1$/.test(r.messages[0].text));
+T("second aircraft told to give way", /^Taxi to holding point runway 27 via Alpha, Bravo, give way to TX1$/.test(r.messages[0].text));
 r = await R("t1", { type: "taxi", lang: "pt" });
-T("pt route", /^Táxi para a pista 27 via Alfa|^Táxi para a pista 27 via Alpha/.test(r.messages[0].text));
+T("pt route", /^Táxi para o ponto de espera da pista 27 via Alfa|^Táxi para o ponto de espera da pista 27 via Alpha/.test(r.messages[0].text));
 // arrival: touchdown, then slow on the runway near R1 -> route to the gate comes as a normal message
 await pos("t1", { phase: "air", altitude_ft: 3600, ground_speed: 130, arr_nm: 3 });
 hub.clients.get("t1").st.gr.land = Date.now() + 60000;
@@ -142,7 +142,7 @@ globalThis.fetch = realFetch;
   hub.clients.get("t2").taxi = null; hub.msgs.clear();
   await gc("/api/atc/clearance", { icao_address: i2, type: "taxi", on: true, msg: true });
   const t2 = texts(i2).find(x => /^Taxi/.test(x));
-  T("taxi clearance auto msg = route to the runway", /^Taxi to runway 27 via .+, hold short runway 27$/.test(t2 || ""));
+  T("taxi clearance auto msg = route to the runway", /^Taxi to holding point runway 27 via .+$/.test(t2 || ""));
   // drawn route
   c1.lang = "en";
   const dr = (b) => gc("/api/atc/taxiroute", { icao_address: i1, lat: N.S2.lat, lon: N.S2.lon, ...b });
