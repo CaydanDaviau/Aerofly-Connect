@@ -421,17 +421,18 @@ public class PilotService extends Service {
 
     /** Hard landing: remember the timeout, tell the pilot, and end the flight (the loop stops right after). */
     private void onCrashed(String body) {
-        long rem = 300; int fpm = 0; boolean midair = false;
+        long rem = 300; int fpm = 0; boolean midair = false; String note = "";
         try {
             JSONObject j = new JSONObject(body);
-            rem = j.optLong("remaining_s", 300); fpm = j.optInt("landing_fpm", 0); midair = "midair".equals(j.optString("reason"));
+            rem = j.optLong("remaining_s", 300); fpm = j.optInt("landing_fpm", 0); midair = "midair".equals(j.optString("reason")); note = j.optString("note", "");
         } catch (Exception ignored) { }
         Api.setCrashUntil(this, System.currentTimeMillis() + rem * 1000);
+        Api.setCrashNote(this, note);
         stopFlag = true;
         try {
             NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
             String text = (midair ? Api.t(this, "Mid-air collision", "Colisão no ar") : fpm != 0 ? Api.t(this, "Hard landing", "Pouso forte") + " (" + fpm + " ft/min)" : Api.t(this, "Timeout", "Castigo")) + ". "
-                    + Api.t(this, "You can fly again in ", "Você poderá voar de novo em ") + Api.mmss(rem * 1000);
+                    + (note.isEmpty() ? "" : note + ". ") + Api.t(this, "You can fly again in ", "Você poderá voar de novo em ") + Api.mmss(rem * 1000);
             nm.notify(900, new Notification.Builder(this, "atc_urgent")
                     .setContentTitle(Api.t(this, "CRASH", "ACIDENTE"))
                     .setContentText(text)

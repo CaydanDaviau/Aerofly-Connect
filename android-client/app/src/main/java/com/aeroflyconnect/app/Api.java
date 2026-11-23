@@ -100,6 +100,8 @@ final class Api {
 
     /** Floating ATC overlay (requests + Wilco/Unable): on by default, needs the "display over other apps" permission. */
     /** Crash timeout (hard landing): epoch ms until the pilot may fly again; 0 = none. */
+    static String crashNote(Context c) { return prefs(c).getString("crash_note", ""); }
+    static void setCrashNote(Context c, String n) { prefs(c).edit().putString("crash_note", n == null ? "" : n).apply(); }
     static long crashUntil(Context c) { return prefs(c).getLong("crash_until", 0); }
     static void setCrashUntil(Context c, long t) { prefs(c).edit().putLong("crash_until", t).apply(); }
     static long crashLeftMs(Context c) { return Math.max(0, crashUntil(c) - System.currentTimeMillis()); }

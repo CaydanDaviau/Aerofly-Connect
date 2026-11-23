@@ -1,0 +1,17 @@
+import { Hub, TEST, GATE } from "./src/index.js";
+const store = new Map();
+const ctx = { storage: { get: async k => store.get(k), put: async (k, v) => store.set(k, v), delete: async k => store.delete(k), list: async ({ prefix }) => new Map([...store].filter(([k]) => k.startsWith(prefix || ""))) }, blockConcurrencyWhile: async f => f(), getWebSockets: () => [], acceptWebSocket() {} };
+const hub = new Hub(ctx); GATE.on = false; TEST.warnLimit = 0;
+let fails = 0; const t = (n, c) => { console.log(n + ": " + (c ? "PASS" : "FAIL")); if (!c) fails++; };
+const call = async (method, path, body, key = "c1", hdr = {}) => { const r = await hub.fetch(new Request("https://x" + path, { method, body: body && JSON.stringify(body), headers: { "X-API-Key": key, "X-Member": "0", ...hdr } })); let j = {}; try { j = await r.json(); } catch {} return { s: r.status, j }; };
+await call("PUT", "/api/atc/tower", { name: "SBBR_TWR", holder: "h1", latitude: -15.87, longitude: -47.92, ctl: "Ana" }, "c1");
+await call("PUT", "/api/flightplan", { callsign: "PIL1" }, "p1");
+await call("PUT", "/api/position", { latitude: -15.87, longitude: -47.92, altitude_ft: 3000, heading_true: 90, ground_speed: 200, vertical_speed_ft_min: 0, icao_address: "ABC123" }, "p1");
+let r = await call("PUT", "/api/atc/timeout", { icao_address: "ABC123", holder: "h1", minutes: 15, reason: "ignored clearance" });
+t("no violation: refused", r.s === 409 && r.j.error === "no_violation");
+const c = [...hub.clients.values()][0]; c.lastViol = { type: "taxi", at: Date.now() };
+r = await call("PUT", "/api/atc/timeout", { icao_address: "ABC123", holder: "h1", minutes: 15, reason: "ignored clearance" });
+t("after violation: ok", r.s === 200 && r.j.minutes === 15);
+r = await call("PUT", "/api/position", { latitude: -15.87, longitude: -47.92, altitude_ft: 3000, heading_true: 90, ground_speed: 200, icao_address: "ABC123" }, "p1");
+t("pilot gets 423 with who + reason", r.s === 423 && /ignored clearance/.test(r.j.note) && /SBBR TWR/.test(r.j.note) && r.j.remaining_s > 800);
+console.log(r.j.note); process.exit(fails ? 1 : 0);

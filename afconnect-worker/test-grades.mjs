@@ -51,8 +51,8 @@ hub.repAdd("p1", 100, nowT); t("100 more points: 3 stars (535)", hub.repOf("p1")
 hub.repAdd("p1", 5000, nowT); t("capped at 1000 (5 stars)", hub.repOf("p1") === 1000 && hub.starsFor("p1") === 5);
 hub.repAdd("p1", -5000, nowT); t("never below 0", hub.repOf("p1") === 0 && hub.starsFor("p1") === 0);
 hub.repAdd("p1", 500, nowT);
-// crash: -100, only a 10 s removal, no strikes
-const lk = hub.lockFor("p1", "crash", nowT, {}); t("crash: -100 and 10 s removal only", hub.repOf("p1") === 400 && lk.until - nowT === 10_000 && !(hub.profGet("p1").timeouts > 0));
+// crash: -100, 30 min timeout, no strikes
+const lk = hub.lockFor("p1", "crash", nowT, {}); t("crash: -100 and 30 min timeout", hub.repOf("p1") === 400 && lk.until - nowT === 30 * 60_000 && !(hub.profGet("p1").timeouts > 0));
 // positive actions
 await call("PUT", "/api/position", { latitude: 1, longitude: 2 }, "p2");
 hub.repAdd("p2", 15, nowT); t("flight completed +15", hub.repOf("p2") === 515);

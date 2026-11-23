@@ -34,7 +34,7 @@
       if (lv && newer(lv, cfg.version)) { updBar.style.display = ""; updBar.textContent = t("Update available: v" + lv + " (click to download)", "Atualização disponível: v" + lv + " (clique para baixar)"); } else updBar.style.display = "none";
       const left = (cfg.crashUntil || 0) - Date.now();
       banner.style.display = left > 0 ? "" : "none";
-      if (left > 0) banner.textContent = t("Timeout - you can fly again in ", "Castigo por queda - você pode voar de novo em ") + mmss(left);
+      if (left > 0) banner.textContent = (cfg.crashNote ? cfg.crashNote + " - " : "") + t("Timeout - you can fly again in ", "Castigo por queda - você pode voar de novo em ") + mmss(left);
     };
     upd(); healthT = setInterval(upd, 15000); tick = setInterval(() => { const left = (cfg.crashUntil || 0) - Date.now(); banner.style.display = left > 0 ? "" : "none"; if (left > 0) banner.textContent = t("Timeout - you can fly again in ", "Castigo por queda - você pode voar de novo em ") + mmss(left); }, 1000);
     root.append(
@@ -195,6 +195,6 @@
   }
 
   function render() { clear(); bg(); if (screen === "pilot") pilotScreen(); else if (screen === "settings") settingsScreen(); else if (screen === "profile") profileScreen(); else startScreen(); }
-  window.afc.onState(s => { st = s; if (s.crash) cfg.crashUntil = s.crash.until; paint(); });
+  window.afc.onState(s => { st = s; if (s.crash) { cfg.crashUntil = s.crash.until; } paint(); });
   render();
 })();

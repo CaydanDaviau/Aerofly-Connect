@@ -98,7 +98,7 @@ class Flight {
       if (r.code === 423) {
         let j = {}; try { j = JSON.parse(r.body); } catch (e) {}
         const left = Math.max(0, Number(j.remaining_s) || 300) * 1000;
-        this.store.set({ crashUntil: Date.now() + left });
+        this.store.set({ crashUntil: Date.now() + left, crashNote: j.note || "" });
         this.s.crash = { until: Date.now() + left, fpm: j.landing_fpm };
         this.s.server = "crashed"; await this.stop(); return "crash";
       }

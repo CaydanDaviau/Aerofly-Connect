@@ -1075,7 +1075,7 @@ public class MainActivity extends Activity {
         } else {
             long crashLeft = Api.crashLeftMs(this);
             if (crashLeft > 0) {   // hard-landing timeout
-                Toast.makeText(this, Api.t(this, "Timeout - you can fly again in ", "Tempo de espera - você poderá voar em ") + Api.mmss(crashLeft), Toast.LENGTH_LONG).show();
+                Toast.makeText(this, Api.t(this, "Timeout - you can fly again in ", "Tempo de espera - você poderá voar em ") + Api.mmss(crashLeft) + (Api.crashNote(this).isEmpty() ? "" : "\n" + Api.crashNote(this)), Toast.LENGTH_LONG).show();
                 return;
             }
             if (Build.VERSION.SDK_INT >= 33

@@ -60,6 +60,7 @@ function pilotGrade(p) { const f = p ? p.flight_s || 0 : 0, n = p ? p.flights ||
 // Training mode (/train): the session runs in the browser; one result report per session earns CAPPED real credit.
 const TRAIN = { MIN_S: 120, MAX_S: 7200, FACTOR: 0.5, DAY_ATC_S: 3600, CAP: { atc_s: 5 * 3600, app_s: 15 * 3600, ops: 25 }, DAY_OPS: 15, MIN_HANDLED: 3, MIN_OPS_HANDLED: 5, PER_HANDLED_S: 20 };
 const CRASH_SHOW_MS = 10 * 60_000;     // the X stays on the maps this long
+const CRASH_LOCK_MS = 30 * 60_000, TIMEOUT_VIOL_MS = 5 * 60_000;   // crash/mid-air = 30 min out; a controller can time a pilot out up to 5 min after a no-clearance action
 const HARD_LANDING_FPM = -1500;        // landing_fpm at or below this = crash
 const TA_COOLDOWN_MS = 30_000;         // per viewer + other aircraft
 const RA_REPEAT_MS = 8_000;           // an RA is repeated this often while it lasts
@@ -707,7 +708,7 @@ export class Hub {
   }
   lockFor(key, reason, now, extra) {
     this.repAdd(key, -(reason === "midair" ? REP.midair : REP.crash), now);   // no timeouts any more: the plane is just removed for a moment
-    const lk = { until: now + 10_000, reason, at: now, ...(extra || {}) }, pk = this.pkey(key);
+    const lk = { until: now + CRASH_LOCK_MS, reason, at: now, ...(extra || {}) }, pk = this.pkey(key);
     this.locks.set(pk, lk); this.ctx.storage.put("lock:" + pk, lk); return lk;
   }
   crashBlock(key) {
@@ -904,7 +905,7 @@ export class Hub {
       if (this.violations.length > MAX_VIOL) this.violations.shift();
       if (firstOne) this.repAdd(key, -(REP_VIOL[type] || 5), now);   // score drop only (tags and calls stay)
     }
-    c.viol = { type, at: now };
+    c.viol = { type, at: now }; c.lastViol = { type, at: now };
     if (rwy && (type === "runway" || type === "landing")) {   // the runway counts as occupied for everybody else
       const k = rwyKey(apt, rwy), l = this.rwy.get(k);
       if (!l || l.key === key) this.rwy.set(k, { key, type: "viol", until: now + 30_000 });
@@ -919,7 +920,7 @@ export class Hub {
       const d = haversineMi(lat, lon, pos.latitude, pos.longitude);
       if (d <= rad) {
         const callsign = normCallsign(c.plan.callsign ?? pos.callsign);
-        out.push({ ...pos, ...c.plan, callsign, ...towerFields(callsign), member: !!c.member, stars: this.starsFor(ck), ...(this.nickOf(ck) ? { nick: this.nickOf(ck) } : {}), has_route: !!c.route, has_taxi: !!(c.taxi && Date.now() < c.taxi.until), ...this.handFields(c), freq: c.pos.freq || "", assigned_squawk: c.assigned ? c.assigned.squawk : null, emergency: !!(c.emerg && Date.now() < c.emerg.until), no_clnc: !!(c.viol && Date.now() - c.viol.at < VIOL_SHOW_MS), clnc: c.viol && Date.now() - c.viol.at < VIOL_SHOW_MS ? c.viol.type : "", clr: this.clrOf(c, Date.now()), ...(ck === key ? { self: true } : {}), distance_miles: Math.round(d * 10) / 10 });
+        out.push({ ...pos, ...c.plan, callsign, ...towerFields(callsign), member: !!c.member, stars: this.starsFor(ck), ...(this.nickOf(ck) ? { nick: this.nickOf(ck) } : {}), has_route: !!c.route, has_taxi: !!(c.taxi && Date.now() < c.taxi.until), ...this.handFields(c), freq: c.pos.freq || "", assigned_squawk: c.assigned ? c.assigned.squawk : null, emergency: !!(c.emerg && Date.now() < c.emerg.until), no_clnc: !!(c.viol && Date.now() - c.viol.at < VIOL_SHOW_MS), can_timeout: !!(c.lastViol && Date.now() - c.lastViol.at < TIMEOUT_VIOL_MS), clnc: c.viol && Date.now() - c.viol.at < VIOL_SHOW_MS ? c.viol.type : "", clr: this.clrOf(c, Date.now()), ...(ck === key ? { self: true } : {}), distance_miles: Math.round(d * 10) / 10 });
       }
     }
     // one symbol per airport; its staffed roles are listed in `positions`
@@ -1324,21 +1325,26 @@ export class Hub {
       if (!d.preview) { target.taxi = taxi; this.gwCredit(key, icao, Date.now()); if (d.msg === true && ttext) this.addMsg(target, ttext, "msg", {}); }
       return json({ success: true, preview: !!d.preview, ...taxi });
     }
-    // Private network only: a credentialed controller times a pilot out (no penalty, violation or other mark on the account).
+    // A controller times a pilot out: network = any member pilot; public = only after the pilot acted without clearance (last 5 min).
     if ((m === "PUT" || m === "POST") && p === "/api/atc/timeout") {
-      if (request.headers.get("X-Member") !== "1") return json({ error: "network_only" }, 403);
+      const isNet = request.headers.get("X-Member") === "1";
       if (this.noCred(request)) return json({ error: "atc_credential" }, 403);
       const d = await request.json().catch(() => ({}));
-      if (!this.activeAtcHolder(String(d.holder || ""))) return json({ error: "division_required" }, 409);
+      const holder = String(d.holder || "");
+      if (!this.activeAtcHolder(holder)) return json({ error: "division_required" }, 409);
       const icao = String(d.icao_address || "").toUpperCase();
       const pe = [...this.clients.entries()].find(([, c]) => c.pos && c.pos.icao_address === icao);
-      if (!pe || !pe[1].member) return json({ error: "aircraft not found" }, 404);
+      if (!pe || !!pe[1].member !== isNet) return json({ error: "aircraft not found" }, 404);
       const [tk, target] = pe, cs = normCallsign(target.plan.callsign ?? target.pos.callsign), pk = this.pkey(tk), now = Date.now();
-      { const ob = this.airspaceBlock(String(d.holder || ""), target); if (ob) return json(ob, 409); }
+      if (!isNet && !(target.lastViol && now - target.lastViol.at < TIMEOUT_VIOL_MS)) return json({ error: "no_violation" }, 409);
+      { const ob = this.airspaceBlock(holder, target); if (ob) return json(ob, 409); }
       const mins = Math.round(Number(d.minutes) || 5);
       if (!(mins >= 1 && mins <= 120)) return json({ error: "bad_minutes" }, 400);
-      const note = String(d.reason || "").trim().slice(0, 80) || "ATC timeout";
-      const lk = { until: now + mins * 60_000, reason: "atc", at: now, note, latitude: target.pos.latitude, longitude: target.pos.longitude };
+      const why = String(d.reason || "").trim().slice(0, 80) || "ATC timeout";
+      const rl = [...this.towers.values()].filter(t => t.holder === holder && POS_NAMES.includes(t.pos) && now - t.at <= POS_TTL_MS)[0];
+      const who = ((rl && (rl.ctl || rl.nick)) || "ATC") + (rl ? " (" + (rl.apt || "") + " " + rl.pos + ")" : "");
+      const note = ("By " + who + ": " + why).slice(0, 160);
+      const lk = { until: now + mins * 60_000, reason: "atc", at: now, note, by: who, latitude: target.pos.latitude, longitude: target.pos.longitude };
       this.locks.set(pk, lk); await this.ctx.storage.put("lock:" + pk, lk);
       this.clients.delete(tk);
       return json({ success: true, callsign: cs, minutes: mins });
