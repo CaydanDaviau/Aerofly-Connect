@@ -145,7 +145,7 @@ function computeTA(a, b) {
 // ---- Auto-ATC (basic clearances for pilots when no human controller covers the airport) ----
 // Newest released app versions: bump when a new APK / PC build is published; clients older than this show an update notice.
 const FLIGHT_MIN_AIR_S = 180;   // airborne at least 3 min, then touchdown (no crash) = flight completed
-const LATEST = { android: "1.3.3", pc: "2.3.1" };
+const LATEST = { android: "1.3.5", pc: "2.3.5" };
 const REQ_TYPES = ["clearance", "pushback", "taxi", "takeoff", "land", "climb", "descent", "mayday", "mayday_cancel"];
 const MAYDAY_MS = 30 * 60_000, MAYDAY_NEAR_MI = 30;
 const REQ_LOCK_MS = { takeoff: 90_000, land: 120_000 };
@@ -238,6 +238,10 @@ const up =v => String(v || "").trim().toUpperCase();
 // Hash of the caller's IP (never stored or sent in clear); used to keep one person from opening many airports with fresh browser ids.
 const pid = pk => pk.startsWith("a:") ? pk : "k:" + hid(pk) + hid(pk + "x");
 const ipTag = request => { const ip = request.headers.get("CF-Connecting-IP"); return ip ? "ip" + hid(ip) + hid(ip + "x") : ""; };
+// Sections: "net" (ATC Network members), "casual" (clearances are suggestions, no penalties) and "expert" (default, all rules). Separate worlds, like the network.
+const secOf = x => (x && x.sec) || (x && x.member ? "net" : "expert");
+const reqSec = request => request.headers.get("X-Sec") || (request.headers.get("X-Member") === "1" ? "net" : "expert");
+function modeFlag(request, url) { return String(request.headers.get("X-Mode") || url.searchParams.get("mode") || "").trim().toLowerCase() === "casual" ? "casual" : "expert"; }
 // Group code: Worker var GROUP_CODE; clients send it as X-Group header (or ?group=). The Hub only ever sees X-Member 1/0, never the code.
 function memberFlag(request, env, url) {
   const gc = String(env.GROUP_CODE || "").trim();
@@ -287,7 +291,7 @@ export default {
       const wk = (url.searchParams.get("key") || "").trim();
       const allowed = (env.ABFLUG_KEYS || "").split(",").map(s => s.trim()).filter(Boolean);
       if (!wk || (allowed.length && !wk.startsWith("afa_") && !allowed.includes(wk))) return json({ error: "invalid api key" }, 401);
-      const h = new Headers(request.headers); h.set("X-API-Key", wk); const mem = memberFlag(request, env, url); h.set("X-Member", mem ? "1" : "0"); h.set("X-Atc", atcFlag(request, env, url, mem)); h.set("X-Atc-Raw", atcRaw(request, url)); h.set("X-Atc-Name", atcName(request, env, url)); h.set("X-IP", ipTag(request));
+      const h = new Headers(request.headers); h.set("X-API-Key", wk); const mem = memberFlag(request, env, url); h.set("X-Member", mem ? "1" : "0"); h.set("X-Sec", mem ? "net" : modeFlag(request, url)); h.set("X-Atc", atcFlag(request, env, url, mem)); h.set("X-Atc-Raw", atcRaw(request, url)); h.set("X-Atc-Name", atcName(request, env, url)); h.set("X-IP", ipTag(request));
       return env.HUB.get(env.HUB.idFromName("global")).fetch(request, { headers: h });
     }
     if (!url.pathname.startsWith("/api/")) return json({ name: "abflug-community", ok: true });
@@ -298,7 +302,7 @@ export default {
     }
     if (env.DEBUG) console.log(request.method, url.pathname + url.search, (await request.clone().text()).slice(0, 600));
     const stub = env.HUB.get(env.HUB.idFromName("global"));
-    const hh = new Headers(request.headers); hh.delete("X-Group"); hh.delete("X-Atc"); hh.delete("X-Manager"); hh.set("X-Atc-Raw", atcRaw(request, url)); hh.set("X-Atc-Name", atcName(request, env, url)); hh.set("X-Mgr", mgrFlag(request, env, url)); const mem2 = memberFlag(request, env, url); hh.set("X-Member", mem2 ? "1" : "0"); hh.set("X-Atc", atcFlag(request, env, url, mem2)); hh.set("X-IP", ipTag(request));
+    const hh = new Headers(request.headers); hh.delete("X-Group"); hh.delete("X-Atc"); hh.delete("X-Manager"); hh.set("X-Atc-Raw", atcRaw(request, url)); hh.set("X-Atc-Name", atcName(request, env, url)); hh.set("X-Mgr", mgrFlag(request, env, url)); const mem2 = memberFlag(request, env, url); hh.set("X-Member", mem2 ? "1" : "0"); hh.set("X-Sec", mem2 ? "net" : modeFlag(request, url)); hh.delete("X-Mode"); hh.set("X-Atc", atcFlag(request, env, url, mem2)); hh.set("X-IP", ipTag(request));
     return stub.fetch(request, { headers: hh });
   },
 };
@@ -398,7 +402,7 @@ export class Hub {
     // other ground traffic: occupied nodes and reserved edges cost extra so routes avoid meeting head on
     const occ = new Set();
     for (const [k2, o] of this.clients) {
-      if (k2 === key || !o.pos || now - o.seen > 15_000 || o.pos.phase === "air" || !!o.member !== !!c.member) continue;
+      if (k2 === key || !o.pos || now - o.seen > 15_000 || o.pos.phase === "air" || secOf(o) !== secOf(c)) continue;
       if (gDist(o.pos.latitude, o.pos.longitude, p.latitude, p.longitude) > 6000) continue;
       const n = nearest(g, o.pos.latitude, o.pos.longitude, 60); if (n) occ.add(n.id);
     }
@@ -582,8 +586,8 @@ export class Hub {
   // who is tuned to a frequency right now (same group: members and public never mix)
   freqRoster(f, member) {
     const now = Date.now(), ctl = new Set(); let pilots = 0;
-    for (const o of this.clients.values()) if (o.pos && o.pos.freq === f && !!o.member === !!member && now - o.seen <= 30_000) pilots++;
-    for (const t of this.towers.values()) if (t.freq === f && t.holder && POS_NAMES.includes(t.pos) && !!t.member === !!member && now - t.at <= POS_TTL_MS) ctl.add(t.holder);
+    for (const o of this.clients.values()) if (o.pos && o.pos.freq === f && secOf(o) === member && now - o.seen <= 30_000) pilots++;
+    for (const t of this.towers.values()) if (t.freq === f && t.holder && POS_NAMES.includes(t.pos) && secOf(t) === member && now - t.at <= POS_TTL_MS) ctl.add(t.holder);
     return { pilots, ctls: ctl.size };
   }
   // taxiway path -> "A, B, cross runway 27, C"
@@ -712,7 +716,7 @@ export class Hub {
 
   // type given: only a staffed position that can answer it counts (COVER chain); no type: any position of the airport.
   humanCovers(c, apt, type) {
-    const ok = t => !!t.member === !!c.member && t.pos !== "APT" && (!type || !COVER[type] || COVER[type].includes(t.pos || "TWR"));
+    const ok = t => secOf(t) === secOf(c) && t.pos !== "APT" && (!type || !COVER[type] || COVER[type].includes(t.pos || "TWR"));
     // In flight (tracking, climb, descent) a role only covers aircraft inside its own airspace (CTR: anywhere); farther out the auto-ATC answers.
     const air = c.pos.phase === "air" && (!type || type === "climb" || type === "descent");
     const inAsp = t => {
@@ -896,7 +900,7 @@ export class Hub {
 
   violate(key, c, st, type, apt, rwy, now, notify) {
     if (c.emerg && now < c.emerg.until) return;
-    const net = !!c.member;   // ATC Network: tags and calls stay, but no counters, penalties or timeouts   // declared emergency: no unauthorised-action calls
+    const casual = c.sec === "casual", net = !!c.member || casual;   // ATC Network: tags and calls stay, but no counters, penalties or timeouts   // declared emergency: no unauthorised-action calls
     const v = st.viol[type], firstOne = !v || now - (v.logged || 0) > 300_000;   // a new episode (not the same one still going on)
     if (!v || now - v.said > VIOL_RENEW_MS) { st.viol[type] = { said: now }; notify(); }
     if (!v || now - v.logged > 60_000) {
@@ -904,6 +908,12 @@ export class Hub {
       { const g = st.gr || {}, r = t => Math.max(0, Math.round(((t || 0) - now) / 1000)); this.violations.push({ at: now, callsign: normCallsign(c.plan.callsign ?? c.pos.callsign), icao: c.pos.icao_address, type, airport: apt, runway: rwy, human: !!this.humanCovers(c, apt || up(c.plan.departure_airport)), phase: c.pos.phase, prev: st.ph, gs: Math.round(Number(c.pos.ground_speed) || 0), on_rwy: c.pos.on_rwy ?? null, rwy_on: c.pos.rwy_on ?? null, clr_s: { taxi: r(g.taxi), takeoff: r(g.takeoff), land: r(g.land) }, since_landing_s: st.landedAt ? Math.round((now - st.landedAt) / 1000) : null }); }
       if (this.violations.length > MAX_VIOL) this.violations.shift();
       if (firstOne && !net && this.warnPilot(key, c, type, now, !!this.humanCovers(c, apt || up(c.plan.departure_airport)))) { /* warning only: no points, no timeout */ }
+      else if (firstOne && casual && !c.member) {   // casual server: only a notice (the auto-ATC already speaks for itself; a human controller stays silent otherwise)
+        if (this.humanCovers(c, apt || up(c.plan.departure_airport))) {
+          const pt = c.lang === "pt", w = { taxi: ["moving without taxi clearance", "movimento sem autorização de táxi"], alt: ["altitude change without a climb/descent clearance", "mudança de altitude sem autorização de subida/descida"], runway: ["on the runway without takeoff clearance", "na pista sem autorização de decolagem"], landing: ["landing without clearance", "pouso sem autorização"] }[type] || ["action without clearance", "ação sem autorização"];
+          this.addMsg(c, pt ? `AVISO: ${w[1]}. Servidor casual: sem penalidade.` : `NOTICE: ${w[0]}. Casual server: no penalty.`, "auto", { urgent: true });
+        }
+      }
       else if (firstOne && !net) {   // counters: taxi / altitude = penalty, runway / landing = violation; thresholds give timeouts
         const pf = this.profGet(key); let ms = 0, why = "";
         if (VIOL_PTS[type]) { pf.vpts += VIOL_PTS[type]; pf.pen += VIOL_PTS[type]; if (pf.pen >= PEN_LIMIT) { pf.pen = 0; ms = PEN_TIMEOUT_MS; why = "penalties"; } }
@@ -923,7 +933,7 @@ export class Hub {
     let out = [];
     for (const [ck, c] of this.clients) {
       const pos = c.pos;
-      if (!pos || !!c.member !== !!vm) continue;   // members and public never see each other
+      if (!pos || secOf(c) !== vm) continue;   // members and public never see each other
       const d = haversineMi(lat, lon, pos.latitude, pos.longitude);
       if (d <= rad) {
         const callsign = normCallsign(c.plan.callsign ?? pos.callsign);
@@ -939,7 +949,7 @@ export class Hub {
     }
     for (const [a, g] of byApt) {
       const base = g.anchor || g.roles[0];
-      if (!!base.member !== !!vm) continue;
+      if (secOf(base) !== vm) continue;
       const d = haversineMi(lat, lon, base.latitude, base.longitude);
       if (d > rad) continue;
       const e = towerAircraft({ ...base, name: a, pos: "APT", holder: undefined, freq: "" }, d);
@@ -957,13 +967,13 @@ export class Hub {
   }
 
   crashList(vm) {
-    return [...this.crashes.values()].filter(x => !!x.member === !!vm).map(x => ({ callsign: x.callsign, icao_address: x.icao, latitude: x.latitude, longitude: x.longitude, landing_fpm: x.landing_fpm, reason: x.reason || "hard_landing", at: x.at, until: x.until }));
+    return [...this.crashes.values()].filter(x => secOf(x) === vm).map(x => ({ callsign: x.callsign, icao_address: x.icao, latitude: x.latitude, longitude: x.longitude, landing_fpm: x.landing_fpm, reason: x.reason || "hard_landing", at: x.at, until: x.until }));
   }
 
   trafficAlerts(key, c) {
     const now = Date.now(), out = [], hit = new Set();
     for (const [k2, o] of this.clients) {
-      if (k2 === key || !o.pos || now - o.seen > 15_000 || !!o.member !== !!c.member) continue;
+      if (k2 === key || !o.pos || now - o.seen > 15_000 || secOf(o) !== secOf(c)) continue;
       const al = computeTA(c.pos, o.pos);
       if (!al) continue;
       const pk = key + "|" + k2, pair = key < k2 ? pk : k2 + "|" + key, who = { callsign: normCallsign(o.plan.callsign ?? o.pos.callsign), icao_address: o.pos.icao_address };
@@ -1009,7 +1019,7 @@ export class Hub {
     const A = { la: Number(c.pos.latitude), lo: Number(c.pos.longitude), h: Number(c.pos.heading_true), g: Number(c.pos.ground_speed), z: Number(c.pos.altitude_ft), v: Number(c.pos.vertical_speed_ft_min) || 0 };
     if (![A.la, A.lo, A.h, A.g, A.z].every(Number.isFinite) || A.g < 40) return false;
     for (const [k2, o] of this.clients) {
-      if (k2 === key || !air(o.pos) || now - o.seen > 5_000 || !!o.member !== !!c.member) continue;
+      if (k2 === key || !air(o.pos) || now - o.seen > 5_000 || secOf(o) !== secOf(c)) continue;
       const B = { la: Number(o.pos.latitude), lo: Number(o.pos.longitude), h: Number(o.pos.heading_true), g: Number(o.pos.ground_speed), z: Number(o.pos.altitude_ft), v: Number(o.pos.vertical_speed_ft_min) || 0 };
       if (![B.la, B.lo, B.h, B.g, B.z].every(Number.isFinite) || B.g < 40) continue;
       const rad = Math.PI / 180, x = (B.lo - A.lo) * 60 * Math.cos((A.la + B.la) / 2 * rad), y = (B.la - A.la) * 60;
@@ -1018,11 +1028,11 @@ export class Hub {
       if (Math.sqrt(v2) * 3600 < 20) continue;
       const t = Math.max(-3, Math.min(1.5, -(x * rvx + y * rvy) / v2));
       if (Math.hypot(x + rvx * t, y + rvy * t) > 0.03 || Math.abs(B.z - A.z + (B.v - A.v) / 60 * t) > 100) continue;
-      for (const hd of c.member ? [] : new Set([...this.handlersOf(c, now), ...this.handlersOf(o, now)])) { const ck = this.holderKey.get(hd); if (ck) this.demote(ck, now); }
+      for (const hd of c.member || c.sec === "casual" ? [] : new Set([...this.handlersOf(c, now), ...this.handlersOf(o, now)])) { const ck = this.holderKey.get(hd); if (ck) this.demote(ck, now); }
       for (const [k, q] of [[key, c], [k2, o]]) {
         const lat = Number(q.pos.latitude), lon = Number(q.pos.longitude);
         const lk = this.lockFor(k, "midair", now, { latitude: lat, longitude: lon });
-        const cr = { key: k, icao: q.pos.icao_address, callsign: normCallsign(q.plan.callsign ?? q.pos.callsign), latitude: lat, longitude: lon, member: !!q.member, landing_fpm: 0, reason: "midair", at: now, until: lk.until };
+        const cr = { key: k, icao: q.pos.icao_address, callsign: normCallsign(q.plan.callsign ?? q.pos.callsign), latitude: lat, longitude: lon, member: !!q.member, sec: secOf(q), landing_fpm: 0, reason: "midair", at: now, until: lk.until };
         this.crashes.set(k, cr); this.ctx.storage.put("crash:" + k, cr);
         this.clients.delete(k);
       }
@@ -1036,7 +1046,7 @@ export class Hub {
     const h = this.handlerOf(c);
     if (h) return new Set([h.holder]);
     const air = c.pos.phase !== "ground" && c.pos.phase !== "runway", ok = air ? ["TWR", "APP", "CTR"] : ["GND", "TWR"];
-    const roles = [...this.towers.values()].filter(t => t.holder && ok.includes(t.pos) && now - t.at <= POS_TTL_MS && !!t.member === !!c.member);
+    const roles = [...this.towers.values()].filter(t => t.holder && ok.includes(t.pos) && now - t.at <= POS_TTL_MS && secOf(t) === secOf(c));
     const la = Number(c.pos.latitude), lo = Number(c.pos.longitude);
     const cover = roles.filter(r => { if (r.pos === "CTR") return false; const a = this.towers.get(r.apt) || r; return haversineMi(Number(a.latitude), Number(a.longitude), la, lo) / 1.15078 <= (AIRSPACE_NM[r.pos] || 50); });
     return new Set((cover.length ? cover : roles.filter(r => r.pos === "CTR")).map(r => r.holder));
@@ -1046,10 +1056,10 @@ export class Hub {
   separation(key, c, now) {
     const ok = q => q && q.phase !== "ground" && q.phase !== "runway" && Number(q.ground_speed) >= 60 && Number.isFinite(Number(q.altitude_ft)) && Number.isFinite(Number(q.heading_true));
     if (!ok(c.pos)) return;
-    if (c.member) return;   // ATC Network: no controller violations
+    if (c.member || c.sec === "casual") return;   // ATC Network / casual: no controller violations
     const A = c.pos, rad = Math.PI / 180;
     for (const [k2, o] of this.clients) {
-      if (k2 === key || !ok(o.pos) || now - o.seen > 15_000 || !!o.member !== !!c.member) continue;
+      if (k2 === key || !ok(o.pos) || now - o.seen > 15_000 || secOf(o) !== secOf(c)) continue;
       const B = o.pos, x = (B.longitude - A.longitude) * 60 * Math.cos((A.latitude + B.latitude) / 2 * rad), y = (B.latitude - A.latitude) * 60;
       const rvx = B.ground_speed * Math.sin(B.heading_true * rad) - A.ground_speed * Math.sin(A.heading_true * rad), rvy = B.ground_speed * Math.cos(B.heading_true * rad) - A.ground_speed * Math.cos(A.heading_true * rad);
       if (Math.hypot(rvx, rvy) < 20) continue;
@@ -1073,7 +1083,7 @@ export class Hub {
     const holder = String(new URL(request.url).searchParams.get("holder") || "").slice(0, 80);
     const pair = new WebSocketPair();
     this.ctx.acceptWebSocket(pair[1]);
-    pair[1].serializeAttachment({ key, holder, sub: null, member: request.headers.get("X-Member") === "1", atc: request.headers.get("X-Atc") || "n", atcRaw: request.headers.get("X-Atc-Raw") || "", atcName: request.headers.get("X-Atc-Name") || "", ip: request.headers.get("X-IP") || "" });
+    pair[1].serializeAttachment({ key, holder, sub: null, member: request.headers.get("X-Member") === "1", sec: reqSec(request), atc: request.headers.get("X-Atc") || "n", atcRaw: request.headers.get("X-Atc-Raw") || "", atcName: request.headers.get("X-Atc-Name") || "", ip: request.headers.get("X-IP") || "" });
     this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
     this.startPush();
     return new Response(null, { status: 101, webSocket: pair[0] });
@@ -1090,19 +1100,19 @@ export class Hub {
     for (const ws of socks) {
       const a = ws.deserializeAttachment() || {};
       if (!a.sub) continue;
-      const sk = (a.member ? "m" : "p") + a.key + "|" + a.sub.lat + "|" + a.sub.lon + "|" + a.sub.rad + "|" + a.sub.max;
+      const sk = secOf(a) + "|" + a.key + "|" + a.sub.lat + "|" + a.sub.lon + "|" + a.sub.rad + "|" + a.sub.max;
       let body = cache.get(sk);
-      if (!body) { body = JSON.stringify({ push: "traffic", ...this.trafficBody(a.key, a.sub.lat, a.sub.lon, a.sub.rad, a.sub.max, a.member) }); cache.set(sk, body); }
+      if (!body) { body = JSON.stringify({ push: "traffic", ...this.trafficBody(a.key, a.sub.lat, a.sub.lon, a.sub.rad, a.sub.max, secOf(a)) }); cache.set(sk, body); }
       try { ws.send(body); } catch (e) {}
     }
   }
   trafficBody(key, lat, lon, rad, max, vm) {
     const { out, truncated } = this.trafficList(key, lat, lon, rad, Math.max(1, Math.min(MAX_TRAFFIC, Number(max) || MAX_TRAFFIC)), vm);
-    const grp = new Map(); for (const c of this.clients.values()) if (c.pos) grp.set(c.pos.icao_address, !!c.member);
-    const same = icao => grp.has(icao) ? grp.get(icao) === !!vm : !vm;
-    const atc_messages = [...this.msgs.values()].filter(x => !x.bc && (x.kind === "freq" ? !!x.member === !!vm : same(x.icao))).map(x => ({ id: x.id, icao_address: x.icao, text: x.text, kind: x.kind, urgent: !!x.urgent, status: x.status, at: x.at, freq: x.freq || "", ...(x.kind === "freq" ? { n: x.n || 0 } : {}) }));
+    const grp = new Map(); for (const c of this.clients.values()) if (c.pos) grp.set(c.pos.icao_address, secOf(c));
+    const same = icao => grp.has(icao) ? grp.get(icao) === vm : vm !== "net";
+    const atc_messages = [...this.msgs.values()].filter(x => !x.bc && (x.kind === "freq" ? secOf(x) === vm : same(x.icao))).map(x => ({ id: x.id, icao_address: x.icao, text: x.text, kind: x.kind, urgent: !!x.urgent, status: x.status, at: x.at, freq: x.freq || "", ...(x.kind === "freq" ? { n: x.n || 0 } : {}) }));
     const voice_clips = [...this.clips.values()].filter(v => v.dir === "up" && same(v.icao)).map(v => ({ id: v.id, icao_address: v.icao, callsign: v.callsign, ms: v.ms, at: v.at, freq: v.freq || "" }));
-    return { aircraft: out, traffic: out, truncated, active_clients: [...this.clients.values()].filter(c => !!c.member === !!vm).length, atc_messages, crashes: this.crashList(vm), voice_clips };
+    return { aircraft: out, traffic: out, truncated, active_clients: [...this.clients.values()].filter(c => secOf(c) === vm).length, atc_messages, crashes: this.crashList(vm), voice_clips };
   }
 
   // ---- ATIS (per open tower): letter, runways, frequencies, remarks + METAR from aviationweather.gov (cached 5 min)
@@ -1146,7 +1156,7 @@ export class Hub {
     const f = dir === "up" ? (pos.freq || "") : normFreq(d.freq), nowT = Date.now();
     if (f) for (const o of this.clients.values()) {
       const q = o.pos;
-      if (!q || !!o.member !== !!target.member || q.icao_address === pos.icao_address || q.voice === false || q.freq !== f || nowT - o.seen > 15_000) continue;
+      if (!q || secOf(o) !== secOf(target) || q.icao_address === pos.icao_address || q.voice === false || q.freq !== f || nowT - o.seen > 15_000) continue;
       const id2 = id + "r" + (++this.msgSeq).toString(36);
       this.clips.set(id2, { id: id2, dir: "down", icao: q.icao_address, callsign: normCallsign(target.plan.callsign ?? pos.callsign), audio, mime: String(d.mime || "audio/mp4").slice(0, 40), ms, freq: "", at: nowT, delivered: false });
     }
@@ -1159,7 +1169,7 @@ export class Hub {
     for (const other of this.ctx.getWebSockets()) {
       if (other === sender) continue;
       const oa = other.deserializeAttachment() || {};
-      if (!oa.key || !!oa.member !== !!meta.member) continue;
+      if (!oa.key || secOf(oa) !== secOf(meta)) continue;
       const pilot = this.clients.get(oa.key);
       if (meta.direction === "up") {
         if (this.activeAtcHolder(oa.holder) && (!oa.member || oa.atc === "1" || oa.atc === "n" || this.creds.has(oa.atcRaw || ""))) peers.push(other);
@@ -1233,7 +1243,7 @@ export class Hub {
       const s = d.sub, lat = Number(s && s.lat) || 0, lon = Number(s && s.lon) || 0, rad = Number(s && s.radius_miles) || 250;
       const max = Math.max(1, Math.min(MAX_TRAFFIC, Number(s && s.max) || MAX_TRAFFIC));
       a.sub = s ? { lat, lon, rad, max } : null; ws.serializeAttachment(a);
-      if (a.sub) { try { ws.send(JSON.stringify({ push: "traffic", ...this.trafficBody(a.key, lat, lon, rad, max, a.member) })); } catch (e) {} }
+      if (a.sub) { try { ws.send(JSON.stringify({ push: "traffic", ...this.trafficBody(a.key, lat, lon, rad, max, secOf(a)) })); } catch (e) {} }
       return;
     }
     const method = String(d.method || "GET").toUpperCase(), path = String(d.path || "");
@@ -1241,7 +1251,7 @@ export class Hub {
       try { ws.send(JSON.stringify({ id: d.id, status: 400, body: { error: "bad request" } })); } catch (e) {}
       return;
     }
-    const init = { method, headers: { "X-API-Key": a.key, "Content-Type": "application/json", "X-Via": "ws", "X-Member": a.member ? "1" : "0", "X-Atc": a.atc || "n", "X-Atc-Raw": a.atcRaw || "", "X-Atc-Name": a.atcName || "", "X-IP": a.ip || "" } };
+    const init = { method, headers: { "X-API-Key": a.key, "Content-Type": "application/json", "X-Via": "ws", "X-Member": a.member ? "1" : "0", "X-Sec": secOf(a), "X-Atc": a.atc || "n", "X-Atc-Raw": a.atcRaw || "", "X-Atc-Name": a.atcName || "", "X-IP": a.ip || "" } };
     if (method !== "GET" && method !== "DELETE" && d.body !== undefined) init.body = JSON.stringify(d.body);
     let status = 500, body = { error: "server error" };
     try {
@@ -1304,7 +1314,7 @@ export class Hub {
       if (!role) return json({ error: "division_required" }, 409);
       const icao = String(d.icao_address || "").toUpperCase();
       const target = [...this.clients.values()].find(c => c.pos && c.pos.icao_address === icao);
-      if (!target || !!target.member !== (request.headers.get("X-Member") === "1")) return json({ error: "aircraft not found" }, 404);
+      if (!target || secOf(target) !== reqSec(request)) return json({ error: "aircraft not found" }, 404);
       if (!tunedTo(target.pos.freq, normFreq(d.freq))) return json({ error: "not_tuned", freq: target.pos.freq, callsign: normCallsign(target.plan.callsign ?? target.pos.callsign) }, 409);
       { const ob = this.airspaceBlock(String(d.holder || ""), target); if (ob) return json(ob, 409); }
       if (m === "DELETE") { target.taxi = null; return json({ success: true }); }
@@ -1439,16 +1449,16 @@ export class Hub {
       const f = normFreq(d.freq);
       if (!f) return json({ error: "frequency_required" }, 409);
       if (!this.holderOnFreq(holder, f)) return json({ error: "not_your_frequency", freq: f }, 409);
-      const member = request.headers.get("X-Member") === "1", now = Date.now();
+      const member = reqSec(request), now = Date.now();
       let n = 0;
       const who = this.ctlLabel(request, holder, key), out = who ? who + ": " + text : text;
       for (const c of this.clients.values()) {
-        if (!c.pos || c.pos.freq !== f || !!c.member !== member || now - c.seen > 30_000) continue;
+        if (!c.pos || c.pos.freq !== f || secOf(c) !== member || now - c.seen > 30_000) continue;
         if (this.airspaceBlock(holder, c)) continue;   // pilots outside the controller's airspace are not reached
         this.addMsg(c, out, "msg", { urgent: d.urgent === true, freq: f, bc: true }); n++;
       }
       const id = "f" + now.toString(36) + (++this.msgSeq).toString(36);
-      this.msgs.set(id, { id, icao: "", callsign: "", text, kind: "freq", at: now, status: "sent", freq: f, n, member });
+      this.msgs.set(id, { id, icao: "", callsign: "", text, kind: "freq", at: now, status: "sent", freq: f, n, member, sec: member });
       if (this.msgs.size > 300) this.msgs.delete(this.msgs.keys().next().value);
       return json({ success: true, id, heard_by: n });
     }
@@ -1542,7 +1552,7 @@ export class Hub {
       // everyone else tuned to the same frequency (same group) reads it too, headed by the sender's callsign
       const cs = normCallsign(c.plan.callsign ?? c.pos.callsign), line = (cs ? cs + ": " : "") + text;
       for (const [k2, o] of this.clients) {
-        if (k2 === key || !o.pos || o.pos.freq !== c.pos.freq || !!o.member !== !!c.member || now - o.seen > 30_000) continue;
+        if (k2 === key || !o.pos || o.pos.freq !== c.pos.freq || secOf(o) !== secOf(c) || now - o.seen > 30_000) continue;
         this.addMsg(o, line, "msg", { freq: c.pos.freq, bc: true });
       }
       return json({ success: true, id: msg.id, mode: this.towers.size > 0 ? "controller" : "none" });
@@ -1582,7 +1592,7 @@ export class Hub {
         if (erwy && eapt) this.rwy.set(rwyKey(eapt, erwy), { key, type: "emerg", until: now + 10 * 60_000 });
         const cs = normCallsign(plan.callsign ?? c.pos.callsign);
         for (const [k2, o] of this.clients) {
-          if (k2 === key || !o.pos || now - o.seen > 15_000 || !!o.member !== !!c.member) continue;
+          if (k2 === key || !o.pos || now - o.seen > 15_000 || secOf(o) !== secOf(c)) continue;
           const mi = haversineMi(o.pos.latitude, o.pos.longitude, c.pos.latitude, c.pos.longitude);
           if (mi <= MAYDAY_NEAR_MI) this.addMsg(o, PHRASE[o.lang === "pt" ? "pt" : "en"].maydayNear(cs, Math.round(mi)), "auto", { urgent: true });
         }
@@ -1681,7 +1691,7 @@ export class Hub {
         const mine = this.airportOf(who, ipt);
         if (mine && mine !== pn.apt) return json({ error: "one_tower", airport: mine }, 409);
       }
-      if (old?.member && request.headers.get("X-Member") !== "1") return json({ error: "member_tower" }, 403);
+      { const ot = aptRec || old; if (ot && secOf(ot) !== reqSec(request) && reqSec(request) !== "net") return json({ error: ot.member ? "member_tower" : "other_section", section: secOf(ot) }, 403); }
       // ALL (every role at once) is for the airport owner (or a network member) only
       if (pn.pos === "ALL" && holder && !(aptRec && aptRec.owner === holder) && request.headers.get("X-Member") !== "1") return json({ error: "not_owner" }, 403);
       // one controller per position: a live claim by someone else blocks (heartbeats keep it alive)
@@ -1711,7 +1721,7 @@ export class Hub {
         }
       }
       const atis = old && old.atis;
-      const t = { name, apt: pn.apt, pos: pn.pos, freq, holder: holder || undefined, ctl: holder ? (this.ctlName(request) || undefined) : undefined, nick: holder ? (this.nickOf(key) || undefined) : undefined, oip: (old && old.oip) || ipt || undefined, latitude: lat, longitude: lon, altitude_ft: Number(d.altitude_ft) || 0, at: now, member: request.headers.get("X-Member") === "1", atis };
+      const t = { name, apt: pn.apt, pos: pn.pos, freq, holder: holder || undefined, ctl: holder ? (this.ctlName(request) || undefined) : undefined, nick: holder ? (this.nickOf(key) || undefined) : undefined, oip: (old && old.oip) || ipt || undefined, latitude: lat, longitude: lon, altitude_ft: Number(d.altitude_ft) || 0, at: now, member: request.headers.get("X-Member") === "1", sec: reqSec(request), atis };
       if (pn.pos === "APT") {   // the creator owns the airport (kept across re-PUTs); bans live on the airport record
         const ow = (old && old.owner) || String(d.owner || "").slice(0, 40);
         if (ow) t.owner = ow;
@@ -1738,7 +1748,7 @@ export class Hub {
     if (m === "DELETE" && p === "/api/atc/tower") {
       if (this.noCred(request)) return json({ error: "atc_credential" }, 403);
       const pn = parseTowerName(url.searchParams.get("name")), name = pn ? pn.name : String(url.searchParams.get("name") || "").trim().toUpperCase();
-      if (this.towers.get(name)?.member && request.headers.get("X-Member") !== "1") return json({ error: "member_tower" }, 403);
+      { const ot = this.towers.get(name) || this.towers.get(pn && pn.apt); if (ot && secOf(ot) !== reqSec(request) && reqSec(request) !== "net") return json({ error: ot.member ? "member_tower" : "other_section", section: secOf(ot) }, 403); }
       const cur = this.towers.get(name), hq = String(url.searchParams.get("holder") || "");
       const lk = pn ? this.lockedApt(hq, Date.now()) : null;
       if (lk && lk !== pn.apt) return json({ error: "locked_to_airport", airport: lk }, 409);
@@ -1844,7 +1854,7 @@ export class Hub {
       const d = await request.json().catch(() => ({}));
       const name = this.towerKey(String(d.name || "").trim().toUpperCase()), t = name && this.towers.get(name);
       if (!t) return json({ error: "no tower open at that airport" }, 404);
-      if (t.member && request.headers.get("X-Member") !== "1") return json({ error: "member_tower" }, 403);
+      if (secOf(t) !== reqSec(request) && reqSec(request) !== "net") return json({ error: t.member ? "member_tower" : "other_section", section: secOf(t) }, 403);
       const lk = this.lockedApt(String(d.holder || "").slice(0, 40), Date.now());
       if (lk && lk !== (t.apt || name)) return json({ error: "locked_to_airport", airport: lk }, 409);
       const a = t.atis || (t.atis = { letter: "A", runways: "", frequencies: "", remarks: "", at: Date.now(), sig: "" });
@@ -1926,14 +1936,14 @@ export class Hub {
     }
 
     if (m === "GET" && p === "/api/health")
-      return json({ status: "ok", latest_android: LATEST.android, latest_pc: LATEST.pc, active_clients: this.clients.size, pilots: [...this.clients.values()].filter(c => c.pos).length, towers: this.towers.size, member: request.headers.get("X-Member") === "1", atc: this.atcState(request) === "1", atc_required: this.atcState(request) !== "n", mgr: request.headers.get("X-Mgr") === "1" });
+      return json({ status: "ok", latest_android: LATEST.android, latest_pc: LATEST.pc, active_clients: this.clients.size, pilots: [...this.clients.values()].filter(c => c.pos && secOf(c) === reqSec(request)).length, towers: [...this.towers.values()].filter(t => secOf(t) === reqSec(request)).length, mode: reqSec(request), member: request.headers.get("X-Member") === "1", atc: this.atcState(request) === "1", atc_required: this.atcState(request) !== "n", mgr: request.headers.get("X-Mgr") === "1" });
 
     if (m === "GET" && p === "/api/traffic") {
       const q = url.searchParams;
       const lat = parseFloat(q.get("lat") ?? q.get("latitude") ?? "0") || 0;
       const lon = parseFloat(q.get("lon") ?? q.get("lng") ?? q.get("longitude") ?? "0") || 0;
       const rad = parseFloat(q.get("radius_miles") ?? q.get("radius") ?? "250") || 250;
-      return json(this.trafficBody(key, lat, lon, rad, undefined, request.headers.get("X-Member") === "1"));
+      return json(this.trafficBody(key, lat, lon, rad, undefined, reqSec(request)));
     }
 
     if ((m === "POST" || m === "PUT") && p === "/api/position") {
@@ -1980,7 +1990,7 @@ export class Hub {
         if ((c.airS || 0) >= FLIGHT_MIN_AIR_S) pf.flights += 1;
         c.airS = 0; pf.saved = Date.now(); this.ctx.storage.put("prof:" + this.pkey(key), pf);
       }
-      c.pos = pos; c.seen = Date.now(); c.member = request.headers.get("X-Member") === "1";
+      c.pos = pos; c.seen = Date.now(); c.member = request.headers.get("X-Member") === "1"; c.sec = reqSec(request);
       if (pos.phase === "air" && c.taxi) c.taxi = null;
       const lg = pick(d, "lang"); if (lg === "pt" || lg === "en") c.lang = lg;
       const lf = Number(pos.landing_fpm);
@@ -1988,7 +1998,7 @@ export class Hub {
         // hard landing = crash: the plane vanishes from traffic, an X is marked, the pilot waits CRASH_TIMEOUT_MS
         const now = Date.now();
         const lk = this.lockFor(key, "crash", now, { latitude: lat, longitude: lon, landing_fpm: Math.round(lf) });
-        const cr = { key, icao, callsign: normCallsign(c.plan.callsign ?? pos.callsign), latitude: lat, longitude: lon, member: !!c.member, landing_fpm: Math.round(lf), at: now, until: lk.until };
+        const cr = { key, icao, callsign: normCallsign(c.plan.callsign ?? pos.callsign), latitude: lat, longitude: lon, member: !!c.member, sec: secOf(c), landing_fpm: Math.round(lf), at: now, until: lk.until };
         this.crashes.set(key, cr);
         await this.ctx.storage.put("crash:" + key, cr);
         this.clients.delete(key);
@@ -2003,15 +2013,15 @@ export class Hub {
       const reply = { success: true, messages, traffic_alerts: this.trafficAlerts(key, c) };
       { const cl = this.raClear(key, c); if (cl.length) reply.traffic_clear = cl; }
       const sApt = up(c.pos.phase === "air" ? c.plan.arrival_airport : c.plan.departure_airport);
-      const stations = sApt ? [...this.towers.values()].filter(t => t.freq && !!t.member === !!c.member && (t.apt || t.name) === sApt).map(t => ({ pos: t.pos || "TWR", freq: t.freq, airport: sApt })) : [];
+      const stations = sApt ? [...this.towers.values()].filter(t => t.freq && secOf(t) === secOf(c) && (t.apt || t.name) === sApt).map(t => ({ pos: t.pos || "TWR", freq: t.freq, airport: sApt })) : [];
       if (stations.length) reply.stations = stations;
       const voice = [];
       for (const v of this.clips.values()) if (v.dir === "down" && v.icao === icao && !v.delivered) { v.delivered = true; voice.push({ id: v.id, audio: v.audio, mime: v.mime, ms: v.ms, at: v.at }); }
       if (voice.length) reply.voice = voice;
       if (url.searchParams.get("traffic") === "1") {
         // our client: nearest 100 entries (whole planet) + crashes, so it needs no separate /api/traffic poll
-        const t = this.trafficList(key, lat, lon, 13000, 100, c.member);
-        reply.aircraft = t.out; reply.truncated = t.truncated; reply.crashes = this.crashList(c.member);
+        const t = this.trafficList(key, lat, lon, 13000, 100, secOf(c));
+        reply.aircraft = t.out; reply.truncated = t.truncated; reply.crashes = this.crashList(secOf(c));
       }
       return json(reply);
     }
@@ -2057,7 +2067,7 @@ export class Hub {
     if (m === "GET" && p === "/api/taxi") {
       const icao = String(url.searchParams.get("icao_address") || "").toUpperCase();
       const target = [...this.clients.values()].find(c => c.pos && c.pos.icao_address === icao);
-      if (!target || !target.taxi || Date.now() >= target.taxi.until || (!!target.member !== (request.headers.get("X-Member") === "1"))) return json({ error: "no taxi route" }, 404);
+      if (!target || !target.taxi || Date.now() >= target.taxi.until || (secOf(target) !== reqSec(request))) return json({ error: "no taxi route" }, 404);
       return json(target.taxi);
     }
     if (m === "GET" && p === "/api/route") {

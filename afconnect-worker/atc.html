@@ -105,6 +105,7 @@ input::placeholder{color:var(--dim)}
     <button id="replayVoiceBtn" title="Replay the last voice message (sent or received). Plays locally, nothing is transmitted." disabled>Replay last</button>
     <div id="menu" style="display:none"><button id="voiceBtn" title="Voice on/off">Voice: on</button>
     <button id="acctBtn" title="Account: your hours and profile follow you on every device">Account</button>
+    <button id="modeBtn" title="Casual: clearances are suggestions, no penalties. Expert: all rules.">Server: Expert</button>
     <button id="grpBtn" title="Aerofly Connect ATC Network code (from Discord)">ATC Network</button>
     <button id="credBtn" title="ATC credential issued by the network management: lets you open towers in the network" disabled>ATC Credential</button>
     <button id="dimBtn" title="Grey out aircraft that are not on my frequencies (they stay visible)">My freqs: off</button>
@@ -596,7 +597,8 @@ $('strips').addEventListener('click',function(e){
   if(sel!==id){txMode='';txPrev=null}sel=sel===id?null:id;renderStrips(true);draw()});
 var group='';try{var gp=new URLSearchParams(location.search).get('group');group=gp!==null?gp:(localStorage.getItem('afc_group')||'');if(gp!==null){if(group)localStorage.setItem('afc_group',group);else localStorage.removeItem('afc_group')}}catch(e){}
 var atcCode='';try{var ap=new URLSearchParams(location.search).get('atc');atcCode=ap!==null?ap:(localStorage.getItem('afc_atc')||'');if(ap!==null){if(atcCode)localStorage.setItem('afc_atc',atcCode);else localStorage.removeItem('afc_atc')}}catch(e){}
-function httpApi(path,opt){opt=opt||{};opt.headers=Object.assign({'X-API-Key':key},group?{'X-Group':group}:{},atcCode?{'X-Atc':atcCode}:{},opt.headers||{});return fetch(path,opt)}
+var mode='expert';try{var mp=new URLSearchParams(location.search).get('mode');if(mp!==null){mode=mp==='casual'?'casual':'expert';localStorage.setItem('afc_mode',mode)}else mode=localStorage.getItem('afc_mode')==='casual'?'casual':'expert'}catch(e){}
+function httpApi(path,opt){opt=opt||{};opt.headers=Object.assign({'X-API-Key':key,'X-Mode':mode},group?{'X-Group':group}:{},atcCode?{'X-Atc':atcCode}:{},opt.headers||{});return fetch(path,opt)}
 /* While the socket is live every call goes through it (one billed message instead of an HTTP request); otherwise plain HTTP.
    Reply is shaped like a fetch Response (ok/status/json/text). A timed-out write is not retried over HTTP (it may have happened). */
 var wsPend={},wsSeq=0;
@@ -987,6 +989,7 @@ function acctDialog(){
     b.append(m,n,pw,st,r)}
   o.append(b);document.body.append(o)}
 $('acctBtn').addEventListener('click',acctDialog);setAcctBtn();
+$('modeBtn').textContent=L('Server: ','Servidor: ')+(mode==='casual'?'Casual':'Expert');$('modeBtn').addEventListener('click',function(){try{localStorage.setItem('afc_mode',mode==='casual'?'expert':'casual')}catch(e){}location.href=location.pathname+'?key='+encodeURIComponent(key)+'&mode='+(mode==='casual'?'expert':'casual')+(group?'&group='+encodeURIComponent(group):'')});
 $('grpBtn').addEventListener('click',function(){askText(L('Aerofly Connect ATC Network code (from Discord). Empty = public section.','Código da Aerofly Connect ATC Network (do Discord). Vazio = seção pública.'),group,function(v){
   group=v.trim();try{if(group)localStorage.setItem('afc_group',group);else localStorage.removeItem('afc_group')}catch(e){}checkGroup();reopenWs();setTimeout(refreshMyTowers,1500)})});
 function reopenWs(){if(ws){var old=ws;ws=null;try{old.close()}catch(x){}}clearTimeout(wsTimer);wsOpen()}
@@ -995,7 +998,7 @@ $('credBtn').addEventListener('click',function(){askText(L('ATC credential (issu
 function setCredBtn(){var b=$('credBtn');b.disabled=!(isMember&&credReq);b.style.borderColor=hasCred?'#3dff7a':'';b.style.color=hasCred?'#3dff7a':''}
 var grpMsg='',hasCred=false,credReq=false;
 function checkGroup(){if(!group){grpMsg='';isMember=false;hasCred=false;credReq=false;setCredBtn();return}
-  fetch('/api/health',{headers:Object.assign({'X-Group':group},atcCode?{'X-Atc':atcCode}:{})}).then(function(r){return r.json()}).then(function(j){
+  fetch('/api/health',{headers:Object.assign({'X-Group':group,'X-Mode':mode},atcCode?{'X-Atc':atcCode}:{})}).then(function(r){return r.json()}).then(function(j){
     isMember=!!j.member;hasCred=!!j.atc;credReq=!!j.atc_required;
     grpMsg=j.member?L(' · ATC Network: member',' · ATC Network: membro')+(credReq?(hasCred?L(' · ATC credential OK',' · credencial ATC OK'):L(' · no ATC credential',' · sem credencial ATC')):''):L(' · ATC Network code WRONG',' · código da ATC Network ERRADO');setCredBtn()}).catch(function(){})}
 checkGroup();
@@ -1088,7 +1091,7 @@ var ws=null,wsAt=0,wsTry=0,wsTimer=0,wsPing=0;
 function wsLive(){return ws&&ws.readyState===1&&Date.now()-wsAt<12000}
 function wsOpen(){
   if(!key||!window.WebSocket||ws)return;
-  try{ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws?key='+encodeURIComponent(key)+(group?'&group='+encodeURIComponent(group):'')+(atcCode?'&atc='+encodeURIComponent(atcCode):'')+'&holder='+encodeURIComponent(holder))}catch(e){ws=null;return}
+  try{ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws?key='+encodeURIComponent(key)+'&mode='+mode+(group?'&group='+encodeURIComponent(group):'')+(atcCode?'&atc='+encodeURIComponent(atcCode):'')+'&holder='+encodeURIComponent(holder))}catch(e){ws=null;return}
   var me=ws;
   me.onopen=function(){wsTry=0;wsAt=Date.now();setTimeout(listen,300);me.send(JSON.stringify({sub:{lat:0,lon:0,radius_miles:13000}}));
     clearInterval(wsPing);wsPing=setInterval(function(){if(me.readyState===1)me.send('ping')},25000)};

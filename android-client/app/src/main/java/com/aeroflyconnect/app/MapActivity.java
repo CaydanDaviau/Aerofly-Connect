@@ -90,7 +90,7 @@ public class MapActivity extends Activity {
         syncPip();
     }
 
-    private String mapUrl() { return BuildConfig.SERVER_URL + "/map?key=" + Api.key(this) + "&group=" + java.net.URLEncoder.encode(Api.group); }
+    private String mapUrl() { return BuildConfig.SERVER_URL + "/map?key=" + Api.key(this) + "&mode=" + Api.mode + "&group=" + java.net.URLEncoder.encode(Api.group); }
 
     private void showError() {
         failed = true; pageReady = false;

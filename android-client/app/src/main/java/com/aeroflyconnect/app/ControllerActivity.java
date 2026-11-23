@@ -20,7 +20,7 @@ public class ControllerActivity extends Activity {
     private boolean train;
     private String url() {
         if (train) return BuildConfig.SERVER_URL + "/train?key=" + Api.key(this) + "&lang=" + Api.uiLang(this);
-        return BuildConfig.SERVER_URL + "/atc?key=" + Api.key(this) + "&lang=" + Api.uiLang(this) + (Api.voiceOn(this) ? "" : "&voice=0") + "&group=" + java.net.URLEncoder.encode(Api.group);
+        return BuildConfig.SERVER_URL + "/atc?key=" + Api.key(this) + "&lang=" + Api.uiLang(this) + (Api.voiceOn(this) ? "" : "&voice=0") + "&mode=" + Api.mode + "&group=" + java.net.URLEncoder.encode(Api.group);
     }
 
     @Override

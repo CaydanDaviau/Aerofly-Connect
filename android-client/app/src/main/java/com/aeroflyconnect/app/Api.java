@@ -23,6 +23,8 @@ final class Api {
 
     /** Key is created once on first run. No account needed. */
     static volatile String group = "";   // Discord group code, sent as X-Group (server turns it into a member flag)
+    static volatile String mode = "expert";   // "casual" (clearances are suggestions, no penalties) or "expert" (all rules); separate worlds on the server
+    static void setMode(Context c, String v) { mode = "casual".equals(v) ? "casual" : "expert"; prefs(c).edit().putString("mode", mode).apply(); }
     static void setGroup(Context c, String v) { group = v == null ? "" : v.trim(); prefs(c).edit().putString("group", group).apply(); }
 
     static volatile Context appCtx;
@@ -44,6 +46,7 @@ final class Api {
     static String deviceKey(Context c) {
         SharedPreferences p = prefs(c);
         group = p.getString("group", "");
+        mode = "casual".equals(p.getString("mode", "expert")) ? "casual" : "expert";
         String k = p.getString("key", null);
         if (k == null) {
             byte[] b = new byte[8];
@@ -165,6 +168,7 @@ final class Api {
             c.setReadTimeout(6000);
             c.setRequestProperty("X-API-Key", key);
             if (!group.isEmpty()) c.setRequestProperty("X-Group", group);
+            c.setRequestProperty("X-Mode", mode);
             if (json != null) {
                 c.setDoOutput(true);
                 c.setRequestProperty("Content-Type", "application/json");

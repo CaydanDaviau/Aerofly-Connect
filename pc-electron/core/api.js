@@ -2,8 +2,8 @@
 const SERVER = "https://aeroflytest.caydanphoenix14.workers.dev";
 
 class Api {
-  constructor({ key, group, WebSocket, fetchFn }) {
-    this.key = key; this.group = group || ""; this.WS = WebSocket; this.fetch = fetchFn || fetch;
+  constructor({ key, group, mode, WebSocket, fetchFn }) {
+    this.key = key; this.group = group || ""; this.mode = mode === "casual" ? "casual" : "expert"; this.WS = WebSocket; this.fetch = fetchFn || fetch;
     this.ws = null; this.open = false; this.pending = new Map(); this.seq = 0; this.voiceListeners = new Set(); this.backoff = 2000; this.nextTry = 0; this.pingT = null; this.want = false;
   }
   setGroup(g) { this.group = g || ""; if (this.ws) this.closeWs(); }
@@ -12,6 +12,7 @@ class Api {
   async http(method, path, body) {
     const h = { "X-API-Key": this.key, "Content-Type": "application/json" };
     if (this.group) h["X-Group"] = this.group;
+    h["X-Mode"] = this.mode;
     const c = new AbortController(), t = setTimeout(() => c.abort(), 8000);
     try {
       const r = await this.fetch(SERVER + path, { method, headers: h, body: body == null ? undefined : (typeof body === "string" ? body : JSON.stringify(body)), signal: c.signal });
@@ -49,7 +50,7 @@ class Api {
   ensure(now = Date.now()) {
     this.want = true;
     if (this.ws || !this.WS || now < this.nextTry) return;
-    const url = SERVER.replace(/^http/, "ws") + "/ws?key=" + encodeURIComponent(this.key) + (this.group ? "&group=" + encodeURIComponent(this.group) : "");
+    const url = SERVER.replace(/^http/, "ws") + "/ws?key=" + encodeURIComponent(this.key) + "&mode=" + this.mode + (this.group ? "&group=" + encodeURIComponent(this.group) : "");
     let ws;
     try { ws = new this.WS(url); } catch (e) { this.nextTry = now + this.backoff; return; }
     this.ws = ws;

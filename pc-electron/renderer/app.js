@@ -36,10 +36,16 @@
       banner.style.display = left > 0 ? "" : "none";
       if (left > 0) banner.textContent = t("Timeout - you can fly again in ", "Castigo por queda - você pode voar de novo em ") + mmss(left);
     };
+    const pill = (m, label) => h("button", { class: "pill" + ((cfg.mode || "expert") === m ? " on" : ""), onclick: async () => {
+      if (st.running) { count.textContent = t("Stop the flight first", "Pare o voo primeiro"); return; }
+      if ((cfg.mode || "expert") === m) return;
+      cfg.mode = m; await window.afc.set({ mode: m }); render();
+    } }, label);
+    const modeRow = h("div", { class: "modes", title: t("Casual: clearances are suggestions, no penalties (crashes still count). Expert: all rules. Separate servers.", "Casual: autorizações são sugestões, sem penalidades (quedas ainda contam). Expert: todas as regras. Servidores separados.") }, pill("casual", "Casual"), pill("expert", "Expert"));
     upd(); healthT = setInterval(upd, 15000); tick = setInterval(() => { const left = (cfg.crashUntil || 0) - Date.now(); banner.style.display = left > 0 ? "" : "none"; if (left > 0) banner.textContent = t("Timeout - you can fly again in ", "Castigo por queda - você pode voar de novo em ") + mmss(left); }, 1000);
     root.append(
       h("img", { class: "logo", src: "../assets/logo.png" }), h("h1", {}, "Aerofly Connect"),
-      h("div", { class: "ver" }, "v" + cfg.version + " PC"), count, updBar, banner,
+      h("div", { class: "ver" }, "v" + cfg.version + " PC"), modeRow, count, updBar, banner,
       h("div", { class: "card click", onclick: () => go("pilot") }, h("h2", {}, "Pilot"), h("p", {}, t("Share your flight with other pilots and ATC", "Compartilhe seu voo com outros pilotos e o ATC"))),
       h("div", { class: "card click", onclick: () => window.afc.open("atc") }, h("h2", {}, t("Controller", "Controlador")), h("p", {}, t("See the radar and message pilots (opens in your browser)", "Veja o radar e envie mensagens aos pilotos (abre no navegador)"))),
       h("div", { class: "card click", onclick: () => window.afc.open("train") }, h("h2", {}, t("Training", "Treino")), h("p", {}, t("Practice Tower and Approach with AI traffic (opens in your browser)", "Pratique Torre e Aproximação com tráfego de IA (abre no navegador)"))),
