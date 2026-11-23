@@ -882,14 +882,15 @@ export class Hub {
   }
 
   // Public pilots get 2 warnings per UTC day (with the reason) before an unauthorised action counts. Returns true when it was only a warning.
-  warnPilot(key, c, type, now) {
+  warnPilot(key, c, type, now, human) {
     const pf = this.profGet(key), WARN_LIMIT = TEST.warnLimit ?? WARN_DEFAULT;
     if ((pf.warn || 0) >= WARN_LIMIT) return false;
     pf.warn = (pf.warn || 0) + 1; pf.saved = now; this.ctx.storage.put("prof:" + this.pkey(key), pf);
     const pt = c.lang === "pt", n = pf.warn, heavy = type === "runway" || type === "landing";
     const why = { taxi: ["moving without taxi clearance", "movimento sem autorização de táxi"], alt: ["altitude change without a climb/descent clearance (request one in the overlay)", "mudança de altitude sem autorização de subida/descida (peça no overlay)"], runway: ["on the runway without takeoff clearance", "na pista sem autorização de decolagem"], landing: ["landing without clearance", "pouso sem autorização"] }[type] || ["unauthorised action", "ação não autorizada"];
     const text = pt ? `AVISO ${n}/${WARN_LIMIT}: ${why[1]}. Na próxima conta como ${heavy ? "violação e timeout" : "penalidade"}.` : `WARNING ${n}/${WARN_LIMIT}: ${why[0]}. Next time it counts as a ${heavy ? "violation and timeout" : "penalty"}.`;
-    this.addMsg(c, text, "auto", { urgent: true });
+    const hint = human ? (pt ? " O controlador não registrou essa autorização no sistema: peça a ele para confirmar." : " Your controller has not registered this clearance in the system: ask them to confirm it.") : "";
+    this.addMsg(c, text + hint, "auto", { urgent: true });
     return true;
   }
 
@@ -900,9 +901,9 @@ export class Hub {
     if (!v || now - v.said > VIOL_RENEW_MS) { st.viol[type] = { said: now }; notify(); }
     if (!v || now - v.logged > 60_000) {
       st.viol[type] = { said: st.viol[type].said, logged: now };
-      this.violations.push({ at: now, callsign: normCallsign(c.plan.callsign ?? c.pos.callsign), icao: c.pos.icao_address, type, airport: apt, runway: rwy });
+      { const g = st.gr || {}, r = t => Math.max(0, Math.round(((t || 0) - now) / 1000)); this.violations.push({ at: now, callsign: normCallsign(c.plan.callsign ?? c.pos.callsign), icao: c.pos.icao_address, type, airport: apt, runway: rwy, human: !!this.humanCovers(c, apt || up(c.plan.departure_airport)), phase: c.pos.phase, prev: st.ph, gs: Math.round(Number(c.pos.ground_speed) || 0), on_rwy: c.pos.on_rwy ?? null, rwy_on: c.pos.rwy_on ?? null, clr_s: { taxi: r(g.taxi), takeoff: r(g.takeoff), land: r(g.land) }, since_landing_s: st.landedAt ? Math.round((now - st.landedAt) / 1000) : null }); }
       if (this.violations.length > MAX_VIOL) this.violations.shift();
-      if (firstOne && !net && this.warnPilot(key, c, type, now)) { /* warning only: no points, no timeout */ }
+      if (firstOne && !net && this.warnPilot(key, c, type, now, !!this.humanCovers(c, apt || up(c.plan.departure_airport)))) { /* warning only: no points, no timeout */ }
       else if (firstOne && !net) {   // counters: taxi / altitude = penalty, runway / landing = violation; thresholds give timeouts
         const pf = this.profGet(key); let ms = 0, why = "";
         if (VIOL_PTS[type]) { pf.vpts += VIOL_PTS[type]; pf.pen += VIOL_PTS[type]; if (pf.pen >= PEN_LIMIT) { pf.pen = 0; ms = PEN_TIMEOUT_MS; why = "penalties"; } }
@@ -1463,6 +1464,14 @@ export class Hub {
       if (!text) return json({ error: "empty message" }, 400);
       if (!tunedTo(target.pos.freq, normFreq(d.freq))) return json({ error: "not_tuned", freq: target.pos.freq, callsign: normCallsign(target.plan.callsign ?? target.pos.callsign) }, 409);
       { const ob = this.airspaceBlock(String(d.holder || ""), target); if (ob) return json(ob, 409); }
+      { const t = text.toLowerCase(), neg = /\b(not|no|unable|negative|cancel|não|nao|negativo|cancel\w*)\b/.test(t), now2 = Date.now();
+        const type = neg ? "" : /cleared\s+(for\s+)?take-?off|autoriz\w+\s+(para\s+)?decol/.test(t) ? "takeoff" : /cleared\s+(to|for)\s+land|cleared\s+(ils|visual|rnav)\b.*\bland|autoriz\w+\s+(para\s+)?pous|pouso\s+autoriz/.test(t) ? "land" : /\btaxi\b|\btáxi\b|\btaxie\b/.test(t) ? "taxi" : "";
+        if (type) {   // saying the clearance counts as giving it (same as the strip button)
+          const st = target.st || (target.st = { gr: {}, ph: null, at: 0, lat: 0, lon: 0, grace: now2 + GRACE_MS, calls: {}, viol: {}, landedAt: 0, landRwy: "" });
+          st.gr[type] = now2 + CLR_MS[type];
+          if (type === "taxi") this.gwCredit(key, icao, now2);
+          if (target.viol) { const vt = target.viol.type; if ((type === "taxi" && vt === "taxi") || (type === "takeoff" && vt === "runway") || (type === "land" && vt === "landing")) target.viol = null; }
+        } }
       const who = this.ctlLabel(request, d.holder, key);
       return json({ success: true, id: this.addMsg(target, who ? who + ": " + text : text, "msg", { urgent: d.urgent === true }).id });
     }
