@@ -219,7 +219,7 @@ await call("DELETE", "/api/atc/tower?name=SBBR_TWR", null, "ctl");
   await call("PUT", "/api/flightplan", { callsign: "CRASH1" }, "cr1");
   await up("cr1", P(-15.87, -47.92, 90, 5, 3400));
   r = await up("cr1", P(-15.87, -47.92, 90, 5, 3400, 0, { landing_fpm: -1800 }));
-  console.log("crash 423:", r.startsWith("423") && r.includes('"crashed":true') && r.includes('"remaining_s":300') ? "PASS" : "FAIL " + r);
+  console.log("crash 423:", r.startsWith("423") && r.includes('"crashed":true') && r.includes('"remaining_s":10') ? "PASS" : "FAIL " + r);
   r = await up("cr1", P(-15.87, -47.92, 90, 5, 3400));
   console.log("crash stays blocked:", r.startsWith("423") ? "PASS" : "FAIL " + r);
   console.log("crash flightplan blocked:", (await call("PUT", "/api/flightplan", { callsign: "CRASH1" }, "cr1")).startsWith("423") ? "PASS" : "FAIL");

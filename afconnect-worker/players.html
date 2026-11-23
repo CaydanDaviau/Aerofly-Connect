@@ -41,8 +41,8 @@ function card(p){const c=el("div","c"),h=el("div");const nm=p.name||p.nick||"(de
  if(p.online)h.append(el("span","b on","ONLINE"+(p.callsign?" "+p.callsign:"")));
  if(p.banned)h.append(el("span","b ban","BANNED"));if(p.timeout_s)h.append(el("span","b to","TIMEOUT "+mmss(p.timeout_s)));
  c.append(h);
- c.append(el("div","dim",(p.account?"Account":"Device")+" · pilot "+p.pilot_grade+" · "+hm(p.flight_s)+" flown · "+p.flights+" flights · "+p.landings+" landings · viol "+p.violations+" ("+p.vpts+" pts) · timeouts "+p.timeouts));
- const g=el("div","dim","ATC "+hm(p.atc_s)+" · controller grade ");g.append(el("b",null,p.atc_grade_name));if(p.grade_manual)g.append(el("span","b gm","MANUAL"));g.append(document.createTextNode(" · ATC violations "+p.cviol));c.append(g);
+ c.append(el("div","dim",(p.account?"Account":"Device")+" · pilot "+p.pilot_grade+" · "+hm(p.flight_s)+" flown · "+p.flights+" flights · "+p.landings+" landings · score "+p.rep+" ("+p.stars+"★)"));
+ const g=el("div","dim","ATC "+hm(p.atc_s)+" · controller grade ");g.append(el("b",null,p.atc_grade_name));if(p.grade_manual)g.append(el("span","b gm","MANUAL"));c.append(g);
  if(p.banned&&p.ban_reason)c.append(el("div","dim","Ban: "+p.ban_reason));if(p.timeout_s&&p.timeout_reason)c.append(el("div","dim","Timeout: "+p.timeout_reason));
  const r1=el("div","row"),bt=(t,cl,f)=>{const b=el("button",cl,t);b.onclick=f;return b};
  r1.append(bt("Promote","",()=>act(p.id,"promote")),bt("Demote","s",()=>act(p.id,"demote")));if(p.grade_manual)r1.append(bt("Auto grade","s",()=>act(p.id,"grade_auto")));
@@ -51,10 +51,10 @@ function card(p){const c=el("div","c"),h=el("div");const nm=p.name||p.nick||"(de
  if(p.timeout_s)r2.append(bt("End timeout","s",()=>act(p.id,"untimeout")));
  r2.append(p.banned?bt("Unban","s",()=>act(p.id,"unban")):bt("Ban","d",()=>{if(confirm("Ban "+nm+" from flying and ATC?"))act(p.id,"ban")}));
  c.append(r2);
- const r3=el("div","row"),ed=el("div","row");ed.hidden=true;const F=[["violations","Viol."],["vpts","Points"],["timeouts","Timeouts"],["cviol","ATC viol."],["strikes_today","Strikes today"]],ins={};
- for(const [k,l] of F){const w=el("div","dim",l),i=el("input");i.type="number";i.min=0;i.value=p[k]||0;i.style.width="64px";ins[k]=i;w.append(i);ed.append(w)}
+ const r3=el("div","row"),ed=el("div","row");ed.hidden=true;const F=[["rep","Score (0-1000)"]],ins={};
+ for(const [k,l] of F){const w=el("div","dim",l),i=el("input");i.type="number";i.min=0;i.value=p[k]??0;i.style.width="64px";ins[k]=i;w.append(i);ed.append(w)}
  ed.append(bt("Save","",()=>{const st={};for(const k in ins)st[k]=ins[k].value;act(p.id,"set_stats",{stats:st})}));
- r3.append(bt("Edit violations","s",()=>{ed.hidden=!ed.hidden}),bt("Reset all penalties","d",()=>{if(confirm("Zero violations, points, timeouts, strikes and end any active timeout for "+nm+"?"))act(p.id,"reset_penalties")}));
+ r3.append(bt("Edit score","s",()=>{ed.hidden=!ed.hidden}),bt("Reset score to 500","d",()=>{if(confirm("Reset score to 500 and end any active timeout for "+nm+"?"))act(p.id,"reset_penalties")}));
  c.append(r3,ed);return c}
 let seq=0;
 async function load(){const n=++seq,r=await api("GET","/api/manager/players?q="+encodeURIComponent($("q").value.trim()));if(n!==seq)return;if(r.s!==200){show(false);return}

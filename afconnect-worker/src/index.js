@@ -36,6 +36,11 @@ const TIMEOUT_REPEAT_MS = 5 * 60_000;    // repeated the same (UTC) day (same as
 // Unauthorised actions: taxi / altitude = 1 penalty point; runway / landing = 1 violation. Both counters reset daily (UTC).
 // 10 penalties = 5 min timeout, 3 violations = 15 min timeout (counter restarts at 0 after the timeout).
 const VIOL_PTS = { taxi: 1, alt: 3 };
+// Reputation score (replaces penalties/violations/timeouts): starts at 500, 0..1000, one star per 200 points. Manual punishments (timeout/ban) stay in /players.
+const REP_START = 500, REP_MAX = 1000;
+const REP_VIOL = { taxi: 5, alt: 5, runway: 20, landing: 40 };   // actions without clearance
+const REP = { flight: 15, takeoff: 5, landing: 10, gw: 1, ops: 2, crash: 100, midair: 100, atcMidair: 50, atcSep: 10 };
+const starsOf = p => Math.max(0, Math.min(5, Math.floor(((p && Number.isFinite(p.rep) ? p.rep : REP_START)) / 200)));
 const WARN_DEFAULT = 2;   // warnings per UTC day before penalties/violations count (public section)
 const PEN_LIMIT = 10, VIO_LIMIT = 3, PEN_TIMEOUT_MS = 5 * 60_000, VIO_TIMEOUT_MS = 15 * 60_000;
 const DEM_STAT = { 1: "lv_twr", 2: "lv_app", 3: "app_s" };   // stat that is lost (grade drops one level) when an ATC causes a mid-air collision
@@ -145,7 +150,7 @@ function computeTA(a, b) {
 // ---- Auto-ATC (basic clearances for pilots when no human controller covers the airport) ----
 // Newest released app versions: bump when a new APK / PC build is published; clients older than this show an update notice.
 const FLIGHT_MIN_AIR_S = 180;   // airborne at least 3 min, then touchdown (no crash) = flight completed
-const LATEST = { android: "1.3.5", pc: "2.3.5" };
+const LATEST = { android: "1.3.6", pc: "2.3.6" };
 const REQ_TYPES = ["clearance", "pushback", "taxi", "takeoff", "land", "climb", "descent", "mayday", "mayday_cancel"];
 const MAYDAY_MS = 30 * 60_000, MAYDAY_NEAR_MI = 30;
 const REQ_LOCK_MS = { takeoff: 90_000, land: 120_000 };
@@ -241,7 +246,7 @@ const ipTag = request => { const ip = request.headers.get("CF-Connecting-IP"); r
 // Sections: "net" (ATC Network members), "casual" (clearances are suggestions, no penalties) and "expert" (default, all rules). Separate worlds, like the network.
 const secOf = x => (x && x.sec) || (x && x.member ? "net" : "expert");
 const reqSec = request => request.headers.get("X-Sec") || (request.headers.get("X-Member") === "1" ? "net" : "expert");
-function modeFlag(request, url) { return String(request.headers.get("X-Mode") || url.searchParams.get("mode") || "").trim().toLowerCase() === "casual" ? "casual" : "expert"; }
+function modeFlag() { return "expert"; }   // casual/expert split removed: one public section
 // Group code: Worker var GROUP_CODE; clients send it as X-Group header (or ?group=). The Hub only ever sees X-Member 1/0, never the code.
 function memberFlag(request, env, url) {
   const gc = String(env.GROUP_CODE || "").trim();
@@ -484,18 +489,25 @@ export class Hub {
     pr.flight_s += o.flight_s || 0; pr.atc_s += o.atc_s || 0; pr.flights += o.flights || 0; for (const f of ["landings", "violations", "vpts", "timeouts", "gw", "ops", "app_s", "cviol"]) pr[f] = (pr[f] || 0) + (o[f] || 0); if (!pr.nick) pr.nick = o.nick || "";
     pr.saved = Date.now(); this.ctx.storage.put("prof:" + pk, pr);
   }
+  repAdd(key, delta, now, why) {
+    if (!key || !delta) return;
+    const p = this.profGet(key); p.rep = Math.max(0, Math.min(REP_MAX, Math.round((Number.isFinite(p.rep) ? p.rep : REP_START) + delta))); p.saved = now || Date.now();
+    this.ctx.storage.put("prof:" + this.pkey(key), p);
+  }
+  repOf(key) { const p = this.profPeek(key); return Number.isFinite(p && p.rep) ? p.rep : REP_START; }
+  starsFor(key) { const p = this.profPeek(key); return starsOf(p); }
   // "Ground work actions": taxi clearances / taxi routes by a human controller, once per aircraft per 10 min
   gwCredit(key, icao, now) {
     const k = key + "|" + icao; if (now - (this.gwLast.get(k) || 0) < 600_000) return;
     this.gwLast.set(k, now); if (this.gwLast.size > 500) this.gwLast.delete(this.gwLast.keys().next().value);
-    const pf = this.profGet(key); pf.gw += 1; pf.saved = now; this.ctx.storage.put("prof:" + this.pkey(key), pf);
+    this.repAdd(key, REP.gw, now); const pf = this.profGet(key); pf.gw += 1; pf.saved = now; this.ctx.storage.put("prof:" + this.pkey(key), pf);
   }
   // Successful takeoff/landing at an airport that a human TWR or APP covers: credited to those controllers
   opsCredit(apt, now) {
     for (const t of this.towers.values()) {
       if (t.apt !== apt || !t.holder || (t.pos !== "TWR" && t.pos !== "APP") || now - t.at > POS_TTL_MS) continue;
       const hk = this.holderKey.get(t.holder); if (!hk) continue;
-      const pf = this.profGet(hk); pf.ops += 1; pf.saved = now; this.ctx.storage.put("prof:" + this.pkey(hk), pf);
+      this.repAdd(hk, REP.ops, now); const pf = this.profGet(hk); pf.ops += 1; pf.saved = now; this.ctx.storage.put("prof:" + this.pkey(hk), pf);
     }
   }
   // Training result: validated, then credited with daily and lifetime caps (training can cover at most half of each requirement)
@@ -691,15 +703,11 @@ export class Hub {
   }
   // ATC caused a mid-air collision: permanent demotion by one level (the stat of that tier is lost, so it has to be earned again)
   demote(key, now) {
-    const p = this.profGet(key), g = atcGrade(p);
-    if (g < 1) return;
-    if (Number.isInteger(p.gov)) p.gov = g - 1; else p[DEM_STAT[g]] = 0;
-    p.dem = (p.dem || 0) + 1; p.saved = now; this.ctx.storage.put("prof:" + this.pkey(key), p);
+    this.repAdd(key, -REP.atcMidair, now);
   }
   lockFor(key, reason, now, extra) {
-    const cl = this.clients.get(key);
-    if (cl && cl.member) return { until: now + 10_000, reason, at: now, ...(extra || {}) };   // ATC Network: no timeouts (the plane is just removed for a moment)
-    const lk = { until: now + this.strike(key), reason, at: now, ...(extra || {}) }, pk = this.pkey(key);
+    this.repAdd(key, -(reason === "midair" ? REP.midair : REP.crash), now);   // no timeouts any more: the plane is just removed for a moment
+    const lk = { until: now + 10_000, reason, at: now, ...(extra || {}) }, pk = this.pkey(key);
     this.locks.set(pk, lk); this.ctx.storage.put("lock:" + pk, lk); return lk;
   }
   crashBlock(key) {
@@ -802,7 +810,7 @@ export class Hub {
     }
 
     if (cur === "air") {
-      if (prev && prev !== "air" && !st.calls.dep) { st.calls.dep = true; if (st.gr.takeoff > now || prev === "runway") { const f = this.pf(p.fq_dep, dep, ["DEP", "APP"]); say(ph.departure(f), false, "Departure" + (f ? " " + f : "")); } }
+      if (prev && prev !== "air" && !st.calls.dep) { st.calls.dep = true; if (st.gr.takeoff > now) this.repAdd(key, REP.takeoff, now); if (st.gr.takeoff > now || prev === "runway") { const f = this.pf(p.fq_dep, dep, ["DEP", "APP"]); say(ph.departure(f), false, "Departure" + (f ? " " + f : "")); } }
       st.gr.taxi = 0; st.gr.takeoff = 0;
       // short final to a runway that is occupied: go around
       const lr = cleanRunway(plan.arrival_runway) || st.landRwy;
@@ -830,6 +838,7 @@ export class Hub {
         const busy = lr && apt && this.occupant(key, apt, lr, now);
         if (!st.grace || now > st.grace) {
           if (!cleared || busy) this.violate(key, c, st, "landing", apt, lr, now, () => say(ph.vLand(lr), true));
+          else this.repAdd(key, REP.landing, now);
         }
         st.gr.land = 0; st.gr.taxi = now + 30 * 60_000;
         const lapt = up(p.rwy_apt) || arr;   // after touchdown apt may fall back to the departure airport (no runway match): the arrival is the right one
@@ -861,7 +870,7 @@ export class Hub {
     const p = c.pos, g = st.gr, plan = c.plan || {}, gs = Number(p.ground_speed) || 0, quiet = () => {};
     const onRwys = String(p.rwy_on || "").split("/").map(cleanRunway).filter(Boolean);
     if (cur === "air") {
-      if (prev && prev !== "air") { st.airAt = now; if (g.takeoff > now) this.opsCredit(apt, now); g.taxi = 0; g.takeoff = 0; }
+      if (prev && prev !== "air") { st.airAt = now; if (g.takeoff > now) { this.opsCredit(apt, now); this.repAdd(key, REP.takeoff, now); } g.taxi = 0; g.takeoff = 0; }
       if (!st.airAt) st.airAt = now;
       const vs = Number(p.vertical_speed_ft_min) || 0, alt = Number(p.altitude_ft) || 0, a = st.alt;
       if (now > st.grace && p.terminal !== true && !(g.land > now)) {
@@ -875,7 +884,7 @@ export class Hub {
         st.landedAt = now;
         const lr = onRwys[0] || cleanRunway(plan.arrival_runway) || "";
         if (now > st.grace && !(g.land > now)) this.violate(key, c, st, "landing", apt, lr, now, quiet);
-        else if (g.land > now && !(Number(p.landing_fpm) <= HARD_LANDING_FPM)) this.opsCredit(apt, now);
+        else if (g.land > now && !(Number(p.landing_fpm) <= HARD_LANDING_FPM)) { this.opsCredit(apt, now); this.repAdd(key, REP.landing, now); }
         g.land = 0; g.taxi = now + 30 * 60_000; st.alt = null;   // like the auto-ATC: taxi to the gate is free after landing
         c.emerg = null;
       } else if (now > st.grace) {
@@ -885,42 +894,15 @@ export class Hub {
     }
   }
 
-  // Public pilots get 2 warnings per UTC day (with the reason) before an unauthorised action counts. Returns true when it was only a warning.
-  warnPilot(key, c, type, now, human) {
-    const pf = this.profGet(key), WARN_LIMIT = TEST.warnLimit ?? WARN_DEFAULT;
-    if ((pf.warn || 0) >= WARN_LIMIT) return false;
-    pf.warn = (pf.warn || 0) + 1; pf.saved = now; this.ctx.storage.put("prof:" + this.pkey(key), pf);
-    const pt = c.lang === "pt", n = pf.warn, heavy = type === "runway" || type === "landing";
-    const why = { taxi: ["moving without taxi clearance", "movimento sem autorização de táxi"], alt: ["altitude change without a climb/descent clearance (request one in the overlay)", "mudança de altitude sem autorização de subida/descida (peça no overlay)"], runway: ["on the runway without takeoff clearance", "na pista sem autorização de decolagem"], landing: ["landing without clearance", "pouso sem autorização"] }[type] || ["unauthorised action", "ação não autorizada"];
-    const text = pt ? `AVISO ${n}/${WARN_LIMIT}: ${why[1]}. Na próxima conta como ${heavy ? "violação e timeout" : "penalidade"}.` : `WARNING ${n}/${WARN_LIMIT}: ${why[0]}. Next time it counts as a ${heavy ? "violation and timeout" : "penalty"}.`;
-    const hint = human ? (pt ? " O controlador não registrou essa autorização no sistema: peça a ele para confirmar." : " Your controller has not registered this clearance in the system: ask them to confirm it.") : "";
-    this.addMsg(c, text + hint, "auto", { urgent: true });
-    return true;
-  }
-
   violate(key, c, st, type, apt, rwy, now, notify) {
     if (c.emerg && now < c.emerg.until) return;
-    const casual = c.sec === "casual", net = !!c.member || casual;   // ATC Network: tags and calls stay, but no counters, penalties or timeouts   // declared emergency: no unauthorised-action calls
     const v = st.viol[type], firstOne = !v || now - (v.logged || 0) > 300_000;   // a new episode (not the same one still going on)
     if (!v || now - v.said > VIOL_RENEW_MS) { st.viol[type] = { said: now }; notify(); }
     if (!v || now - v.logged > 60_000) {
       st.viol[type] = { said: st.viol[type].said, logged: now };
       { const g = st.gr || {}, r = t => Math.max(0, Math.round(((t || 0) - now) / 1000)); this.violations.push({ at: now, callsign: normCallsign(c.plan.callsign ?? c.pos.callsign), icao: c.pos.icao_address, type, airport: apt, runway: rwy, human: !!this.humanCovers(c, apt || up(c.plan.departure_airport)), phase: c.pos.phase, prev: st.ph, gs: Math.round(Number(c.pos.ground_speed) || 0), on_rwy: c.pos.on_rwy ?? null, rwy_on: c.pos.rwy_on ?? null, clr_s: { taxi: r(g.taxi), takeoff: r(g.takeoff), land: r(g.land) }, since_landing_s: st.landedAt ? Math.round((now - st.landedAt) / 1000) : null }); }
       if (this.violations.length > MAX_VIOL) this.violations.shift();
-      if (firstOne && !net && this.warnPilot(key, c, type, now, !!this.humanCovers(c, apt || up(c.plan.departure_airport)))) { /* warning only: no points, no timeout */ }
-      else if (firstOne && casual && !c.member) {   // casual server: only a notice (the auto-ATC already speaks for itself; a human controller stays silent otherwise)
-        if (this.humanCovers(c, apt || up(c.plan.departure_airport))) {
-          const pt = c.lang === "pt", w = { taxi: ["moving without taxi clearance", "movimento sem autorização de táxi"], alt: ["altitude change without a climb/descent clearance", "mudança de altitude sem autorização de subida/descida"], runway: ["on the runway without takeoff clearance", "na pista sem autorização de decolagem"], landing: ["landing without clearance", "pouso sem autorização"] }[type] || ["action without clearance", "ação sem autorização"];
-          this.addMsg(c, pt ? `AVISO: ${w[1]}. Servidor casual: sem penalidade.` : `NOTICE: ${w[0]}. Casual server: no penalty.`, "auto", { urgent: true });
-        }
-      }
-      else if (firstOne && !net) {   // counters: taxi / altitude = penalty, runway / landing = violation; thresholds give timeouts
-        const pf = this.profGet(key); let ms = 0, why = "";
-        if (VIOL_PTS[type]) { pf.vpts += VIOL_PTS[type]; pf.pen += VIOL_PTS[type]; if (pf.pen >= PEN_LIMIT) { pf.pen = 0; ms = PEN_TIMEOUT_MS; why = "penalties"; } }
-        else { pf.violations += 1; pf.vio += 1; if (pf.vio >= VIO_LIMIT) { pf.vio = 0; ms = VIO_TIMEOUT_MS; why = "violations"; } else { this.ctx.storage.put("prof:" + this.pkey(key), pf); ms = this.strike(key); why = type === "landing" ? "landing_no_clnc" : "runway_no_clnc"; } }
-        pf.saved = now; this.ctx.storage.put("prof:" + this.pkey(key), pf);
-        if (ms) { this.lockMs(key, why, now, ms, { latitude: c.pos.latitude, longitude: c.pos.longitude, noCount: why.endsWith("_no_clnc") }); this.clients.delete(key); }
-      }
+      if (firstOne) this.repAdd(key, -(REP_VIOL[type] || 5), now);   // score drop only (tags and calls stay)
     }
     c.viol = { type, at: now };
     if (rwy && (type === "runway" || type === "landing")) {   // the runway counts as occupied for everybody else
@@ -937,7 +919,7 @@ export class Hub {
       const d = haversineMi(lat, lon, pos.latitude, pos.longitude);
       if (d <= rad) {
         const callsign = normCallsign(c.plan.callsign ?? pos.callsign);
-        out.push({ ...pos, ...c.plan, callsign, ...towerFields(callsign), member: !!c.member, ...(this.nickOf(ck) ? { nick: this.nickOf(ck) } : {}), has_route: !!c.route, has_taxi: !!(c.taxi && Date.now() < c.taxi.until), ...this.handFields(c), freq: c.pos.freq || "", assigned_squawk: c.assigned ? c.assigned.squawk : null, emergency: !!(c.emerg && Date.now() < c.emerg.until), no_clnc: !!(c.viol && Date.now() - c.viol.at < VIOL_SHOW_MS), clnc: c.viol && Date.now() - c.viol.at < VIOL_SHOW_MS ? c.viol.type : "", clr: this.clrOf(c, Date.now()), ...(ck === key ? { self: true } : {}), distance_miles: Math.round(d * 10) / 10 });
+        out.push({ ...pos, ...c.plan, callsign, ...towerFields(callsign), member: !!c.member, stars: this.starsFor(ck), ...(this.nickOf(ck) ? { nick: this.nickOf(ck) } : {}), has_route: !!c.route, has_taxi: !!(c.taxi && Date.now() < c.taxi.until), ...this.handFields(c), freq: c.pos.freq || "", assigned_squawk: c.assigned ? c.assigned.squawk : null, emergency: !!(c.emerg && Date.now() < c.emerg.until), no_clnc: !!(c.viol && Date.now() - c.viol.at < VIOL_SHOW_MS), clnc: c.viol && Date.now() - c.viol.at < VIOL_SHOW_MS ? c.viol.type : "", clr: this.clrOf(c, Date.now()), ...(ck === key ? { self: true } : {}), distance_miles: Math.round(d * 10) / 10 });
       }
     }
     // one symbol per airport; its staffed roles are listed in `positions`
@@ -955,6 +937,7 @@ export class Hub {
       const e = towerAircraft({ ...base, name: a, pos: "APT", holder: undefined, freq: "" }, d);
       e.positions = g.roles.map(r => ({ pos: r.pos || "TWR", freq: r.freq || "", ...(r.freq ? this.freqRoster(r.freq, vm) : {}), claimed: !!r.holder, hid: r.holder ? hid(r.holder) : "", ctl: r.holder ? (r.ctl || "") : "", nick: r.holder ? (r.nick || "") : "" }));
       e.owner_hid = g.anchor && g.anchor.owner ? hid(g.anchor.owner) : "";
+      { const ok = g.anchor && g.anchor.owner ? this.holderKey.get(g.anchor.owner) : null; e.owner_stars = ok ? this.starsFor(ok) : null; }
       e.bans = g.anchor && g.anchor.bans ? Object.values(g.anchor.bans).map(b => ({ hid: b.hid, pos: b.pos })) : [];
       e.claimed = g.roles.some(r => r.holder);
       e.approval = !!(g.anchor && g.anchor.approval);
@@ -1028,7 +1011,7 @@ export class Hub {
       if (Math.sqrt(v2) * 3600 < 20) continue;
       const t = Math.max(-3, Math.min(1.5, -(x * rvx + y * rvy) / v2));
       if (Math.hypot(x + rvx * t, y + rvy * t) > 0.03 || Math.abs(B.z - A.z + (B.v - A.v) / 60 * t) > 100) continue;
-      for (const hd of c.member || c.sec === "casual" ? [] : new Set([...this.handlersOf(c, now), ...this.handlersOf(o, now)])) { const ck = this.holderKey.get(hd); if (ck) this.demote(ck, now); }
+      for (const hd of new Set([...this.handlersOf(c, now), ...this.handlersOf(o, now)])) { const ck = this.holderKey.get(hd); if (ck) this.demote(ck, now); }
       for (const [k, q] of [[key, c], [k2, o]]) {
         const lat = Number(q.pos.latitude), lon = Number(q.pos.longitude);
         const lk = this.lockFor(k, "midair", now, { latitude: lat, longitude: lon });
@@ -1056,7 +1039,6 @@ export class Hub {
   separation(key, c, now) {
     const ok = q => q && q.phase !== "ground" && q.phase !== "runway" && Number(q.ground_speed) >= 60 && Number.isFinite(Number(q.altitude_ft)) && Number.isFinite(Number(q.heading_true));
     if (!ok(c.pos)) return;
-    if (c.member || c.sec === "casual") return;   // ATC Network / casual: no controller violations
     const A = c.pos, rad = Math.PI / 180;
     for (const [k2, o] of this.clients) {
       if (k2 === key || !ok(o.pos) || now - o.seen > 15_000 || secOf(o) !== secOf(c)) continue;
@@ -1071,7 +1053,7 @@ export class Hub {
       const hs = new Set([...this.handlersOf(c, now), ...this.handlersOf(o, now)]);
       for (const hd of hs) {
         const ck = this.holderKey.get(hd); if (!ck) continue;
-        const pf = this.profGet(ck); pf.cviol += 1; pf.saved = now; this.ctx.storage.put("prof:" + this.pkey(ck), pf);
+        this.repAdd(ck, -REP.atcSep, now); const pf = this.profGet(ck); pf.cviol += 1; pf.saved = now; this.ctx.storage.put("prof:" + this.pkey(ck), pf);
       }
     }
   }
@@ -1724,7 +1706,7 @@ export class Hub {
       const t = { name, apt: pn.apt, pos: pn.pos, freq, holder: holder || undefined, ctl: holder ? (this.ctlName(request) || undefined) : undefined, nick: holder ? (this.nickOf(key) || undefined) : undefined, oip: (old && old.oip) || ipt || undefined, latitude: lat, longitude: lon, altitude_ft: Number(d.altitude_ft) || 0, at: now, member: request.headers.get("X-Member") === "1", sec: reqSec(request), atis };
       if (pn.pos === "APT") {   // the creator owns the airport (kept across re-PUTs); bans live on the airport record
         const ow = (old && old.owner) || String(d.owner || "").slice(0, 40);
-        if (ow) t.owner = ow;
+        if (ow) { t.owner = ow; this.holderKey.set(ow, key); }
         if (old && old.bans) t.bans = old.bans;
         if (old && old.approval) t.approval = true;
         if (old && old.ok) t.ok = old.ok;
@@ -1743,7 +1725,7 @@ export class Hub {
         pr.nick = String(d.nick ?? "").replace(/[\u0000-\u001f<>]/g, "").trim().slice(0, 20); pr.saved = Date.now();
         this.ctx.storage.put("prof:" + this.pkey(key), pr);
       }
-      if (m === "GET" || m === "PUT" || m === "POST") return json({ nick: pr.nick, flight_s: Math.round(pr.flight_s), atc_s: Math.round(pr.atc_s), flights: pr.flights || 0, landings: pr.landings || 0, violations: pr.violations || 0, penalty_points: pr.vpts || 0, penalties_today: pr.pen || 0, penalty_limit: PEN_LIMIT, violations_today: pr.vio || 0, violation_limit: VIO_LIMIT, atc_demotions: pr.dem || 0, timeouts: pr.timeouts || 0, atc_violations: pr.cviol || 0, gw_actions: pr.gw || 0, own_ops: pr.ops || 0, app_s: Math.round(pr.app_s || 0), all_roles: request.headers.get("X-Member") === "1", training: { sessions: (pr.tr && pr.tr.sessions) || 0, handled: (pr.tr && pr.tr.handled) || 0, best_twr: (pr.tr && pr.tr.best_twr) || 0, best_app: (pr.tr && pr.tr.best_app) || 0, credited: { atc_s: (pr.tr && pr.tr.atc_s) || 0, app_s: (pr.tr && pr.tr.app_s) || 0, ops: (pr.tr && pr.tr.ops) || 0 } }, ...this.gradeInfo(pr) });
+      if (m === "GET" || m === "PUT" || m === "POST") return json({ nick: pr.nick, flight_s: Math.round(pr.flight_s), atc_s: Math.round(pr.atc_s), flights: pr.flights || 0, landings: pr.landings || 0, rep: Number.isFinite(pr.rep) ? pr.rep : REP_START, stars: starsOf(pr), atc_violations: pr.cviol || 0, gw_actions: pr.gw || 0, own_ops: pr.ops || 0, app_s: Math.round(pr.app_s || 0), all_roles: request.headers.get("X-Member") === "1", training: { sessions: (pr.tr && pr.tr.sessions) || 0, handled: (pr.tr && pr.tr.handled) || 0, best_twr: (pr.tr && pr.tr.best_twr) || 0, best_app: (pr.tr && pr.tr.best_app) || 0, credited: { atc_s: (pr.tr && pr.tr.atc_s) || 0, app_s: (pr.tr && pr.tr.app_s) || 0, ops: (pr.tr && pr.tr.ops) || 0 } }, ...this.gradeInfo(pr) });
     }
     if (m === "DELETE" && p === "/api/atc/tower") {
       if (this.noCred(request)) return json({ error: "atc_credential" }, 403);
@@ -1875,7 +1857,7 @@ export class Hub {
         const pr = this.prof.get(pk) || {}, ac = pk.startsWith("a:") ? this.accts.get(pk.slice(2)) : null;
         let online = null; for (const [k, c] of this.clients) if (c.pos && this.pkey(k) === pk) { online = c; break; }
         const lk = this.locks.get(pk), g = atcGrade(pr);
-        return { id: pid(pk), name: ac ? ac.display : "", nick: pr.nick || "", account: !!ac, online: !!online, callsign: online && online.plan ? online.plan.callsign || "" : "", flight_s: Math.round(pr.flight_s || 0), atc_s: Math.round(pr.atc_s || 0), flights: pr.flights || 0, landings: pr.landings || 0, violations: pr.violations || 0, vpts: pr.vpts || 0, timeouts: pr.timeouts || 0, cviol: pr.cviol || 0, strikes_today: pr.sday === new Date().toISOString().slice(0, 10) ? pr.sn || 0 : 0, atc_grade: g, atc_grade_name: GRADE_NAMES[g], grade_manual: Number.isInteger(pr.gov), pilot_grade: pilotGrade(pr), banned: !!pr.banned, ban_reason: pr.banned ? pr.banned.reason || "" : "", timeout_s: lk && lk.until > now ? Math.ceil((lk.until - now) / 1000) : 0, timeout_reason: lk && lk.until > now ? lk.note || lk.reason : "" };
+        return { id: pid(pk), name: ac ? ac.display : "", nick: pr.nick || "", account: !!ac, online: !!online, callsign: online && online.plan ? online.plan.callsign || "" : "", flight_s: Math.round(pr.flight_s || 0), atc_s: Math.round(pr.atc_s || 0), flights: pr.flights || 0, landings: pr.landings || 0, rep: Number.isFinite(pr.rep) ? pr.rep : REP_START, stars: starsOf(pr), atc_grade: g, atc_grade_name: GRADE_NAMES[g], grade_manual: Number.isInteger(pr.gov), pilot_grade: pilotGrade(pr), banned: !!pr.banned, ban_reason: pr.banned ? pr.banned.reason || "" : "", timeout_s: lk && lk.until > now ? Math.ceil((lk.until - now) / 1000) : 0, timeout_reason: lk && lk.until > now ? lk.note || lk.reason : "" };
       };
       const find = id => { id = String(id || ""); if (id.startsWith("a:")) return this.prof.has(id) || this.accts.has(id.slice(2)) ? id : null; for (const k of this.prof.keys()) if (!k.startsWith("a:") && pid(k) === id) return k; return null; };
       if (m === "GET") {
@@ -1900,11 +1882,11 @@ export class Hub {
         else if (a === "untimeout") { this.locks.delete(pk); await this.ctx.storage.delete("lock:" + pk); }
         else if (a === "reset_penalties") {
           for (const f of ["violations", "vpts", "timeouts", "cviol", "sn", "pen", "vio"]) pr[f] = 0;
-          pr.sday = ""; this.locks.delete(pk); await this.ctx.storage.delete("lock:" + pk);
+          pr.rep = REP_START; pr.sday = ""; this.locks.delete(pk); await this.ctx.storage.delete("lock:" + pk);
         }
         else if (a === "set_stats") {
-          const st = d.stats || {}, map = { violations: "violations", vpts: "vpts", timeouts: "timeouts", cviol: "cviol", strikes_today: "sn" };
-          for (const k of Object.keys(st)) { if (!map[k]) continue; const v = Math.round(Number(st[k])); if (!(v >= 0 && v <= 99999)) return json({ error: "bad_value", field: k }, 400); pr[map[k]] = v; if (k === "strikes_today") pr.sday = new Date().toISOString().slice(0, 10); }
+          const st = d.stats || {}, map = { rep: "rep" };
+          for (const k of Object.keys(st)) { if (!map[k]) continue; const v = Math.round(Number(st[k])); if (!(v >= 0 && v <= (k === "rep" ? REP_MAX : 99999))) return json({ error: "bad_value", field: k }, 400); pr[map[k]] = v; }
         }
         else if (a === "ban") { pr.banned = { at: now, reason }; drop(); }
         else if (a === "unban") delete pr.banned;
@@ -1987,7 +1969,7 @@ export class Hub {
       if (pos.phase === "air" && c.seen) { const gap = Math.min(Date.now() - c.seen, 10_000) / 1000; this.profAdd(key, "flight_s", gap, Date.now()); c.airS = (c.airS || 0) + gap; }
       else if (c.pos && c.pos.phase === "air" && pos.phase && pos.phase !== "air" && !(Number.isFinite(Number(pos.landing_fpm)) && Number(pos.landing_fpm) <= HARD_LANDING_FPM)) {   // touchdown (not a crash)
         const pf = this.profGet(key); pf.landings += 1;
-        if ((c.airS || 0) >= FLIGHT_MIN_AIR_S) pf.flights += 1;
+        if ((c.airS || 0) >= FLIGHT_MIN_AIR_S) { pf.flights += 1; this.repAdd(key, REP.flight, Date.now()); }
         c.airS = 0; pf.saved = Date.now(); this.ctx.storage.put("prof:" + this.pkey(key), pf);
       }
       c.pos = pos; c.seen = Date.now(); c.member = request.headers.get("X-Member") === "1"; c.sec = reqSec(request);

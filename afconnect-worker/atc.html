@@ -105,7 +105,6 @@ input::placeholder{color:var(--dim)}
     <button id="replayVoiceBtn" title="Replay the last voice message (sent or received). Plays locally, nothing is transmitted." disabled>Replay last</button>
     <div id="menu" style="display:none"><button id="voiceBtn" title="Voice on/off">Voice: on</button>
     <button id="acctBtn" title="Account: your hours and profile follow you on every device">Account</button>
-    <button id="modeBtn" title="Casual: clearances are suggestions, no penalties. Expert: all rules.">Server: Expert</button>
     <button id="grpBtn" title="Aerofly Connect ATC Network code (from Discord)">ATC Network</button>
     <button id="credBtn" title="ATC credential issued by the network management: lets you open towers in the network" disabled>ATC Credential</button>
     <button id="dimBtn" title="Grey out aircraft that are not on my frequencies (they stay visible)">My freqs: off</button>
@@ -491,7 +490,7 @@ function draw(){
       var gs=Number(a.ground_speed)||0,hd=(Number(a.heading_true)||0)*Math.PI/180;
       if(gs>3){var len=Math.min(60,(gs/60)/nmpp);g.beginPath();g.moveTo(x,y);g.lineTo(x+Math.sin(hd)*len,y-Math.cos(hd)*len);g.stroke()}}
     g.fillStyle=col;g.font='11px ui-monospace,monospace';g.textBaseline='top';
-    g.fillText((a.callsign||id)+(!tw&&a.nick?' ('+a.nick+')':''),x+(tw?15:9),y-12);
+    g.fillText((a.callsign||id)+(!tw&&a.nick?' ('+a.nick+')':'')+(tw?STR(a.owner_stars):STR(a.stars)),x+(tw?15:9),y-12);
     if(!tw&&a.airplane_model){g.textAlign='center';g.fillText(String(a.airplane_model).slice(0,12),x,y-25);g.textAlign='left'}
     if(!tw)g.fillText(altStr(a.altitude_ft)+' '+Math.round(Number(a.ground_speed)||0)+'kt'+(asg?'  '+asg:''),x+9,y-1);
     if(!tw)g.fillText((a.freq||'')+' '+ctrlOf(a),x+9,y+10);
@@ -579,7 +578,7 @@ function renderStrips(force){
     var vc=vclips.filter(function(v){return v.icao_address===id&&isHeard(v.freq)}).slice(-3).map(function(v){return'<div class="mlog chat"><b>'+L('PILOT voice','PILOTO voz')+'</b> '+Math.round((v.ms||0)/1000)+' s <button data-act="vplay" data-clip="'+esc(v.id)+'">&#9654;</button></div>'}).join('');
     var ml=vc+msgs.filter(function(m){return m.icao_address===id&&(m.kind!=='chat'||isHeard(m.freq))}).slice(-3).map(function(m){return m.kind==='chat'?'<div class="mlog chat"><b>'+L('PILOT','PILOTO')+':</b> '+esc(m.text)+'</div>':'<div class="mlog">&rsaquo; '+esc(m.text)+' &mdash; <b class="'+esc(m.status)+'">'+esc(m.status.toUpperCase())+'</b></div>'}).join('');
     return'<div class="strip'+(isSel?' sel':'')+(tw?' twr':(asg?'':' nocode'))+(a.no_clnc?' noclnc'+(a.clnc?' nc-'+a.clnc:''):'')+(a.emergency?' emerg':'')+(isDim(a)?' dim':'')+'" data-id="'+esc(id)+'">'+
-      '<div class="h"><span class="cs">'+esc(a.callsign||id)+(!tw&&a.nick?' <span class="m">'+esc(a.nick)+'</span>':'')+(tw?(isSel||isOwned(a)?' &#9660;':' &#9654;'):'')+(a.emergency?'<span class="mayday">MAYDAY</span>':'')+(a.no_clnc?'<span class="noc'+(a.clnc?' nc-'+a.clnc:'')+'">'+nocText(a.clnc)+'</span>':'')+'</span><span class="m">'+(tw||isSel?Math.round(r.dist)+' nm / '+p3(r.brg)+'&deg;'+(tw?'':' &middot; '+(a.freq?esc(a.freq)+' ':'')+esc(ctrlOf(a)))+(tw?'':' &middot; '):'')+(tw?'':'<b class="pt">'+phaseTag(a)+'</b>'+(flowTag(a)?' <b class="pt">'+flowTag(a)+'</b>':''))+'</span></div>'+
+      '<div class="h"><span class="cs">'+esc(a.callsign||id)+(!tw&&a.nick?' <span class="m">'+esc(a.nick)+'</span>':'')+'<span class="m">'+(tw?STR(a.owner_stars):STR(a.stars))+'</span>'+(tw?(isSel||isOwned(a)?' &#9660;':' &#9654;'):'')+(a.emergency?'<span class="mayday">MAYDAY</span>':'')+(a.no_clnc?'<span class="noc'+(a.clnc?' nc-'+a.clnc:'')+'">'+nocText(a.clnc)+'</span>':'')+'</span><span class="m">'+(tw||isSel?Math.round(r.dist)+' nm / '+p3(r.brg)+'&deg;'+(tw?'':' &middot; '+(a.freq?esc(a.freq)+' ':'')+esc(ctrlOf(a)))+(tw?'':' &middot; '):'')+(tw?'':'<b class="pt">'+phaseTag(a)+'</b>'+(flowTag(a)?' <b class="pt">'+flowTag(a)+'</b>':''))+'</span></div>'+
       (tw||!isSel?'':'<div>'+altStr(a.altitude_ft)+' &middot; '+Math.round(Number(a.ground_speed)||0)+' kt &middot; HDG '+p3(Number(a.heading_mag!=null?a.heading_mag:a.heading_true)||0)+'&deg;'+(a.heading_mag==null?'T':'')+' &middot; '+(Number(a.vertical_speed_ft_min)>100?'&uarr;':Number(a.vertical_speed_ft_min)<-100?'&darr;':'&rarr;')+' '+vsStr(a.vertical_speed_ft_min)+'</div>')+
       (tw||!isSel?'':'<div>'+st+'</div>')+
       (tw||!isSel?'':clrLine(a))+
@@ -597,7 +596,7 @@ $('strips').addEventListener('click',function(e){
   if(sel!==id){txMode='';txPrev=null}sel=sel===id?null:id;renderStrips(true);draw()});
 var group='';try{var gp=new URLSearchParams(location.search).get('group');group=gp!==null?gp:(localStorage.getItem('afc_group')||'');if(gp!==null){if(group)localStorage.setItem('afc_group',group);else localStorage.removeItem('afc_group')}}catch(e){}
 var atcCode='';try{var ap=new URLSearchParams(location.search).get('atc');atcCode=ap!==null?ap:(localStorage.getItem('afc_atc')||'');if(ap!==null){if(atcCode)localStorage.setItem('afc_atc',atcCode);else localStorage.removeItem('afc_atc')}}catch(e){}
-var mode='expert';try{var mp=new URLSearchParams(location.search).get('mode');if(mp!==null){mode=mp==='casual'?'casual':'expert';localStorage.setItem('afc_mode',mode)}else mode=localStorage.getItem('afc_mode')==='casual'?'casual':'expert'}catch(e){}
+var mode='expert';function STR(n){n=Number(n)||0;return n>0?' '+new Array(n+1).join('\u2605'):''}
 function httpApi(path,opt){opt=opt||{};opt.headers=Object.assign({'X-API-Key':key,'X-Mode':mode},group?{'X-Group':group}:{},atcCode?{'X-Atc':atcCode}:{},opt.headers||{});return fetch(path,opt)}
 /* While the socket is live every call goes through it (one billed message instead of an HTTP request); otherwise plain HTTP.
    Reply is shaped like a fetch Response (ok/status/json/text). A timed-out write is not retried over HTTP (it may have happened). */
@@ -989,7 +988,6 @@ function acctDialog(){
     b.append(m,n,pw,st,r)}
   o.append(b);document.body.append(o)}
 $('acctBtn').addEventListener('click',acctDialog);setAcctBtn();
-$('modeBtn').textContent=L('Server: ','Servidor: ')+(mode==='casual'?'Casual':'Expert');$('modeBtn').addEventListener('click',function(){try{localStorage.setItem('afc_mode',mode==='casual'?'expert':'casual')}catch(e){}location.href=location.pathname+'?key='+encodeURIComponent(key)+'&mode='+(mode==='casual'?'expert':'casual')+(group?'&group='+encodeURIComponent(group):'')});
 $('grpBtn').addEventListener('click',function(){askText(L('Aerofly Connect ATC Network code (from Discord). Empty = public section.','Código da Aerofly Connect ATC Network (do Discord). Vazio = seção pública.'),group,function(v){
   group=v.trim();try{if(group)localStorage.setItem('afc_group',group);else localStorage.removeItem('afc_group')}catch(e){}checkGroup();reopenWs();setTimeout(refreshMyTowers,1500)})});
 function reopenWs(){if(ws){var old=ws;ws=null;try{old.close()}catch(x){}}clearTimeout(wsTimer);wsOpen()}

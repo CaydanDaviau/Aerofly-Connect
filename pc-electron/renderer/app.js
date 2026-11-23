@@ -36,12 +36,6 @@
       banner.style.display = left > 0 ? "" : "none";
       if (left > 0) banner.textContent = t("Timeout - you can fly again in ", "Castigo por queda - você pode voar de novo em ") + mmss(left);
     };
-    const pill = (m, label) => h("button", { class: "pill" + ((cfg.mode || "expert") === m ? " on" : ""), onclick: async () => {
-      if (st.running) { count.textContent = t("Stop the flight first", "Pare o voo primeiro"); return; }
-      if ((cfg.mode || "expert") === m) return;
-      cfg.mode = m; await window.afc.set({ mode: m }); render();
-    } }, label);
-    const modeRow = h("div", { class: "modes", title: t("Casual: clearances are suggestions, no penalties (crashes still count). Expert: all rules. Separate servers.", "Casual: autorizações são sugestões, sem penalidades (quedas ainda contam). Expert: todas as regras. Servidores separados.") }, pill("casual", "Casual"), pill("expert", "Expert"));
     upd(); healthT = setInterval(upd, 15000); tick = setInterval(() => { const left = (cfg.crashUntil || 0) - Date.now(); banner.style.display = left > 0 ? "" : "none"; if (left > 0) banner.textContent = t("Timeout - you can fly again in ", "Castigo por queda - você pode voar de novo em ") + mmss(left); }, 1000);
     root.append(
       h("img", { class: "logo", src: "../assets/logo.png" }), h("h1", {}, "Aerofly Connect"),
@@ -65,11 +59,10 @@
       if (screen !== "profile") return;
       if (!p || p.error) { msg.textContent = t("No connection", "Sem conexão"); return; }
       nick.value = p.nick || ""; fl.textContent = hm(p.flight_s); fc.textContent = String(p.flights || 0); at.textContent = hm(p.atc_s);
-      ld.textContent = String(p.landings || 0); vi.textContent = (p.penalties_today || 0) + "/" + (p.penalty_limit || 10) + "  ·  " + (p.violations_today || 0) + "/" + (p.violation_limit || 3);
+      ld.textContent = String(p.landings || 0); vi.textContent = (p.rep ?? 500) + "  " + "\u2605".repeat(p.stars || 0) + "\u2606".repeat(5 - (p.stars || 0));
       pg.textContent = p.pilot_grade || "--"; ag.textContent = p.all_roles ? t("All roles (Network)", "Todas as funções (Network)") : (p.atc_grade_name || "--");
       const nm = { atc_s: t("ATC time", "Tempo de ATC"), gw: t("ground work actions", "ações de solo"), ops: t("takeoffs/landings at your airport", "decolagens/pousos no seu aeroporto"), app_s: t("APP time", "Tempo de APP") };
       nx.textContent = p.next_grade && !p.all_roles ? t("Next grade: ", "Próximo nível: ") + p.next_grade + " - " + (p.next_req || []).map(q => nm[q.k] + " " + (/_s$/.test(q.k) ? (Math.floor(q.have / 360) / 10) + "/" + (q.need / 3600) + " h" : q.have + "/" + q.need)).join(", ") : "";
-      if (p.atc_violations) nx.textContent += (nx.textContent ? "  ·  " : "") + t("ATC violations: ", "Violações de ATC: ") + p.atc_violations;
     });
     const save = h("button", { class: "wide primary", onclick: async () => {
       const p = await window.afc.profile(nick.value.trim());
@@ -83,7 +76,7 @@
         h("label", {}, t("Flights completed", "Voos concluídos")), fc,
         h("label", {}, t("ATC time (holding a division)", "Tempo de ATC (com uma divisão)")), at,
         h("label", {}, t("Landings", "Pousos")), ld,
-        h("label", {}, t("Penalties / Violations (today)", "Penalidades / Infrações (hoje)")), vi,
+        h("label", {}, t("Reputation (500 start, 1000 max)", "Reputação (começa em 500, máx. 1000)")), vi,
         h("label", {}, t("Pilot grade", "Nível de piloto")), pg,
         h("label", {}, t("Controller grade", "Nível de controlador")), ag, nx),
       save, msg,

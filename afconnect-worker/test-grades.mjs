@@ -33,48 +33,32 @@ await claim("APP"); t("APP heartbeat adds app_s", pf.app_s > before + 40);
 const o0 = pf.ops; hub.opsCredit("SBBR", Date.now()); t("own airport op credited to TWR/APP holder", pf.ops === o0 + 2);
 hub.opsCredit("SBXX", Date.now()); t("other airport: nothing", pf.ops === o0 + 2);
 // profile response
-r = await call("GET", "/api/profile", null, "k1"); t("profile: stats + grades", r.s === 200 && r.j.atc_grade_name === "Chief" && "landings" in r.j && "violations" in r.j && r.j.pilot_grade === "Student");
-// violations + timeouts
-const mk = (key) => ({ c: { pos: { latitude: 1, longitude: 2 }, plan: { callsign: "TST" } }, st: { viol: {} } });
+r = await call("GET", "/api/profile", null, "k1"); t("profile: stats + grades", r.s === 200 && r.j.atc_grade_name === "Chief" && "landings" in r.j && "rep" in r.j && r.j.pilot_grade === "Student");
+// reputation score (replaces penalties / timeouts)
+const mk = () => ({ c: { pos: { latitude: 1, longitude: 2 }, plan: { callsign: "TST" } }, st: { viol: {} } });
 await call("PUT", "/api/position", { latitude: 1, longitude: 2 }, "p1");
-let { c, st } = mk(); hub.violate("p1", c, st, "taxi", "SBBR", "", Date.now(), () => {});
-let pp = hub.profGet("p1"); t("taxi = 1 penalty, no violation, no timeout", pp.pen === 1 && pp.vio === 0 && pp.violations === 0 && !hub.locks.get("p1"));
-hub.violate("p1", c, st, "taxi", "SBBR", "", Date.now() + 61_000, () => {});
-t("same episode not counted twice", pp.pen === 1);
-({ c, st } = mk()); hub.violate("p1", c, st, "alt", "SBBR", "", Date.now(), () => {});
-t("altitude = 3 penalty points", pp.pen === 4 && pp.vio === 0);
-({ c, st } = mk()); hub.violate("p1", c, st, "runway", "SBBR", "27", Date.now(), () => {});
-t("runway = 1 violation + 5 min timeout", pp.vio === 1 && pp.pen === 4 && hub.locks.get("p1") && Math.abs(hub.locks.get("p1").until - Date.now() - 300_000) < 3000);
-hub.locks.delete("p1");
-for (let i = 0; i < 6; i++) { ({ c, st } = mk()); hub.violate("p1", c, st, "taxi", "SBBR", "", Date.now(), () => {}); }
-let lk = hub.locks.get("p1"); t("10 penalties = 5 min timeout", lk && lk.reason === "penalties" && Math.abs(lk.until - Date.now() - 300_000) < 3000 && pp.pen === 0);
-r = await call("PUT", "/api/position", { latitude: 1, longitude: 2 }, "p1"); t("position refused with 423", r.s === 423 && r.j.reason === "penalties" && r.j.remaining_s > 250);
-r = await call("PUT", "/api/flightplan", { callsign: "TST" }, "p1"); t("flight plan refused too", r.s === 423);
-hub.locks.delete("p1");
-({ c, st } = mk()); hub.violate("p1", c, st, "landing", "SBBR", "27", Date.now(), () => {});
-t("landing = violation 2 + 5 min timeout", pp.vio === 2 && Math.abs(hub.locks.get("p1").until - Date.now() - 300_000) < 3000);hub.locks.delete("p1");
-({ c, st } = mk()); hub.violate("p1", c, st, "runway", "SBBR", "27", Date.now(), () => {});
-lk = hub.locks.get("p1"); t("3 violations = 15 min timeout", lk && lk.reason === "violations" && Math.abs(lk.until - Date.now() - 900_000) < 3000 && pp.vio === 0);
-hub.locks.delete("p1"); pp.pen = 4; pp.vio = 2; pp.pday = "2000-01-01"; pp = hub.profGet("p1");
-t("counters reset daily", pp.pen === 0 && pp.vio === 0);
-// demotion when an ATC causes a mid-air
-const dp = hub.profGet("ctlx"); dp.lv_twr = 10; t("controller is Tower", hub.gradeInfo(dp).atc_grade === 1);
-hub.demote("ctlx", Date.now()); t("demotion: back to Ground, stat lost", hub.gradeInfo(hub.profGet("ctlx")).atc_grade === 0 && hub.profGet("ctlx").lv_twr === 0);
-// crash counts as a strike and respects the repeat rule
-await call("PUT", "/api/position", { latitude: 1, longitude: 2 }, "p2"); hub.locks.clear();
-await call("PUT", "/api/position", { latitude: 1, longitude: 2, landing_fpm: -2000 }, "p2");
-t("crash = 5 min first time", Math.abs(hub.locks.get("p2").until - Date.now() - 300_000) < 3000);
-hub.locks.delete("p2"); hub.crashes.clear();
-await call("PUT", "/api/position", { latitude: 1, longitude: 2 }, "p2"); await call("PUT", "/api/position", { latitude: 1, longitude: 2, landing_fpm: -2000 }, "p2");
-t("second crash same day = 5 min", Math.abs(hub.locks.get("p2").until - Date.now() - 300_000) < 3000);
-// timeout follows the account on another device
-hub.locks.set("a:pedro", { until: Date.now() + 100_000, reason: "crash" }); hub.toks.set("afa_x", { acct: "pedro", at: Date.now() });
-r = await call("PUT", "/api/position", { latitude: 1, longitude: 2 }, "afa_x"); t("lock is per account (token)", r.s === 423);
-// landings count
-await call("PUT", "/api/position", { latitude: 5, longitude: 5, phase: "air" }, "p3"); await call("PUT", "/api/position", { latitude: 5, longitude: 5, phase: "ground" }, "p3");
-t("landing counted", hub.profGet("p3").landings === 1);
-// ATC Network: no counters, no timeouts
-await call("PUT", "/api/position", { latitude: 1, longitude: 2 }, "m1"); hub.clients.get("m1").member = true;
-for (const ty of ["taxi", "alt", "runway", "landing", "runway", "landing"]) { const x = { c: hub.clients.get("m1"), st: { viol: {} } }; hub.violate("m1", x.c, x.st, ty, "SBBR", "27", Date.now(), () => {}); }
-t("member: no penalties/violations/timeout", hub.profGet("m1").pen === 0 && hub.profGet("m1").violations === 0 && !hub.locks.get("m1"));
-console.log(fails ? "FAILS: " + fails : "all pass"); process.exit(fails ? 1 : 0);
+let { c, st } = mk(); const nowT = Date.now();
+t("score starts at 500 (2 stars)", hub.repOf("p1") === 500 && hub.starsFor("p1") === 2);
+hub.violate("p1", c, st, "taxi", "SBBR", "", nowT, () => {});
+t("taxi without clearance: -5, no timeout", hub.repOf("p1") === 495 && !hub.locks.get("p1"));
+hub.violate("p1", c, st, "taxi", "SBBR", "", nowT + 61_000, () => {});
+t("same episode not counted twice", hub.repOf("p1") === 495);
+({ c, st } = mk()); hub.violate("p1", c, st, "runway", "SBBR", "27", nowT, () => {});
+t("runway without clearance: -20, no timeout", hub.repOf("p1") === 475 && !hub.locks.get("p1"));
+({ c, st } = mk()); hub.violate("p1", c, st, "landing", "SBBR", "27", nowT, () => {});
+t("landing without clearance: -40, no timeout", hub.repOf("p1") === 435 && !hub.locks.get("p1") && hub.starsFor("p1") === 2);
+hub.repAdd("p1", 100, nowT); t("100 more points: 3 stars (535)", hub.repOf("p1") === 535 && hub.starsFor("p1") === 2 && (hub.repAdd("p1", 70, nowT), hub.starsFor("p1") === 3));
+hub.repAdd("p1", 5000, nowT); t("capped at 1000 (5 stars)", hub.repOf("p1") === 1000 && hub.starsFor("p1") === 5);
+hub.repAdd("p1", -5000, nowT); t("never below 0", hub.repOf("p1") === 0 && hub.starsFor("p1") === 0);
+hub.repAdd("p1", 500, nowT);
+// crash: -100, only a 10 s removal, no strikes
+const lk = hub.lockFor("p1", "crash", nowT, {}); t("crash: -100 and 10 s removal only", hub.repOf("p1") === 400 && lk.until - nowT === 10_000 && !(hub.profGet("p1").timeouts > 0));
+// positive actions
+await call("PUT", "/api/position", { latitude: 1, longitude: 2 }, "p2");
+hub.repAdd("p2", 15, nowT); t("flight completed +15", hub.repOf("p2") === 515);
+r = await call("GET", "/api/profile", null, "p2"); t("profile exposes rep + stars, no penalties", r.j.rep === 515 && r.j.stars === 2 && !("penalties_today" in r.j) && !("timeouts" in r.j));
+// stars on traffic
+await call("PUT", "/api/flightplan", { callsign: "STAR1" }, "p2"); await call("PUT", "/api/position", { latitude: 1, longitude: 2, altitude_ft: 3000, ground_speed: 100, heading_true: 10, phase: "air" }, "p2");
+r = await call("GET", "/api/traffic?lat=1&lon=2&radius_miles=50", null, "p3"); t("traffic carries stars", (r.j.aircraft || []).some(a => a.callsign === "STAR1" && a.stars === 2));
+// manager reset
+console.log(fails ? "FAILS: " + fails : "all ok"); process.exit(fails ? 1 : 0);

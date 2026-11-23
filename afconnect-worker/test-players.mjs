@@ -46,11 +46,11 @@ t("ban/grade stored in profile storage", [...store.keys()].some(k => k.startsWit
 {
   const pk = [...hub.prof.keys()].find(k => hub.prof.get(k).nick === "Maverick"), pr = hub.prof.get(pk);
   pr.violations = 4; pr.vpts = 9; pr.timeouts = 2; pr.cviol = 1;
-  r = await call("POST", "/api/manager/player", { id: id1, action: "set_stats", stats: { violations: 1, vpts: 3, strikes_today: 1, bogus: 5 } }, "m", M);
-  t("edit stats", r.s === 200 && r.j.player.violations === 1 && r.j.player.vpts === 3 && r.j.player.strikes_today === 1 && r.j.player.timeouts === 2);
-  r = await call("POST", "/api/manager/player", { id: id1, action: "set_stats", stats: { timeouts: -1 } }, "m", M); t("negative refused", r.s === 400 && r.j.field === "timeouts");
+  r = await call("POST", "/api/manager/player", { id: id1, action: "set_stats", stats: { rep: 640, bogus: 5 } }, "m", M);
+  t("edit stats", r.s === 200 && r.j.player.rep === 640 && r.j.player.stars === 3);
+  r = await call("POST", "/api/manager/player", { id: id1, action: "set_stats", stats: { rep: -1 } }, "m", M); t("negative refused", r.s === 400 && r.j.field === "rep");
   await call("POST", "/api/manager/player", { id: id1, action: "timeout", minutes: 5 }, "m", M);
   r = await call("POST", "/api/manager/player", { id: id1, action: "reset_penalties" }, "m", M);
-  const q = r.j.player; t("reset zeroes everything and lifts the timeout", q.violations === 0 && q.vpts === 0 && q.timeouts === 0 && q.cviol === 0 && q.strikes_today === 0 && q.timeout_s === 0);
+  const q = r.j.player; t("reset sets score 500 and lifts the timeout", q.rep === 500 && q.timeout_s === 0);
 }
 console.log(fails ? fails + " FAIL" : "0 FAIL"); process.exit(fails ? 1 : 0);

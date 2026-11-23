@@ -152,18 +152,6 @@ public class MainActivity extends Activity {
         info.setPadding(0, pad / 6, 0, pad);
         root.addView(info);
 
-        // server mode: two compact pills (a separate world each; casual = clearances are suggestions, no penalties)
-        LinearLayout modeRow = new LinearLayout(this);
-        modeRow.setOrientation(LinearLayout.HORIZONTAL);
-        modeRow.setGravity(Gravity.CENTER);
-        modeCasual = modePill(Api.t(this, "Casual", "Casual"), "casual");
-        modeExpert = modePill(Api.t(this, "Expert", "Expert"), "expert");
-        modeRow.addView(modeCasual, new LinearLayout.LayoutParams(Ui.dp(this, 96), Ui.dp(this, 34)));
-        View gap = new View(this);
-        modeRow.addView(gap, new LinearLayout.LayoutParams(Ui.dp(this, 8), 1));
-        modeRow.addView(modeExpert, new LinearLayout.LayoutParams(Ui.dp(this, 96), Ui.dp(this, 34)));
-        paintModes();
-        root.addView(modeRow, Ui.lp(this, 8));
 
         menuOnline = dim("", 13);
         menuOnline.setGravity(Gravity.CENTER);
@@ -222,8 +210,7 @@ public class MainActivity extends Activity {
     private TextView menuOnline, menuCrash, menuUpd;
     private Runnable menuTick;
     private int menuTicks;
-    private String menuGroup = "", menuMode = "";
-    private Button modeCasual, modeExpert;
+    private String menuGroup = "";
 
     private void startMenuTick() {
         stopMenuTick();
@@ -238,7 +225,7 @@ public class MainActivity extends Activity {
                 } else menuCrash.setVisibility(View.GONE);
                 // the online count goes through the WebSocket (one connection instead of a request every 15 s); during a flight the service owns the socket
                 if (!PilotService.running) {
-                    if (!menuGroup.equals(Api.group) || !menuMode.equals(Api.mode)) { menuGroup = Api.group; menuMode = Api.mode; WsLink.close(); }
+                    if (!menuGroup.equals(Api.group)) { menuGroup = Api.group; WsLink.close(); }
                     WsLink.ensure(Api.key(MainActivity.this), false, 0, 0, System.currentTimeMillis());
                 }
                 if (menuTicks++ % 15 == 0) fetchOnline();   // right away, then every 15 s
@@ -264,31 +251,6 @@ public class MainActivity extends Activity {
             if (p != q) return p > q;
         }
         return false;
-    }
-
-    private Button modePill(String label, final String m) {
-        Button b = Ui.button(this, label, Ui.SECONDARY);
-        b.setTextSize(13);
-        b.setMinHeight(0); b.setMinimumHeight(0);
-        b.setPadding(0, 0, 0, 0);
-        b.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) {
-            if (m.equals(Api.mode)) return;
-            if (PilotService.running) { Toast.makeText(MainActivity.this, Api.t(MainActivity.this, "Stop the flight first", "Pare o voo primeiro"), Toast.LENGTH_SHORT).show(); return; }
-            Api.setMode(MainActivity.this, m);
-            paintModes();
-            Toast.makeText(MainActivity.this, "casual".equals(m)
-                    ? Api.t(MainActivity.this, "Casual: clearances are suggestions, no penalties (crashes still count). Separate from Expert.", "Casual: autorizações são sugestões, sem penalidades (quedas ainda contam). Separado do Expert.")
-                    : Api.t(MainActivity.this, "Expert: all rules and penalties apply.", "Expert: todas as regras e penalidades valem."), Toast.LENGTH_LONG).show();
-            fetchOnline();
-        } });
-        return b;
-    }
-
-    private void paintModes() {
-        if (modeCasual == null || modeExpert == null) return;
-        boolean c = "casual".equals(Api.mode);
-        Ui.kind(this, modeCasual, c ? Ui.PRIMARY : Ui.SECONDARY);
-        Ui.kind(this, modeExpert, c ? Ui.SECONDARY : Ui.PRIMARY);
     }
 
     private void fetchOnline() {
@@ -357,7 +319,7 @@ public class MainActivity extends Activity {
         final TextView lands = text("--", 18, true), viols = text("--", 18, true), pgrade = text("--", 18, true), agrade = text("--", 18, true), nextReq = dim("", 13);
         card.addView(dim(Api.t(this, "Landings", "Pousos"), 13));
         card.addView(lands);
-        card.addView(dim(Api.t(this, "Penalties / Violations (today)", "Penalidades / Infrações (hoje)"), 13));
+        card.addView(dim(Api.t(this, "Reputation (500 start, 1000 max)", "Reputação (começa em 500, máx. 1000)"), 13));
         card.addView(viols);
         card.addView(dim(Api.t(this, "Pilot grade", "Nível de piloto"), 13));
         card.addView(pgrade);
@@ -385,7 +347,7 @@ public class MainActivity extends Activity {
                                 atc.setText(hm(j.optLong("atc_s", 0)));
                                 flights.setText(String.valueOf(j.optLong("flights", 0)));
                                 lands.setText(String.valueOf(j.optLong("landings", 0)));
-                                viols.setText(j.optLong("penalties_today", 0) + "/" + j.optLong("penalty_limit", 10) + "  ·  " + j.optLong("violations_today", 0) + "/" + j.optLong("violation_limit", 3));
+                                int st = (int) j.optLong("stars", 0); StringBuilder sr = new StringBuilder(); for (int q = 0; q < 5; q++) sr.append(q < st ? "\u2605" : "\u2606"); viols.setText(j.optLong("rep", 500) + "  " + sr);
                                 pgrade.setText(j.optString("pilot_grade", "--"));
                                 boolean allRoles = j.optBoolean("all_roles", false);
                                 agrade.setText(allRoles ? Api.t(MainActivity.this, "All roles (Network)", "Todas as funções (Network)") : j.optString("atc_grade_name", "--"));

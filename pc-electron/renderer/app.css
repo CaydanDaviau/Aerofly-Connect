@@ -40,6 +40,3 @@ button[disabled]{opacity:.45;cursor:default}
 
 .big{font-size:18px;font-weight:700;margin:2px 0 8px}
 
-.modes{display:flex;gap:8px;justify-content:center;margin:6px 0 4px}
-.modes .pill{width:96px;height:32px;padding:0;font-size:13px;font-weight:700;border-radius:12px;background:#01242A;border:1px solid #1E7480;color:#4FE3D0;cursor:pointer}
-.modes .pill.on{background:#4FE3D0;color:#00353d;border-color:#4FE3D0}
