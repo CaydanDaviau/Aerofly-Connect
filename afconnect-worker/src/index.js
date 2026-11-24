@@ -153,7 +153,7 @@ function computeTA(a, b) {
 // ---- Auto-ATC (basic clearances for pilots when no human controller covers the airport) ----
 // Newest released app versions: bump when a new APK / PC build is published; clients older than this show an update notice.
 const FLIGHT_MIN_AIR_S = 180;   // airborne at least 3 min, then touchdown (no crash) = flight completed
-const LATEST = { android: "1.3.8", pc: "2.3.6" };
+const LATEST = { android: "1.3.8", pc: "2.3.7" };
 const REQ_TYPES = ["clearance", "pushback", "taxi", "takeoff", "land", "climb", "descent", "mayday", "mayday_cancel"];
 const MAYDAY_MS = 30 * 60_000, MAYDAY_NEAR_MI = 30;
 const REQ_LOCK_MS = { takeoff: 90_000, land: 120_000 };
