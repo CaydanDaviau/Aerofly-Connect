@@ -16,11 +16,13 @@ body.pip #bar,body.pip #info,body.pip .maplibregl-ctrl-attrib{display:none!impor
 <div id="bar">
   <button id="bFollow" class="on">Follow</button>
   <button id="bHdg">North up</button>
+  <button id="bPl3">3D planes</button>
   <button id="bStyle">Map: Liberty (3D Buildings)</button>
   <button id="bPip" style="display:none">PiP</button>
 </div>
 <div id="info">starting...</div>
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="https://unpkg.com/three@0.149.0/build/three.min.js"></script>
 <script>
 (function(){
 var P=new URLSearchParams(location.search), KEY=P.get('key')||'', BASE=location.origin, GROUP=(function(){var g=P.get('group');if(g!==null)return g;try{return localStorage.getItem('afc_group')||''}catch(e){return ''}})();
@@ -28,7 +30,7 @@ var MODE='expert';var ownStars=0,ownStripes=0;function BAR(n){n=Number(n)||0;ret
 function hdrs(){var h={'X-API-Key':KEY||'viewer','X-Mode':MODE};if(GROUP)h['X-Group']=GROUP;return h}
 var STYLES=[['Liberty (3D Buildings)','https://tiles.openfreemap.org/styles/liberty'],['Satellite',{version:8,glyphs:'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf',sources:{sat:{type:'raster',tileSize:256,maxzoom:19,attribution:'Imagery © Esri, Maxar, Earthstar Geographics',tiles:['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}']},omt:{type:'vector',url:'https://tiles.openfreemap.org/planet'}},layers:[{id:'sat',type:'raster',source:'sat'}]}],['Bright','https://tiles.openfreemap.org/styles/bright']];
 var si=0; try{si=Math.min(STYLES.length-1,Math.max(0,parseInt(localStorage.getItem('rv_style')||'0',10)||0))}catch(e){}
-var own=null, follow=true, hdgUp=false, trails={}, ttimes={}, lastTraffic=[], lastCrashes=[], towers=[], ready=false;
+var ownModel='',own=null, follow=true, hdgUp=false, trails={}, ttimes={}, lastTraffic=[], lastCrashes=[], towers=[], ready=false;
 var TRACE_MS=30*60*1000, GAP_MS=60000, TK='afc_trails_v1';
 // traces live 30 min and survive closing the map (saved in the WebView's local storage)
 function loadTrails(){try{var j=JSON.parse(localStorage.getItem(TK)||'null');if(!j||!j.tr)return;var now=Date.now();
@@ -48,7 +50,7 @@ loadTrails();
 var info=document.getElementById('info');
 function setInfo(t){info.textContent=t}
 
-var map=new maplibregl.Map({container:'map',style:STYLES[si][1],center:[-47.92,-15.87],zoom:12,attributionControl:{compact:true},pitchWithRotate:false,dragRotate:true});
+var map=new maplibregl.Map({container:'map',style:STYLES[si][1],center:[-47.92,-15.87],zoom:12,attributionControl:{compact:true},pitchWithRotate:false,dragRotate:true,antialias:true});
 document.getElementById('bStyle').textContent='Map: '+STYLES[si][0];
 map.on('dragstart',function(){ if(follow) setFollow(false) });
 
@@ -97,11 +99,188 @@ function addLayers(){
   if(!map.getLayer('ownfpm'))map.addLayer({id:'ownfpm',type:'symbol',source:'ownsrc',filter:['!=',['get','fpm'],''],layout:Object.assign({'text-field':['get','fpm'],'text-anchor':'top','text-offset':[0,2.4]},hl),paint:{'text-color':'#b3261e','text-halo-color':'#fff','text-halo-width':1.8}});
   if(!map.getLayer('crashx'))map.addLayer({id:'crashx',type:'symbol',source:'crashes',layout:{'text-field':'X','text-font':['Noto Sans Bold'],'text-size':34,'text-allow-overlap':true,'text-ignore-placement':true},paint:{'text-color':'#d93025','text-halo-color':'#fff','text-halo-width':2.2}});
   if(!map.getLayer('crashlbl'))map.addLayer({id:'crashlbl',type:'symbol',source:'crashes',layout:{'text-field':['get','label'],'text-font':['Noto Sans Bold'],'text-size':12,'text-anchor':'top','text-offset':[0,1.2],'text-allow-overlap':true,'text-ignore-placement':true},paint:{'text-color':'#b3261e','text-halo-color':'#fff','text-halo-width':1.8}});
+  attach3d();apply3dIcons();
   ready=true; render();
 }
 map.on('style.load',addLayers);
 map.on('styledata',function(){ if(map.isStyleLoaded()&&!map.getLayer('planes'))addLayers() });
 map.on('idle',function(){ if(!map.getLayer('planes')||!map.hasImage('plane')){ready=false;addLayers()} });
+
+// ---- 3D aircraft (three.js custom layer; low-poly models from code, sized like the real type) ----
+// Each type: L length m, W span m, d fuselage diameter m, wing low/high, engines under wing ('w'), on the rear ('r'), props ('p'), tail 'c' or 'T'
+var TYPES={
+  a380:{L:72.7,W:79.8,d:7.2,n:4,e:'w',ex:[12,26],er:1.7,el:5,rc:15,tc:3.6,sw:25,hump:1,rcw:'low',ty:'c'},
+  b747:{L:70.7,W:64.4,d:6.5,n:4,e:'w',ex:[11,24],er:1.3,el:5,rc:15,tc:3.8,sw:25,hump:.6,rcw:'low',ty:'c'},
+  a340:{L:63.7,W:60.3,d:5.6,n:4,e:'w',ex:[10,20],er:1.2,el:4.6,rc:13,tc:3.4,sw:22,rcw:'low',ty:'c'},
+  md11:{L:61.6,W:51.7,d:6.0,n:3,e:'w',ex:[10],er:1.5,el:5,rc:13,tc:3.2,sw:18,rcw:'low',ty:'c',tail3:1},
+  b777:{L:70.9,W:64.8,d:6.2,n:2,e:'w',ex:[11.5],er:1.9,el:6,rc:15,tc:3.6,sw:24,rcw:'low',ty:'c'},
+  b787:{L:62.8,W:60.1,d:5.8,n:2,e:'w',ex:[10.5],er:1.5,el:5,rc:12.5,tc:3.2,sw:20,rcw:'low',ty:'c'},
+  a350:{L:66.8,W:64.7,d:5.96,n:2,e:'w',ex:[10.5],er:1.5,el:5,rc:13,tc:3.2,sw:21,rcw:'low',ty:'c'},
+  a330:{L:63.7,W:60.3,d:5.64,n:2,e:'w',ex:[10],er:1.4,el:4.8,rc:13,tc:3.2,sw:21,rcw:'low',ty:'c'},
+  b767:{L:54.9,W:47.6,d:5.0,n:2,e:'w',ex:[8.5],er:1.3,el:4.5,rc:11,tc:2.8,sw:16,rcw:'low',ty:'c'},
+  b757:{L:47.3,W:38.0,d:3.76,n:2,e:'w',ex:[6.4],er:1.1,el:4,rc:8.5,tc:2.2,sw:13,rcw:'low',ty:'c'},
+  b737:{L:39.5,W:35.8,d:3.76,n:2,e:'w',ex:[5.6],er:1.0,el:3.6,rc:7.5,tc:1.9,sw:11,rcw:'low',ty:'c'},
+  a320:{L:37.6,W:35.8,d:3.95,n:2,e:'w',ex:[5.8],er:1.0,el:3.6,rc:7.2,tc:1.9,sw:11,rcw:'low',ty:'c'},
+  a220:{L:38.7,W:35.1,d:3.5,n:2,e:'w',ex:[5.4],er:1.05,el:3.6,rc:6.8,tc:1.8,sw:10,rcw:'low',ty:'c'},
+  ejet:{L:36.2,W:28.7,d:3.3,n:2,e:'w',ex:[4.9],er:.95,el:3.4,rc:6,tc:1.6,sw:8,rcw:'low',ty:'c'},
+  crj:{L:36.4,W:24.9,d:2.7,n:2,e:'r',er:.8,el:3.2,rc:5.4,tc:1.5,sw:8,rcw:'low',ty:'T'},
+  biz:{L:18.5,W:19,d:2.2,n:2,e:'r',er:.6,el:2.4,rc:3.6,tc:1.2,sw:4.5,rcw:'low',ty:'T'},
+  tprop:{L:27.2,W:27.1,d:2.8,n:2,e:'p',ex:[4.6],er:.6,el:3.4,rc:2.6,tc:1.6,sw:.8,rcw:'high',ty:'T',prop:1.8},
+  sprop:{L:11.5,W:15.9,d:1.6,n:1,e:'f',er:.55,el:1.6,rc:1.9,tc:1.3,sw:.6,rcw:'high',ty:'c',prop:1.35,wd:.2},
+  light:{L:8.3,W:11,d:1.2,n:1,e:'f',er:.4,el:1.2,rc:1.6,tc:1.2,sw:.2,rcw:'high',ty:'c',prop:1.9,wd:.1},
+  twin:{L:9.1,W:11.5,d:1.3,n:2,e:'p',ex:[2.3],er:.35,el:1.7,rc:1.9,tc:1.2,sw:.5,rcw:'low',ty:'c',prop:1.7},
+  fighter:{L:15,W:9.5,d:1.6,n:1,e:'r1',er:.6,el:4,rc:7,tc:1.2,sw:5.5,rcw:'low',ty:'c',fgt:1},
+  heli:{L:12.5,W:11.5,d:1.9,heli:1}
+};
+// order matters: first match wins. Input is the free-text model field, upper case, only letters+digits
+var TMAP=[
+ [/A380|A388|A389/,'a380'],[/747|B74|B748|JUMBO/,'b747'],[/A34[0-9]|A340/,'a340'],[/MD11|MD-11|DC10|MD10/,'md11'],
+ [/777|B77|B7[0-9]W/,'b777'],[/787|B78/,'b787'],[/A35|A359|A35K/,'a350'],[/A33|A330|A332|A333|A338|A339|A310|A306/,'a330'],
+ [/767|B76/,'b767'],[/757|B75/,'b757'],[/737|B73|B37M|B38M|B39M/,'b737'],
+ [/A22|A220|BCS|CS100|CS300/,'a220'],[/A32|A31|A318|A319|A320|A321|A20N|A21N|A19N/,'a320'],
+ [/CRJ|CL30|CL60|CHALLENGER/,'crj'],
+ [/E17|E19|E29|E75|E190|E195|E170|ERJ|E145|E135|EMB|MD8|MD9|B717|F100|DC9|SU95/,'ejet'],
+ [/AT4|AT7|ATR|DH8|DASH|Q400|SF34|SAAB|B190|BEECH1900|DHC6|FOKKER|F50|L410|AN24|AN26|C130|A400/,'tprop'],
+ [/C208|CARAVAN|PC12|PC-12|TBM|KODIAK|PA46|M600|MERLIN|DHC2|DHC3/,'sprop'],
+ [/BE58|BE55|BE60|BARON|PA34|PA44|DA62|DA42|C310|C340|C414|C421|SEMINOLE|DIAMONDTWIN|SENECA|AEROSTAR/,'twin'],
+ [/R44|R22|R66|H125|H130|H135|H145|H160|H175|AS35|EC13|EC14|EC35|EC45|B06|B407|B412|S76|S92|UH|MI8|MI-8|A109|A119|A139|A169|A189|HELI|BELL|ROBINSON|H60|AW1|AW139/,'heli'],
+ [/F16|F18|F15|F22|F35|F14|F4|A10|EF2|TYPH|GRIPEN|RAFALE|MIG|SU2|SU3|SU5|TORNADO|HARRIER|MIRAGE|FIGHTER|T38|HAWK|JAS/,'fighter'],
+ [/C25|C5[0-9]|C68|C75|C510|C525|C550|C560|C680|C750|LJ|LEAR|GLF|GULF|G[2-7][0-9]{2}|G[4-7]|E55|E50|FA[0-9]|F2TH|F900|H25|HA4|BE40|PRM|PC24|HDJT|BIZ|JET|CITATION|CJ[0-9]/,'biz'],
+ [/C1[0-9]{2}|C2[0-9]{2}|C4[0-9]{2}|CESSNA|SKYHAWK|PIPER|PA2|PA3[0-9]|PA1|SR2|CIRRUS|DA4|DA2|DIAMOND|ROBIN|DR40|TB[0-9]|AA5|M20|BE3|BONANZA|CHEROKEE|ARCHER|CUB|PITTS|EXTRA|YAK|SLING|RV|CHEETAH|C172|C152|C182/,'light']
+];
+function typeOf(m){m=String(m||'').toUpperCase().replace(/[^A-Z0-9]/g,'');if(!m)return'a320';
+  for(var i=0;i<TMAP.length;i++)if(TMAP[i][0].test(m))return TMAP[i][1];
+  return 'a320'}
+var G3={on:true,list:[],st:{},obj:{},geo:{},mats:null,scene:null,cam:null,ren:null,hold:null,gl:null,Z:13.5,ok:false,cnt:0};
+try{G3.on=localStorage.getItem('afc_pl3')!=='0'}catch(e){}
+function g3show(){return G3.ok&&G3.on&&typeof THREE!=='undefined'&&!document.body.classList.contains('pip')}
+// ---- geometry helpers ----
+function gPlace(g,p,r,s){var m=new THREE.Matrix4();m.compose(new THREE.Vector3(p[0],p[1],p[2]),new THREE.Quaternion().setFromEuler(new THREE.Euler(r?r[0]:0,r?r[1]:0,r?r[2]:0)),new THREE.Vector3(s?s[0]:1,s?s[1]:1,s?s[2]:1));g.applyMatrix4(m);return g}
+function gCyl(rt,rb,h,seg){return new THREE.CylinderGeometry(rt,rb,h,seg||10,1,false)}
+function gPrism(a,b,c,d,o){ // quad a,b,c,d (CCW seen from +o), thickness vector o on both sides
+  var P=[a,b,c,d],v=[];for(var i=0;i<4;i++)v.push([P[i][0]-o[0],P[i][1]-o[1],P[i][2]-o[2]]);for(i=0;i<4;i++)v.push([P[i][0]+o[0],P[i][1]+o[1],P[i][2]+o[2]]);
+  var f=[[4,5,6],[4,6,7],[0,2,1],[0,3,2],[0,1,5],[0,5,4],[1,2,6],[1,6,5],[2,3,7],[2,7,6],[3,0,4],[3,4,7]],pos=[];
+  f.forEach(function(t){t.forEach(function(k){pos.push(v[k][0],v[k][1],v[k][2])})});
+  var g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));g.computeVertexNormals();return g}
+function buildType(S){
+  var body=[],acc=[],pc=function(g,col,list){list=list||body;var n=g.index?g.toNonIndexed():g;var c=new THREE.Color(col),a=[],cnt=n.attributes.position.count;for(var i=0;i<cnt;i++)a.push(c.r,c.g,c.b);n.setAttribute('color',new THREE.Float32BufferAttribute(a,3));list.push(n)};
+  var W='#eeeeee',DK='#2f3237',GR='#b9bec5';
+  if(S.heli)return buildHeli(S,pc,body);
+  var L=S.L,r=S.d/2,ln=L*.17,lt=L*.27,lm=L-ln-lt,gh=r+Math.max(.9,r*.55);
+  var rz=S.rcw==='high'?r*.75:-r*.55;
+  // fuselage
+  var hz=S.hump?[1,1,1+S.hump*.18]:[1,1,1];
+  pc(gPlace(gCyl(r,r,lm,14),[0,L/2-ln-lm/2,0],null,hz),W);
+  pc(gPlace(gCyl(r*.1,r,ln,14),[0,L/2-ln/2,-r*.05],null,hz),W);
+  pc(gPlace(gCyl(r,r*.22,lt,14),[0,L/2-ln-lm-lt/2,r*.18],[-.07,0,0],null),W);
+  pc(gPlace(new THREE.BoxGeometry(r*1.1,ln*.22,r*.3),[0,L/2-ln*.5,r*.42]),DK);   // cockpit windows
+  if(S.hump){pc(gPlace(gCyl(r*.8,r*.8,L*(S.hump>.8?.55:.2),12),[0,L/2-ln-(S.hump>.8?L*.27:L*.08),r*.55],null,[1,1,.75]),W)}
+  // wings (both sides)
+  var wy=L/2-ln-lm*(S.fgt?.45:.42),half=S.W/2-r*.8;
+  [1,-1].forEach(function(s){
+    var x0=s*r*.8,x1=s*(r*.8+half),dz=half*.045;
+    pc(gPrism([x0,wy,rz],[x0,wy-S.rc,rz],[x1,wy-S.sw-S.tc,rz+dz],[x1,wy-S.sw,rz+dz],[0,0,.14]),W);
+    // winglet / wing-tip accent
+    if(!S.prop&&!S.fgt&&S.W>20)pc(gPrism([x1,wy-S.sw,rz+dz],[x1,wy-S.sw-S.tc,rz+dz],[x1,wy-S.sw-S.tc*.8,rz+dz+S.W*.03],[x1,wy-S.sw-S.tc*.1,rz+dz+S.W*.03],[.07,0,0]),'#ffffff',acc);
+  });
+  // tail
+  var ty=-L/2+lt*.62,fh=r*(S.fgt?1.6:2.1);
+  var fz=r*.62;
+  pc(gPrism([0,ty,fz],[0,ty-S.rc*.8,fz],[0,ty-S.rc*.8-S.sw*.55-S.tc*.4,fz+fh],[0,ty-S.sw*.55,fz+fh],[.1,0,0]),'#ffffff',acc);   // fin (team colour)
+  var tz=S.ty==='T'?fz+fh:r*.35,hs=S.W*.17;
+  [1,-1].forEach(function(s){pc(gPrism([0,ty-S.rc*.1,tz],[0,ty-S.rc*.1-S.rc*.45,tz],[s*hs,ty-S.rc*.1-S.rc*.45-S.sw*.4,tz+hs*.04],[s*hs,ty-S.rc*.1-S.sw*.4,tz+hs*.04],[0,0,.1]),W)});
+  // engines
+  var er=S.er,el=S.el;
+  function eng(x,y,z,prop){pc(gPlace(gCyl(er,er*.86,el,12),[x,y,z]),GR);pc(gPlace(gCyl(er*.96,er*.96,.25,12),[x,y+el/2,z]),DK);
+    pc(gPlace(gCyl(er*1.04,er*1.04,.35,12),[x,y+el*.12,z]),'#ffffff',acc);
+    if(prop)pc(gPlace(gCyl(prop,prop,.07,14),[x,y+el/2+.35,z]),'#555a60')}
+  if(S.e==='w'){S.ex.forEach(function(ex){[1,-1].forEach(function(s){var x=s*(r+ex),fr=(ex)/half,ly=wy-S.sw*fr;eng(x,ly+el*.22,rz-er*1.05,0)})});
+    if(S.tail3)eng(0,ty+el*.1,fz+fh*.55,0)}
+  else if(S.e==='r'){[1,-1].forEach(function(s){eng(s*(r+er*1.15),-L/2+L*.2,r*.35,0)})}
+  else if(S.e==='r1'){eng(0,-L/2+el*.45,0,0)}
+  else if(S.e==='p'){S.ex.forEach(function(ex){[1,-1].forEach(function(s){var x=s*(r+ex);eng(x,wy-S.sw*ex/half+el*.1,rz-(S.rcw==='high'?er*1.1:er*.6),S.prop)})})}
+  else if(S.e==='f'){pc(gPlace(gCyl(er,er*.9,el,12),[0,L/2-el*.4+.1,0]),W);pc(gPlace(gCyl(S.prop,S.prop,.06,14),[0,L/2+.45,0]),'#555a60')}
+  // landing gear
+  var lh=gh-r*.55,lw=Math.max(.14,r*.07);
+  function leg(x,y){pc(gPlace(gCyl(lw,lw,lh,6),[x,y,-(gh+r*.55)/2]),DK);pc(gPlace(new THREE.BoxGeometry(lw*3.4,lw*6,lw*3.4),[x,y,-gh+lw*1.7]),'#1c1d20')}
+  leg(0,L/2-ln*1.15);if(S.W>20||S.e==='w'){leg(r*.9,wy-S.rc*.9);leg(-r*.9,wy-S.rc*.9)}else{leg(r*.9,wy-S.rc*.6);leg(-r*.9,wy-S.rc*.6)}
+  return finishType(body,acc,gh,L,S.W)}
+function buildHeli(S,pc,body){
+  var acc=[],W='#e9e9e9',DK='#2f3237',r=S.d/2,L=S.L;
+  pc(gPlace(new THREE.SphereGeometry(r,14,10),[0,L*.2,0],null,[.95,1.5,1]),W);
+  pc(gPlace(gCyl(.28,.5,L*.55,8),[0,-L*.12,r*.2],[-.05,0,0]),W);
+  pc(gPrism([0,-L*.36,r*.2],[0,-L*.5,r*.2],[0,-L*.5-.4,r*.2+1.4],[0,-L*.36+.3,r*.2+1.4],[.07,0,0]),'#ffffff',acc);
+  pc(gPlace(gCyl(.15,.15,r*.7,6),[0,L*.1,r*1.15]),DK);
+  var bz=r*1.5;[0,Math.PI/2].forEach(function(a){pc(gPlace(new THREE.BoxGeometry(S.W,.3,.05),[0,L*.1,bz],[0,0,a+.4]),'#222');});
+  var gh=r+.6;
+  [1,-1].forEach(function(s){pc(gPlace(gCyl(.06,.06,L*.55,5),[s*r*.9,L*.2,-gh+.08],[Math.PI/2,0,0]),DK);
+    [L*.05,L*.35].forEach(function(y){pc(gPlace(gCyl(.04,.04,gh-r*.45,4),[s*r*.9,y,-(gh+r*.45)/2]),DK)})});
+  return finishType(body,acc,gh,L,S.W)}
+function merge(list,gh){var pos=[],nor=[],col=[];list.forEach(function(g){var n=g.attributes.normal||(g.computeVertexNormals(),g.attributes.normal);
+    var p=g.attributes.position.array,nn=g.attributes.normal.array,c=g.attributes.color?g.attributes.color.array:null;
+    for(var i=0;i<p.length;i+=3){pos.push(p[i],p[i+1],p[i+2]+gh);nor.push(nn[i],nn[i+1],nn[i+2]);if(c)col.push(c[i],c[i+1],c[i+2]);else col.push(1,1,1)}});
+  var o=new THREE.BufferGeometry();o.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));o.setAttribute('normal',new THREE.Float32BufferAttribute(nor,3));o.setAttribute('color',new THREE.Float32BufferAttribute(col,3));return o}
+function finishType(body,acc,gh,L,W){return {body:merge(body,gh),acc:merge(acc,gh),L:L,W:W}}
+function geoFor(t){if(!G3.geo[t])G3.geo[t]=buildType(TYPES[t]);return G3.geo[t]}
+function g3mats(){if(G3.mats)return G3.mats;
+  var m=function(c){return new THREE.MeshLambertMaterial({color:c,vertexColors:false,side:THREE.DoubleSide})};
+  G3.mats={body:new THREE.MeshLambertMaterial({vertexColors:true,side:THREE.DoubleSide}),acc:[m(0x1a73e8),m(0xe8710a),m(0x7b3fe4)]};return G3.mats}
+function objFor(id,t,cls){var o=G3.obj[id];if(o&&o.t===t&&o.cls===cls)return o;
+  var g=geoFor(t),M=g3mats(),grp=new THREE.Group(),b=new THREE.Mesh(g.body,M.body),a=new THREE.Mesh(g.acc,M.acc[cls]);
+  b.frustumCulled=false;a.frustumCulled=false;grp.add(b);grp.add(a);grp.matrixAutoUpdate=false;
+  return G3.obj[id]={t:t,cls:cls,g:grp,L:g.L}}
+// ---- per-frame state: ground reference, pitch, bank ----
+function g3step(id,x){var st=G3.st[id]||(G3.st[id]={bank:0,pitch:0,gref:null,hdg:x.hdg,lat:x.lat,lon:x.lon,t:0,seen:0});
+  var now=Date.now(),gs=Number(x.gs)||0,alt=Number(x.alt)||0,moved=st.lat!==x.lat||st.lon!==x.lon||st.hdg!==x.hdg||!st.t;
+  if(gs<45)st.gref=alt;
+  if(moved&&st.t){var dt=(now-st.t)/1000;
+    if(dt>.3&&dt<20){var dh=((x.hdg-st.hdg+540)%360)-180,rate=dh/dt,v=Math.max(gs,0)*.5144,b=Math.atan(rate*Math.PI/180*v/9.81);b=Math.max(-.52,Math.min(.52,b));st.bank+=(b-st.bank)*.5}
+    else if(dt>=20)st.bank=0}
+  var air=gs>=45,vs=Number(x.vs);if(x.own&&st.alt!=null&&st.t&&moved){var d2=(now-st.t)/60000;if(d2>0)vs=(alt-st.alt)/d2}
+  if(!isFinite(vs))vs=0;
+  var gam=Math.atan2(vs*.00508,Math.max(gs*.5144,25));
+  var pt=air?Math.max(-.26,Math.min(.3,gam+.035)):0;st.pitch+=(pt-st.pitch)*.5;if(!air)st.bank*=.5;
+  if(moved){st.t=now;st.hdg=x.hdg;st.lat=x.lat;st.lon=x.lon;st.alt=alt}
+  st.seen=now;return st}
+function g3sync(items){ // items: {id,lat,lon,alt,hdg,gs,vs,model,cls,own}
+  var out=[];items.forEach(function(x){out.push({x:x,st:g3step(x.id,x)})});
+  // planes first seen airborne with no ground reference: borrow the nearest one on the ground, else 0
+  var grounds=[];out.forEach(function(o){if(o.st.gref!=null&&(Number(o.x.gs)||0)<45)grounds.push(o)});
+  out.forEach(function(o){if(o.st.gref==null){var best=null,bd=1e9;grounds.forEach(function(g){var d=Math.abs(g.x.lat-o.x.lat)+Math.abs(g.x.lon-o.x.lon);if(d<bd){bd=d;best=g}});o.st.gref=best&&bd<.4?best.st.gref:0}});
+  G3.list=out;
+  var now=Date.now();Object.keys(G3.st).forEach(function(k){if(now-G3.st[k].seen>60000){delete G3.st[k];if(G3.obj[k])delete G3.obj[k]}});
+  if(g3show())map.triggerRepaint()}
+// ---- custom layer ----
+var layer3d={id:'planes3d',type:'custom',renderingMode:'3d',
+  onAdd:function(m,gl){try{
+    if(typeof THREE==='undefined')throw new Error('no three');
+    if(!G3.ren||G3.gl!==gl){G3.gl=gl;G3.ren=new THREE.WebGLRenderer({canvas:m.getCanvas(),context:gl,antialias:true});G3.ren.autoClear=false;
+      G3.scene=new THREE.Scene();G3.cam=new THREE.Camera();G3.hold=new THREE.Group();G3.scene.add(G3.hold);
+      G3.scene.add(new THREE.AmbientLight(0xffffff,.78));var dl=new THREE.DirectionalLight(0xffffff,.75);dl.position.set(-.45,.35,1);G3.scene.add(dl);G3.mats=null;G3.obj={}}
+    G3.ok=true;apply3dIcons()}catch(e){G3.ok=false;try{console.warn('3D planes off:',e&&e.message)}catch(x){}}},
+  render:function(gl,matrix){
+    if(!g3show()||!G3.list.length)return;
+    var z=map.getZoom();if(z<G3.Z)return;
+    try{
+      var c=map.getCenter(),mpp=78271.517*Math.cos(c.lat*Math.PI/180)/Math.pow(2,z);
+      var b=map.getBounds(),padLo=(b.getNorth()-b.getSouth())*.25,padLn=(b.getEast()-b.getWest())*.25;
+      var vis=G3.list.filter(function(o){var x=o.x;return x.own||(x.lat>b.getSouth()-padLo&&x.lat<b.getNorth()+padLo&&x.lon>b.getWest()-padLn&&x.lon<b.getEast()+padLn)});
+      if(vis.length>40){vis.sort(function(a,b2){return(Math.abs(a.x.lat-c.lat)+Math.abs(a.x.lon-c.lng))-(Math.abs(b2.x.lat-c.lat)+Math.abs(b2.x.lon-c.lng))});vis=vis.slice(0,40)}
+      if(!vis.length)return;
+      var m=new THREE.Matrix4().fromArray(matrix),cam=G3.cam,ren=G3.ren;ren.resetState();
+      vis.forEach(function(o){var x=o.x,st=o.st,ob=objFor(x.id,x.type,x.cls);
+        var h=(Number(x.gs)||0)<45?0:Math.max(0,(Number(x.alt)||0)-st.gref)*.3048;
+        var mc=maplibregl.MercatorCoordinate.fromLngLat([x.lon,x.lat],h),s=mc.meterInMercatorCoordinateUnits();
+        var k=Math.min(8,Math.max(1,34*mpp/ob.L));
+        var Lm=new THREE.Matrix4().makeTranslation(mc.x,mc.y,mc.z).scale(new THREE.Vector3(s*k,-s*k,s*k));
+        var R=new THREE.Matrix4().makeRotationZ(-x.hdg*Math.PI/180).multiply(new THREE.Matrix4().makeRotationX(st.pitch)).multiply(new THREE.Matrix4().makeRotationY(st.bank));
+        ob.g.matrix.copy(R);ob.g.matrixWorldNeedsUpdate=true;
+        cam.projectionMatrix.copy(m).multiply(Lm);cam.projectionMatrixInverse.copy(cam.projectionMatrix).invert();
+        G3.hold.add(ob.g);ren.render(G3.scene,cam);G3.hold.remove(ob.g)});
+    }catch(e){try{console.warn('3D render',e&&e.message)}catch(x){}}}
+};
+function apply3dIcons(){var on=g3show()&&map.getZoom!==undefined;['planes','own'].forEach(function(l){if(map.getLayer(l))try{map.setPaintProperty(l,'icon-opacity',on?['step',['zoom'],1,G3.Z,0]:1)}catch(e){}})}
+function attach3d(){if(typeof THREE==='undefined'||map.getLayer('planes3d'))return;try{map.addLayer(layer3d)}catch(e){G3.ok=false}}
 
 // ---- data ----
 function altStr(a){a=Number(a);if(!isFinite(a))return'';return a>=5000?'FL'+String(Math.round(a/100)).padStart(3,'0'):Math.round(a)+' ft'}
@@ -134,6 +313,11 @@ function doRender(){
     var os=segs('__own');if(os.length)tr.push({type:'Feature',geometry:{type:'MultiLineString',coordinates:os},properties:{c:'#1a73e8'}});
   }
   setSrc('ownsrc',{type:'FeatureCollection',features:ow});
+  if(G3.ok||typeof THREE!=='undefined'){var it=[];
+    lastTraffic.forEach(function(a){if(a.virtual_tower||a.self)return;var id=String(a.icao_address||a.callsign);
+      it.push({id:id,lat:Number(a.latitude),lon:Number(a.longitude),alt:Number(a.altitude_ft)||0,hdg:Number(a.heading_true)||0,gs:Number(a.ground_speed)||0,vs:Number(a.vertical_speed_ft_min)||0,type:typeOf(a.airplane_model),cls:a.member?2:1})});
+    if(own)it.push({id:'__own',own:true,lat:own.lat,lon:own.lon,alt:Number(own.alt)||0,hdg:own.hdg||0,gs:Number(own.gs)||0,vs:0,type:typeOf(ownModel),cls:0});
+    g3sync(it)}
   setSrc('trails',{type:'FeatureCollection',features:tr});
   setSrc('crashes',{type:'FeatureCollection',features:lastCrashes.map(function(c){return pt(c.longitude,c.latitude,{label:(c.reason==='midair'?'MIDAIR ':'CRASH ')+(c.callsign||'')})})});
 }
@@ -168,7 +352,7 @@ window.setOwn=function(lat,lon,hdg,gs,alt,callsign,eta,fpm){
   pushTrail('__own',lon,lat);render();followNow();
 };
 window.zoomBy=function(d){map.easeTo({zoom:map.getZoom()+d,duration:200})};
-window.setPip=function(on){document.body.classList.toggle('pip',!!on);render();showRoute();map.resize()};
+window.setPip=function(on){document.body.classList.toggle('pip',!!on);apply3dIcons();render();showRoute();map.resize()};
 
 var firstFix=true, failures=0, lastPush=0, paused=false;
 function applyTraffic(d){
@@ -176,7 +360,7 @@ function applyTraffic(d){
   lastTraffic.forEach(function(a){
     if(a.virtual_tower)return;
     var id=a.icao_address||a.callsign;
-    if(a.self){ ownStars=a.stars||0;ownStripes=a.stripes||0; if(!window.__appOwn){own={lat:a.latitude,lon:a.longitude,hdg:Number(a.heading_true)||0,alt:a.altitude_ft,callsign:a.callsign};pushTrail('__own',a.longitude,a.latitude);followNow()} }
+    if(a.self){ ownModel=a.airplane_model||ownModel; ownStars=a.stars||0;ownStripes=a.stripes||0; if(!window.__appOwn){own={lat:a.latitude,lon:a.longitude,hdg:Number(a.heading_true)||0,alt:a.altitude_ft,callsign:a.callsign};pushTrail('__own',a.longitude,a.latitude);followNow()} }
     else pushTrail(id,a.longitude,a.latitude);
   });
   checkOwnRoute(lastTraffic.filter(function(a){return a.self})[0]);
@@ -326,6 +510,7 @@ document.getElementById('bStyle').onclick=function(){
   si=(si+1)%STYLES.length;try{localStorage.setItem('rv_style',String(si))}catch(e){}
   this.textContent='Map: '+STYLES[si][0];ready=false;map.setStyle(STYLES[si][1]);
 };
+var b3=document.getElementById('bPl3');b3.classList.toggle('on',G3.on);b3.onclick=function(){G3.on=!G3.on;try{localStorage.setItem('afc_pl3',G3.on?'1':'0')}catch(e){}this.classList.toggle('on',G3.on);apply3dIcons();map.triggerRepaint()};
 if(window.Android&&window.Android.pip){var b=document.getElementById('bPip');b.style.display='';b.onclick=function(){window.Android.pip()}}
 if(window.AFPC&&window.AFPC.pip){var b2=document.getElementById('bPip');b2.style.display='';b2.onclick=function(){window.AFPC.pip()}}
 if(!window.Android)window.addEventListener('resize',function(){document.body.classList.toggle('pip',window.innerWidth<420&&window.innerHeight<420)});
