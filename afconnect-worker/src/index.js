@@ -56,6 +56,8 @@ const PILOT_GRADES = [["Captain", 100 * 3600, 100], ["Commercial", 25 * 3600, 25
 export const GATE = { on: false };
 export const TEST = { skipGrades: false, warnLimit: null };   // tests turn the role gate off
 function atcGrade(p) { if (p && Number.isInteger(p.gov)) return p.gov; let g = 0; while (g < 3) { const r = GRADE_REQ[g + 1]; if (!p || Object.keys(r).some(k => (p[k] || 0) < r[k])) break; g++; } return g; }
+// shoulder board: 1-4 stripes = Student/Private/Commercial/Captain (hours + flights)
+function stripesOf(p) { const f = p ? p.flight_s || 0 : 0, n = p ? p.flights || 0 : 0, i = PILOT_GRADES.findIndex(x => f >= x[1] && n >= x[2]); return PILOT_GRADES.length - (i < 0 ? PILOT_GRADES.length - 1 : i); }
 function pilotGrade(p) { const f = p ? p.flight_s || 0 : 0, n = p ? p.flights || 0 : 0; return (PILOT_GRADES.find(x => f >= x[1] && n >= x[2]) || PILOT_GRADES[3])[0]; }
 // Training mode (/train): the session runs in the browser; one result report per session earns CAPPED real credit.
 const TRAIN = { MIN_S: 120, MAX_S: 7200, FACTOR: 0.5, DAY_ATC_S: 3600, CAP: { atc_s: 5 * 3600, app_s: 15 * 3600, ops: 25 }, DAY_OPS: 15, MIN_HANDLED: 3, MIN_OPS_HANDLED: 5, PER_HANDLED_S: 20 };
@@ -151,7 +153,7 @@ function computeTA(a, b) {
 // ---- Auto-ATC (basic clearances for pilots when no human controller covers the airport) ----
 // Newest released app versions: bump when a new APK / PC build is published; clients older than this show an update notice.
 const FLIGHT_MIN_AIR_S = 180;   // airborne at least 3 min, then touchdown (no crash) = flight completed
-const LATEST = { android: "1.3.7", pc: "2.3.6" };
+const LATEST = { android: "1.3.8", pc: "2.3.6" };
 const REQ_TYPES = ["clearance", "pushback", "taxi", "takeoff", "land", "climb", "descent", "mayday", "mayday_cancel"];
 const MAYDAY_MS = 30 * 60_000, MAYDAY_NEAR_MI = 30;
 const REQ_LOCK_MS = { takeoff: 90_000, land: 120_000 };
@@ -497,6 +499,7 @@ export class Hub {
   }
   repOf(key) { const p = this.profPeek(key); return Number.isFinite(p && p.rep) ? p.rep : REP_START; }
   starsFor(key) { const p = this.profPeek(key); return starsOf(p); }
+  stripesFor(key) { return stripesOf(this.profPeek(key)); }
   // "Ground work actions": taxi clearances / taxi routes by a human controller, once per aircraft per 10 min
   gwCredit(key, icao, now) {
     const k = key + "|" + icao; if (now - (this.gwLast.get(k) || 0) < 600_000) return;
@@ -920,7 +923,7 @@ export class Hub {
       const d = haversineMi(lat, lon, pos.latitude, pos.longitude);
       if (d <= rad) {
         const callsign = normCallsign(c.plan.callsign ?? pos.callsign);
-        out.push({ ...pos, ...c.plan, callsign, ...towerFields(callsign), member: !!c.member, stars: this.starsFor(ck), ...(this.nickOf(ck) ? { nick: this.nickOf(ck) } : {}), has_route: !!c.route, has_taxi: !!(c.taxi && Date.now() < c.taxi.until), ...this.handFields(c), freq: c.pos.freq || "", assigned_squawk: c.assigned ? c.assigned.squawk : null, emergency: !!(c.emerg && Date.now() < c.emerg.until), no_clnc: !!(c.viol && Date.now() - c.viol.at < VIOL_SHOW_MS), can_timeout: !!(c.lastViol && Date.now() - c.lastViol.at < TIMEOUT_VIOL_MS), clnc: c.viol && Date.now() - c.viol.at < VIOL_SHOW_MS ? c.viol.type : "", clr: this.clrOf(c, Date.now()), ...(ck === key ? { self: true } : {}), distance_miles: Math.round(d * 10) / 10 });
+        out.push({ ...pos, ...c.plan, callsign, ...towerFields(callsign), member: !!c.member, stars: this.starsFor(ck), stripes: this.stripesFor(ck), ...(this.nickOf(ck) ? { nick: this.nickOf(ck) } : {}), has_route: !!c.route, has_taxi: !!(c.taxi && Date.now() < c.taxi.until), ...this.handFields(c), freq: c.pos.freq || "", assigned_squawk: c.assigned ? c.assigned.squawk : null, emergency: !!(c.emerg && Date.now() < c.emerg.until), no_clnc: !!(c.viol && Date.now() - c.viol.at < VIOL_SHOW_MS), can_timeout: !!(c.lastViol && Date.now() - c.lastViol.at < TIMEOUT_VIOL_MS), clnc: c.viol && Date.now() - c.viol.at < VIOL_SHOW_MS ? c.viol.type : "", clr: this.clrOf(c, Date.now()), ...(ck === key ? { self: true } : {}), distance_miles: Math.round(d * 10) / 10 });
       }
     }
     // one symbol per airport; its staffed roles are listed in `positions`
@@ -938,7 +941,7 @@ export class Hub {
       const e = towerAircraft({ ...base, name: a, pos: "APT", holder: undefined, freq: "" }, d);
       e.positions = g.roles.map(r => ({ pos: r.pos || "TWR", freq: r.freq || "", ...(r.freq ? this.freqRoster(r.freq, vm) : {}), claimed: !!r.holder, hid: r.holder ? hid(r.holder) : "", ctl: r.holder ? (r.ctl || "") : "", nick: r.holder ? (r.nick || "") : "" }));
       e.owner_hid = g.anchor && g.anchor.owner ? hid(g.anchor.owner) : "";
-      { const ok = g.anchor && g.anchor.owner ? this.holderKey.get(g.anchor.owner) : null; e.owner_stars = ok ? this.starsFor(ok) : null; }
+      { const ok = g.anchor && g.anchor.owner ? this.holderKey.get(g.anchor.owner) : null; e.owner_stars = ok ? this.starsFor(ok) : null; e.owner_stripes = ok ? this.stripesFor(ok) : null; }
       e.bans = g.anchor && g.anchor.bans ? Object.values(g.anchor.bans).map(b => ({ hid: b.hid, pos: b.pos })) : [];
       e.claimed = g.roles.some(r => r.holder);
       e.approval = !!(g.anchor && g.anchor.approval);
@@ -1731,7 +1734,7 @@ export class Hub {
         pr.nick = String(d.nick ?? "").replace(/[\u0000-\u001f<>]/g, "").trim().slice(0, 20); pr.saved = Date.now();
         this.ctx.storage.put("prof:" + this.pkey(key), pr);
       }
-      if (m === "GET" || m === "PUT" || m === "POST") return json({ nick: pr.nick, flight_s: Math.round(pr.flight_s), atc_s: Math.round(pr.atc_s), flights: pr.flights || 0, landings: pr.landings || 0, rep: Number.isFinite(pr.rep) ? pr.rep : REP_START, stars: starsOf(pr), atc_violations: pr.cviol || 0, gw_actions: pr.gw || 0, own_ops: pr.ops || 0, app_s: Math.round(pr.app_s || 0), all_roles: request.headers.get("X-Member") === "1", training: { sessions: (pr.tr && pr.tr.sessions) || 0, handled: (pr.tr && pr.tr.handled) || 0, best_twr: (pr.tr && pr.tr.best_twr) || 0, best_app: (pr.tr && pr.tr.best_app) || 0, credited: { atc_s: (pr.tr && pr.tr.atc_s) || 0, app_s: (pr.tr && pr.tr.app_s) || 0, ops: (pr.tr && pr.tr.ops) || 0 } }, ...this.gradeInfo(pr) });
+      if (m === "GET" || m === "PUT" || m === "POST") return json({ nick: pr.nick, flight_s: Math.round(pr.flight_s), atc_s: Math.round(pr.atc_s), flights: pr.flights || 0, landings: pr.landings || 0, rep: Number.isFinite(pr.rep) ? pr.rep : REP_START, stars: starsOf(pr), stripes: stripesOf(pr), atc_violations: pr.cviol || 0, gw_actions: pr.gw || 0, own_ops: pr.ops || 0, app_s: Math.round(pr.app_s || 0), all_roles: request.headers.get("X-Member") === "1", training: { sessions: (pr.tr && pr.tr.sessions) || 0, handled: (pr.tr && pr.tr.handled) || 0, best_twr: (pr.tr && pr.tr.best_twr) || 0, best_app: (pr.tr && pr.tr.best_app) || 0, credited: { atc_s: (pr.tr && pr.tr.atc_s) || 0, app_s: (pr.tr && pr.tr.app_s) || 0, ops: (pr.tr && pr.tr.ops) || 0 } }, ...this.gradeInfo(pr) });
     }
     if (m === "DELETE" && p === "/api/atc/tower") {
       if (this.noCred(request)) return json({ error: "atc_credential" }, 403);

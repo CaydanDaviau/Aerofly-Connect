@@ -24,7 +24,7 @@ body.pip #bar,body.pip #info,body.pip .maplibregl-ctrl-attrib{display:none!impor
 <script>
 (function(){
 var P=new URLSearchParams(location.search), KEY=P.get('key')||'', BASE=location.origin, GROUP=(function(){var g=P.get('group');if(g!==null)return g;try{return localStorage.getItem('afc_group')||''}catch(e){return ''}})();
-var MODE='expert';var ownStars=0;function STR(n){n=Number(n)||0;return n>0?' '+new Array(n+1).join('\u2605'):''}
+var MODE='expert';var ownStars=0,ownStripes=0;function BAR(n){n=Number(n)||0;return n>0?' '+new Array(n+1).join('\u25ac'):''}function STR(n){n=Number(n)||0;return n>0?' '+new Array(n+1).join('\u2605'):''}
 function hdrs(){var h={'X-API-Key':KEY||'viewer','X-Mode':MODE};if(GROUP)h['X-Group']=GROUP;return h}
 var STYLES=[['Liberty (3D Buildings)','https://tiles.openfreemap.org/styles/liberty'],['Satellite',{version:8,glyphs:'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf',sources:{sat:{type:'raster',tileSize:256,maxzoom:19,attribution:'Imagery © Esri, Maxar, Earthstar Geographics',tiles:['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}']},omt:{type:'vector',url:'https://tiles.openfreemap.org/planet'}},layers:[{id:'sat',type:'raster',source:'sat'}]}],['Bright','https://tiles.openfreemap.org/styles/bright']];
 var si=0; try{si=Math.min(STYLES.length-1,Math.max(0,parseInt(localStorage.getItem('rv_style')||'0',10)||0))}catch(e){}
@@ -119,9 +119,9 @@ function doRender(){
   var pl=[],tw=[],tr=[],compact=document.body.classList.contains('pip');
   lastTraffic.forEach(function(a){
     var id=a.icao_address||a.callsign;
-    if(a.virtual_tower){var cn=(a.positions||[]).filter(function(q){return q.claimed&&q.nick}).map(function(q){return q.pos+' '+q.nick});tw.push(pt(a.longitude,a.latitude,{label:(a.callsign||'TWR')+STR(a.owner_stars)+(cn.length?'\n'+cn.join(', '):''),m:a.member?1:0}));return}
+    if(a.virtual_tower){var cn=(a.positions||[]).filter(function(q){return q.claimed&&q.nick}).map(function(q){return q.pos+' '+q.nick});tw.push(pt(a.longitude,a.latitude,{label:(a.callsign||'TWR')+BAR(a.owner_stripes)+(cn.length?'\n'+cn.join(', '):''),m:a.member?1:0}));return}
     if(a.self)return;
-    pl.push(pt(a.longitude,a.latitude,{label:(a.callsign||id)+(a.nick?' ('+a.nick+')':'')+STR(a.stars),h:Number(a.heading_true)||0,id:String(id),m:a.member?1:0}));
+    pl.push(pt(a.longitude,a.latitude,{label:(a.callsign||id)+(a.nick?' ('+a.nick+')':'')+BAR(a.stripes),h:Number(a.heading_true)||0,id:String(id),m:a.member?1:0}));
     var sg=segs(id);if(sg.length)tr.push({type:'Feature',geometry:{type:'MultiLineString',coordinates:sg},properties:{c:a.member?'#7b3fe4':'#e8710a'}});
   });
   setSrc('planes',{type:'FeatureCollection',features:pl});
@@ -130,7 +130,7 @@ function doRender(){
   if(own){
     var nv=ownRoute?navUpdate():null;
     if(ownRoute&&!(routeId&&tapRoute))setRoute(ownRoute,nv?nv.idx:0);
-    ow.push(pt(own.lon,own.lat,{label:(own.callsign||'YOU')+STR(ownStars),h:own.hdg||0,left:'ETE: '+etaStr(own.eta)+'\nETA: '+etaClock(own.eta)+'\nALT: '+altStr(own.alt)+(nv?'\nNEXT: '+nv.id+' '+(nv.d<10?nv.d.toFixed(1):Math.round(nv.d))+'nm'+(nv.min!=null?' '+etaStr(nv.min):''):''),fpm:own.fpm==null?'':fpmStr(own.fpm)}));
+    ow.push(pt(own.lon,own.lat,{label:(own.callsign||'YOU')+BAR(ownStripes),h:own.hdg||0,left:'ETE: '+etaStr(own.eta)+'\nETA: '+etaClock(own.eta)+'\nALT: '+altStr(own.alt)+(nv?'\nNEXT: '+nv.id+' '+(nv.d<10?nv.d.toFixed(1):Math.round(nv.d))+'nm'+(nv.min!=null?' '+etaStr(nv.min):''):''),fpm:own.fpm==null?'':fpmStr(own.fpm)}));
     var os=segs('__own');if(os.length)tr.push({type:'Feature',geometry:{type:'MultiLineString',coordinates:os},properties:{c:'#1a73e8'}});
   }
   setSrc('ownsrc',{type:'FeatureCollection',features:ow});
@@ -176,7 +176,7 @@ function applyTraffic(d){
   lastTraffic.forEach(function(a){
     if(a.virtual_tower)return;
     var id=a.icao_address||a.callsign;
-    if(a.self){ ownStars=a.stars||0; if(!window.__appOwn){own={lat:a.latitude,lon:a.longitude,hdg:Number(a.heading_true)||0,alt:a.altitude_ft,callsign:a.callsign};pushTrail('__own',a.longitude,a.latitude);followNow()} }
+    if(a.self){ ownStars=a.stars||0;ownStripes=a.stripes||0; if(!window.__appOwn){own={lat:a.latitude,lon:a.longitude,hdg:Number(a.heading_true)||0,alt:a.altitude_ft,callsign:a.callsign};pushTrail('__own',a.longitude,a.latitude);followNow()} }
     else pushTrail(id,a.longitude,a.latitude);
   });
   checkOwnRoute(lastTraffic.filter(function(a){return a.self})[0]);
@@ -232,7 +232,7 @@ map.on('click','planes',function(e){
   showPlanePopup(a,e.lngLat)});
 function showPlanePopup(a,lngLat){
   var box=document.createElement('div');box.style.cssText='font:12px system-ui,sans-serif;color:#111;line-height:1.45';
-  var t=document.createElement('div');t.style.cssText='font:700 14px system-ui,sans-serif';t.textContent=(a.callsign||a.icao_address)+(a.nick?' \u00b7 '+a.nick:'')+STR(a.stars);box.appendChild(t);
+  var t=document.createElement('div');t.style.cssText='font:700 14px system-ui,sans-serif';t.textContent=(a.callsign||a.icao_address)+(a.nick?' \u00b7 '+a.nick:'')+BAR(a.stripes)+STR(a.stars);box.appendChild(t);
   row(box,'Aircraft:',a.airplane_model||'');
   row(box,'Route:',[a.departure_airport,a.arrival_airport].filter(Boolean).join(' → '));
   row(box,'ALT:',altStr(a.altitude_ft));

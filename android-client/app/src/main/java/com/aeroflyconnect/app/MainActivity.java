@@ -319,7 +319,7 @@ public class MainActivity extends Activity {
         final TextView lands = text("--", 18, true), viols = text("--", 18, true), pgrade = text("--", 18, true), agrade = text("--", 18, true), nextReq = dim("", 13);
         card.addView(dim(Api.t(this, "Landings", "Pousos"), 13));
         card.addView(lands);
-        card.addView(dim(Api.t(this, "Reputation (500 start, 1000 max)", "Reputação (começa em 500, máx. 1000)"), 13));
+        card.addView(dim(Api.t(this, "Conduct score", "Pontuação de conduta"), 13));
         card.addView(viols);
         card.addView(dim(Api.t(this, "Pilot grade", "Nível de piloto"), 13));
         card.addView(pgrade);
@@ -348,7 +348,7 @@ public class MainActivity extends Activity {
                                 flights.setText(String.valueOf(j.optLong("flights", 0)));
                                 lands.setText(String.valueOf(j.optLong("landings", 0)));
                                 int st = (int) j.optLong("stars", 0); StringBuilder sr = new StringBuilder(); for (int q = 0; q < 5; q++) sr.append(q < st ? "\u2605" : "\u2606"); viols.setText(j.optLong("rep", 500) + "  " + sr);
-                                pgrade.setText(j.optString("pilot_grade", "--"));
+                                pgrade.setText(j.optString("pilot_grade", "--") + (j.optInt("stripes", 0) > 0 ? "  " + new String(new char[j.optInt("stripes", 0)]).replace('\0', '\u25ac') : ""));
                                 boolean allRoles = j.optBoolean("all_roles", false);
                                 agrade.setText(allRoles ? Api.t(MainActivity.this, "All roles (Network)", "Todas as funções (Network)") : j.optString("atc_grade_name", "--"));
                                 String ng = j.optString("next_grade", "");

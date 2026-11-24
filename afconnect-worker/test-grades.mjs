@@ -61,4 +61,8 @@ r = await call("GET", "/api/profile", null, "p2"); t("profile exposes rep + star
 await call("PUT", "/api/flightplan", { callsign: "STAR1" }, "p2"); await call("PUT", "/api/position", { latitude: 1, longitude: 2, altitude_ft: 3000, ground_speed: 100, heading_true: 10, phase: "air" }, "p2");
 r = await call("GET", "/api/traffic?lat=1&lon=2&radius_miles=50", null, "p3"); t("traffic carries stars", (r.j.aircraft || []).some(a => a.callsign === "STAR1" && a.stars === 2));
 // manager reset
+// shoulder board: stripes from pilot grade (hours + flights)
+{ const pk = hub.profGet("sb"); pk.flight_s = 0; pk.flights = 0; const t1 = hub.stripesFor("sb"); pk.flight_s = 5 * 3600; pk.flights = 5; const t2 = hub.stripesFor("sb"); pk.flight_s = 25 * 3600; pk.flights = 25; const t3 = hub.stripesFor("sb"); pk.flight_s = 100 * 3600; pk.flights = 100; const t4 = hub.stripesFor("sb"); pk.flight_s = 500 * 3600; pk.flights = 3; const t5 = hub.stripesFor("sb");
+  t("stripes: Student 1, Private 2, Commercial 3, Captain 4; hours alone without flights do not rank up", t1 === 1 && t2 === 2 && t3 === 3 && t4 === 4 && t5 === 1); }
+
 console.log(fails ? "FAILS: " + fails : "all ok"); process.exit(fails ? 1 : 0);
