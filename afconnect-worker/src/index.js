@@ -1,6 +1,6 @@
 import { parseMetar, wxSig, nextLetter } from "./atis.js";
 import { distSeg } from "./taxi.js";
-import { fetchGraph, diag as taxiDiag, nearest, startFor, noUturn, holdNode, holdNodes, pickHold, route as taxiRoute, legs as taxiLegs, spokenName, dist as gDist } from "./taxi.js";
+import { fetchGraph, diag as taxiDiag, nearest, startFor, noUturn, exitAhead, noBackRunway, holdNode, holdNodes, pickHold, route as taxiRoute, legs as taxiLegs, spokenName, dist as gDist } from "./taxi.js";
 // Community backend for the Abflug Android client (v1.5.0) on Cloudflare Workers.
 // All state lives in one Durable Object (in memory, TTL-based).
 import ATC_HTML from "./atc.js";
@@ -401,7 +401,7 @@ export class Hub {
     if (g === undefined) return undefined;   // still downloading
     if (!g) return null;
     const now = Date.now(), lang = c.lang === "pt" ? "pt" : "en", ph = PHRASE[lang];
-    const hdg = Number(p.heading_true), gs0 = Number(p.ground_speed), from = startFor(g, p.latitude, p.longitude, hdg, gs0, 500);
+    const hdg = Number(p.heading_true), gs0 = Number(p.ground_speed), ex = exitAhead(g, p.latitude, p.longitude, hdg, gs0), from = ex ? ex.node : startFor(g, p.latitude, p.longitude, hdg, gs0, 500);
     if (!from) return null;
     let toId = null, gate = "";
     if (kind === "out") { const h = rwy && holdNode(g, rwy); if (!h) return null; toId = h.id; }   // refined below by pickHold (side without crossing the runway)
@@ -419,7 +419,7 @@ export class Hub {
       if (occ.has(e.a) || occ.has(e.b)) x += 500;
       return x;
     };
-    const extra2 = noUturn(g, from.id, p.latitude, p.longitude, hdg, gs0, extra);
+    const extra2 = ex ? noBackRunway(g, ex.rname, hdg, extra) : noUturn(g, from.id, p.latitude, p.longitude, hdg, gs0, extra);
     let path = null;
     if (kind === "gate") {
       const taken = new Set([...this.stands].filter(([k, r]) => r.key !== key && now < r.until).map(([k]) => k));

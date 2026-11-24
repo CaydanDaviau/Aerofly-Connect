@@ -376,6 +376,43 @@ export function startFor(g, lat, lon, hdg, gs, maxM = 500) {
   }
   return best;
 }
+// Aircraft rolling out on a runway: the route must start at a taxiway exit AHEAD of it (never an exit behind), and the runway itself may only be followed in the direction of travel.
+// Returns {node, rname} (node = first exit far enough ahead to brake for) or null when the aircraft is not on a runway / has no usable heading.
+export function exitAhead(g, lat, lon, hdg, gs) {
+  if (!(gs >= 3) || !Number.isFinite(hdg)) return null;
+  const k = Math.cos(lat * Math.PI / 180) * 111320, px = lon * k, py = lat * 110540;
+  let rname = null;
+  for (const e of g.edges) {
+    if (e.kind !== "rwy") continue;
+    const a = g.nodes.get(e.a), b = g.nodes.get(e.b); if (!a || !b) continue;
+    const ax = a.lon * k, ay = a.lat * 110540, bx = b.lon * k, by = b.lat * 110540, dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy || 1;
+    const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / l2));
+    if (Math.hypot(px - (ax + t * dx), py - (ay + t * dy)) <= 50) { rname = e.name; break; }
+  }
+  if (rname === null) return null;
+  const v = gs * 0.514, need = v * v / 4 + 30;   // ~2 m/s2 braking + margin
+  let best = null, bd = Infinity, far = null, fd = -1;
+  for (const n of g.nodes.values()) {
+    if (!n.adj.some(i => g.edges[i].kind === "rwy" && g.edges[i].name === rname) || !n.adj.some(i => g.edges[i].kind !== "rwy")) continue;   // exit = runway node with a taxiway attached
+    const d = dist(lat, lon, n.lat, n.lon);
+    if (d > 2500 || angDiff(bearing(lat, lon, n.lat, n.lon), hdg) > 60) continue;
+    if (d >= need && d < bd) { bd = d; best = n; }
+    if (d > fd) { fd = d; far = n; }
+  }
+  const node = best || far;
+  return node ? { node, rname } : null;
+}
+// extra cost: the aircraft's own runway may not be followed against the heading (applies to every edge of it, from any node)
+export function noBackRunway(g, rname, hdg, extra) {
+  return (e, fromId) => {
+    let x = extra ? extra(e, fromId) : 0;
+    if (e.kind === "rwy" && e.name === rname) {
+      const s = g.nodes.get(fromId), o = g.nodes.get(e.a === fromId ? e.b : e.a);
+      if (s && o && angDiff(bearing(s.lat, s.lon, o.lat, o.lon), hdg) > 90) x += 6000;
+    }
+    return x;
+  };
+}
 // wraps an extra-cost function: from the start node, edges that lead back against the heading cost +1500 m (a reversal only if nothing else exists)
 export function noUturn(g, startId, lat, lon, hdg, gs, extra) {
   if (!(gs >= 3) || !Number.isFinite(hdg)) return extra;

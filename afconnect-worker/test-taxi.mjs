@@ -1,6 +1,6 @@
 import worker, { Hub, TEST } from "./src/index.js";
 TEST.skipGrades = true; TEST.warnLimit = 0;
-import { buildGraph, nearest, holdNode, holdNodes, pickHold, route, legs, spokenName } from "./src/taxi.js";
+import { exitAhead, buildGraph, nearest, holdNode, holdNodes, pickHold, route, legs, spokenName } from "./src/taxi.js";
 const T = (n, v) => console.log("taxi " + n + ":", v ? "PASS" : "FAIL");
 // synthetic airport: runway 09/27 along lat 0, parallel taxiway A (north), connectors B (east), C (west), crossing D to taxiway S (south)
 const B0 = [-15.87, -47.92], P = (la, lo) => ({ lat: B0[0] + la, lon: B0[1] + lo });
@@ -54,6 +54,16 @@ let used = 0; route(g, a1.id, h.id, e => { used++; return 0; }); T("extra cost c
 }
 
 // ---- integration: Hub with mocked Overpass
+// rollout: exit must be ahead of the aircraft, never behind
+{
+  const brg = (a, b) => (Math.atan2((b.lon - a.lon) * Math.cos(a.lat * Math.PI / 180), b.lat - a.lat) * 180 / Math.PI + 360) % 360;
+  const h1 = brg(N.R1, N.R3), mid = { lat: (N.R2.lat + N.X.lat) / 2, lon: (N.R2.lon + N.X.lon) / 2 };
+  const e1 = exitAhead(g, mid.lat, mid.lon, h1, 40);
+  T("rollout toward R3: exit ahead (X or R3), not R1", !!e1 && (e1.node.id === N.X.id || e1.node.id === N.R3.id));
+  const e2 = exitAhead(g, mid.lat, mid.lon, (h1 + 180) % 360, 40);
+  T("rollout toward R1: exit ahead is R2/R1 side", !!e2 && e2.node.id !== N.R3.id && e2.node.id !== N.X.id);
+  T("not on a runway: no exit logic", exitAhead(g, N.A3.lat, N.A3.lon, h1, 40) === null);
+}
 const store = new Map();
 const ctx = { storage: { get: async k => store.get(k), put: async (k, v) => store.set(k, v), delete: async k => store.delete(k), list: async ({ prefix }) => new Map([...store].filter(([k]) => k.startsWith(prefix))) }, blockConcurrencyWhile: async f => f() };
 const hub = new Hub(ctx);
