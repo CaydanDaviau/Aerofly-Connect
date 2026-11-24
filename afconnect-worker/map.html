@@ -168,7 +168,7 @@ window.setOwn=function(lat,lon,hdg,gs,alt,callsign,eta,fpm){
   pushTrail('__own',lon,lat);render();followNow();
 };
 window.zoomBy=function(d){map.easeTo({zoom:map.getZoom()+d,duration:200})};
-window.setPip=function(on){document.body.classList.toggle('pip',!!on);try{if(map.setPixelRatio)map.setPixelRatio(on?1:(window.devicePixelRatio||1))}catch(e){}render();showRoute();map.resize()};
+window.setPip=function(on){document.body.classList.toggle('pip',!!on);render();showRoute();map.resize()};
 
 var firstFix=true, failures=0, lastPush=0, paused=false;
 function applyTraffic(d){
