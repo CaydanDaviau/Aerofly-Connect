@@ -53,7 +53,7 @@ public class MapActivity extends Activity {
         s.setCacheMode(WebSettings.LOAD_DEFAULT);
         web.addJavascriptInterface(new Bridge(), "Android");
         web.setWebViewClient(new WebViewClient() {
-            @Override public void onPageFinished(WebView v, String url) { if (!failed) { pageReady = true; syncPip(); pushOwnTrace(); } }
+            @Override public void onPageFinished(WebView v, String url) { if (!failed) { pageReady = true; lastOwnJs = ""; syncPip(); pushOwnTrace(); } }
             @Override public void onReceivedError(WebView v, WebResourceRequest r, WebResourceError e) {
                 if (r.isForMainFrame()) showError();
             }
@@ -122,7 +122,7 @@ public class MapActivity extends Activity {
     protected void onStart() {
         super.onStart();
         PilotService.mapShown = true; PilotService.refreshNotif(this);
-        trafficPushed = 0;
+        trafficPushed = 0; lastOwnJs = "";
         pushOwnTrace();
         web.evaluateJavascript("window.setActive&&window.setActive(true)", null);
         // Push our own plane (from the sim link) into the page once a second.
@@ -164,12 +164,16 @@ public class MapActivity extends Activity {
     private void pushOwn() {
         if (!pageReady || !PilotService.running || !PilotService.hasPos) return;
         String cs = Api.callsign(this).trim().toUpperCase(Locale.US).replace("'", "");
-        web.evaluateJavascript(String.format(Locale.US,
+        String js = String.format(Locale.US,
                 "window.__appOwn=true;window.setOwn&&window.setOwn(%f,%f,%f,%f,%f,'%s',%d,%s)",
                 PilotService.lastLat, PilotService.lastLon, PilotService.lastHdg,
                 PilotService.lastGs, PilotService.lastAlt, cs, Phase.etaMin,
-                Phase.landingShown(System.currentTimeMillis()) ? String.valueOf(Phase.landFpm) : "null"), null);
+                Phase.landingShown(System.currentTimeMillis()) ? String.valueOf(Phase.landFpm) : "null");
+        if (js.equals(lastOwnJs)) return;   // the service updates every 3 s: do not redraw the map for an unchanged position
+        lastOwnJs = js;
+        web.evaluateJavascript(js, null);
     }
+    private String lastOwnJs = "";
 
     static final String ACT_TOGGLE = "com.aeroflyconnect.app.TOGGLE_MAP";
     private static final String ACT_ZOOM = "com.aeroflyconnect.app.ZOOM";

@@ -72,7 +72,7 @@ function addIcons(){
 // ---- layers (re-added after every style change) ----
 var EMPTY={type:'FeatureCollection',features:[]};
 function addLayers(){
-  addIcons();
+  SIG={};addIcons();
   ['trails','planes','towers','ownsrc','crashes','route','routepts','taxi','taxipt'].forEach(function(id){ if(!map.getSource(id))map.addSource(id,{type:'geojson',data:EMPTY}) });
   var halo={'text-halo-color':'#fff','text-halo-width':1.6};
   if(!map.getLayer('trails'))map.addLayer({id:'trails',type:'line',source:'trails',layout:{'line-cap':'round','line-join':'round'},paint:{'line-color':['get','c'],'line-width':2.5,'line-opacity':.65}});
@@ -109,7 +109,11 @@ function etaStr(m){m=Number(m);if(!isFinite(m)||m<0)return'--';return m>=60?Math
 function etaClock(m){m=Number(m);if(!isFinite(m)||m<0)return'--';var d=new Date(Date.now()+m*60000);return String(d.getUTCHours()).padStart(2,'0')+':'+String(d.getUTCMinutes()).padStart(2,'0')+'Z'}
 function fpmStr(v){v=Number(v);return isFinite(v)?Math.round(v)+' fpm':''}
 function pt(lon,lat,props){return{type:'Feature',geometry:{type:'Point',coordinates:[lon,lat]},properties:props}}
-function render(){
+// render() is coalesced (setOwn + setTraffic + trace pushes in the same second = one pass) and a source is only re-uploaded when its data changed
+var rqT=0,SIG={};
+function render(){if(rqT)return;rqT=setTimeout(function(){rqT=0;doRender()},60)}
+function setSrc(id,fc){var s=map.getSource(id);if(!s)return;var k=JSON.stringify(fc);if(SIG[id]===k)return;SIG[id]=k;s.setData(fc)}
+function doRender(){
   if(!map.isStyleLoaded()&&!map.getSource('planes'))return;
   if(!map.getSource('planes')||!map.getLayer('own')||!map.hasImage('plane')){ if(map.isStyleLoaded())addLayers(); else return }
   var pl=[],tw=[],tr=[],compact=document.body.classList.contains('pip');
@@ -120,8 +124,8 @@ function render(){
     pl.push(pt(a.longitude,a.latitude,{label:(a.callsign||id)+(a.nick?' ('+a.nick+')':'')+STR(a.stars),h:Number(a.heading_true)||0,id:String(id),m:a.member?1:0}));
     var sg=segs(id);if(sg.length)tr.push({type:'Feature',geometry:{type:'MultiLineString',coordinates:sg},properties:{c:a.member?'#7b3fe4':'#e8710a'}});
   });
-  map.getSource('planes').setData({type:'FeatureCollection',features:pl});
-  map.getSource('towers').setData({type:'FeatureCollection',features:tw});
+  setSrc('planes',{type:'FeatureCollection',features:pl});
+  setSrc('towers',{type:'FeatureCollection',features:tw});
   var ow=[];
   if(own){
     var nv=ownRoute?navUpdate():null;
@@ -129,9 +133,9 @@ function render(){
     ow.push(pt(own.lon,own.lat,{label:(own.callsign||'YOU')+STR(ownStars),h:own.hdg||0,left:'ETE: '+etaStr(own.eta)+'\nETA: '+etaClock(own.eta)+'\nALT: '+altStr(own.alt)+(nv?'\nNEXT: '+nv.id+' '+(nv.d<10?nv.d.toFixed(1):Math.round(nv.d))+'nm'+(nv.min!=null?' '+etaStr(nv.min):''):''),fpm:own.fpm==null?'':fpmStr(own.fpm)}));
     var os=segs('__own');if(os.length)tr.push({type:'Feature',geometry:{type:'MultiLineString',coordinates:os},properties:{c:'#1a73e8'}});
   }
-  map.getSource('ownsrc').setData({type:'FeatureCollection',features:ow});
-  map.getSource('trails').setData({type:'FeatureCollection',features:tr});
-  if(map.getSource('crashes'))map.getSource('crashes').setData({type:'FeatureCollection',features:lastCrashes.map(function(c){return pt(c.longitude,c.latitude,{label:(c.reason==='midair'?'MIDAIR ':'CRASH ')+(c.callsign||'')})})});
+  setSrc('ownsrc',{type:'FeatureCollection',features:ow});
+  setSrc('trails',{type:'FeatureCollection',features:tr});
+  setSrc('crashes',{type:'FeatureCollection',features:lastCrashes.map(function(c){return pt(c.longitude,c.latitude,{label:(c.reason==='midair'?'MIDAIR ':'CRASH ')+(c.callsign||'')})})});
 }
 function pushTrail(id,lon,lat){
   var now=Date.now(),t=trails[id]||(trails[id]=[]),ts=ttimes[id]||(ttimes[id]=[]),n=t.length,l=t[n-1];
@@ -152,9 +156,9 @@ document.addEventListener('visibilitychange',function(){if(document.hidden)saveT
 window.addEventListener('pagehide',saveTrails);
 function followNow(){
   if(!follow||!own)return;
-  var o={center:[own.lon,own.lat],duration:900,essential:true};
+  var o={center:[own.lon,own.lat],duration:document.body.classList.contains('pip')?0:900,essential:true};
   if(hdgUp)o.bearing=own.hdg||0;
-  map.easeTo(o);
+  if(o.duration)map.easeTo(o);else map.jumpTo(o);
 }
 
 // own plane: pushed by the Android app (sim data), also taken from traffic.self as a fallback
@@ -164,7 +168,7 @@ window.setOwn=function(lat,lon,hdg,gs,alt,callsign,eta,fpm){
   pushTrail('__own',lon,lat);render();followNow();
 };
 window.zoomBy=function(d){map.easeTo({zoom:map.getZoom()+d,duration:200})};
-window.setPip=function(on){document.body.classList.toggle('pip',!!on);render();showRoute();map.resize()};
+window.setPip=function(on){document.body.classList.toggle('pip',!!on);try{if(map.setPixelRatio)map.setPixelRatio(on?1:(window.devicePixelRatio||1))}catch(e){}render();showRoute();map.resize()};
 
 var firstFix=true, failures=0, lastPush=0, paused=false;
 function applyTraffic(d){
