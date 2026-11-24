@@ -1308,10 +1308,10 @@ export class Hub {
       let g; try { g = await Promise.race([this.graphFor(role.apt, pp.latitude, pp.longitude), new Promise(r => setTimeout(() => r(undefined), 4000))]); } catch (e) { g = null; }
       if (g === undefined) return json({ error: "graph_loading" }, 503);
       if (!g) return json({ error: "no_taxi_data" }, 404);
-      const hdg = Number(pp.heading_true), gs0 = Number(pp.ground_speed), from = startFor(g, pp.latitude, pp.longitude, hdg, gs0, 500), to = nearest(g, lat, lon, 250, true);
+      const hdg = Number(pp.heading_true), gs0 = Number(pp.ground_speed), ex = exitAhead(g, pp.latitude, pp.longitude, hdg, gs0), from = ex ? ex.node : startFor(g, pp.latitude, pp.longitude, hdg, gs0, 500), to = nearest(g, lat, lon, 250, true);
       if (!from) return json({ error: "not_on_taxiway" }, 404);
       if (!to) return json({ error: "no_destination" }, 404);
-      const path = from.id === to.id ? [] : taxiRoute(g, from.id, to.id, noUturn(g, from.id, pp.latitude, pp.longitude, hdg, gs0, null));
+      const path = from.id === to.id ? [] : taxiRoute(g, from.id, to.id, ex ? noBackRunway(g, ex.rname, hdg, null) : noUturn(g, from.id, pp.latitude, pp.longitude, hdg, gs0, null));
       if (!path) return json({ error: "no_path" }, 404);
       const pts = [[from.lat, from.lon]];
       for (const s of path) { const nd = g.nodes.get(s.to); if (nd) pts.push([nd.lat, nd.lon]); }
