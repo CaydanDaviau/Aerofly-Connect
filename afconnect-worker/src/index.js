@@ -182,6 +182,8 @@ const PHRASE = {
     busyTakeoff: (r, n, why) => `Hold position, runway ${r} occupied${why ? " by " + ({ dep: "departing traffic", land: "landing traffic", emerg: "emergency traffic" }[why] || "traffic") : ""}, number ${n}`,
     busyLand: (r, n, why) => `Runway ${r} occupied${why ? " by " + ({ dep: "departing traffic", land: "landing traffic", emerg: "emergency traffic" }[why] || "traffic") : ""}, number ${n}, extend and request again`,
     lineUp: (r, mi) => `Runway ${r}, line up and wait${mi ? ", landing traffic " + mi + " miles final" : ""}`,
+    confirm: t => `Confirm: ${t}`, confAlt: a => `Confirm cleared altitude ${a}`,
+    unable: { climb: "Roger, maintain present altitude, advise ready to climb", tod: "Roger, maintain present altitude, advise ready to descend", spd: "Roger, speed at your discretion", dir: "Roger, say intentions" },
     climb: a => `Climb to ${altSay(a)}`, descent: a => `Descend to ${altSay(a)}`,
     mayday: "Roger Mayday, say intentions",
     maydayNear: (cs, mi) => `Mayday traffic, ${cs} declared an emergency ${mi} miles from you, keep clear`,
@@ -213,6 +215,8 @@ const PHRASE = {
     busyTakeoff: (r, n, why) => `Aguarde na posição, pista ${r} ocupada${why ? " por " + ({ dep: "tráfego em decolagem", land: "tráfego em pouso", emerg: "tráfego em emergência" }[why] || "tráfego") : ""}, número ${n}`,
     busyLand: (r, n, why) => `Pista ${r} ocupada${why ? " por " + ({ dep: "tráfego em decolagem", land: "tráfego em pouso", emerg: "tráfego em emergência" }[why] || "tráfego") : ""}, número ${n}, prolongue e solicite novamente`,
     lineUp: (r, mi) => `Pista ${r}, entre e aguarde${mi ? ", tráfego em final a " + mi + " milhas" : ""}`,
+    confirm: t => `Confirme: ${t}`, confAlt: a => `Confirme altitude autorizada ${a}`,
+    unable: { climb: "Recebido, mantenha altitude atual, informe pronto para subir", tod: "Recebido, mantenha altitude atual, informe pronto para descer", spd: "Recebido, velocidade a seu critério", dir: "Recebido, informe intenções" },
     climb: a => `Suba para ${a >= TRANS_ALT ? altSay(a) : a + " pés"}`, descent: a => `Desça para ${a >= TRANS_ALT ? altSay(a) : a + " pés"}`,
     mayday: "Mayday recebido, informe intenções",
     maydayNear: (cs, mi) => `Tráfego em Mayday, ${cs} declarou emergência a ${mi} milhas, mantenha-se afastado`,
@@ -394,7 +398,7 @@ export class Hub {
     let n = w.i; while (n < pts.length - 1 && !named(n)) n++;
     const fix = named(n) ? id(n) : "";
     // first call after departure: direct to the first named fix
-    if (!st.calls.direct && fix && st.calls.dep) { st.calls.direct = true; say(ph.direct(fix), false); }
+    if (!st.calls.direct && fix && st.calls.dep) { st.calls.direct = true; say(ph.direct(fix), false, null, "dir"); }
   }
 
   // ---- ground routing (taxiway names from OpenFreeMap vector tiles, Overpass as fallback; cached per airport 24 h, failures retried after 2 min)
@@ -807,7 +811,7 @@ export class Hub {
     st.at = now; st.lat = p.latitude; st.lon = p.longitude; st.ph = cur;
     // radio silence for routine calls during the takeoff roll and below 3 nm on a cleared final (safety calls still go out)
     const an3 = Number(p.arr_nm), quiet = (cur === "runway" && (Number(p.ground_speed) || 0) > 35 && st.gr.takeoff > now) || (cur === "air" && p.arr_nm !== null && p.arr_nm !== undefined && an3 <= 3 && st.gr.land > now);
-    const say = (text, urgent, contact) => { if (quiet && !urgent) return; const m = this.addMsg(c, text, "auto", { urgent: !!urgent }); m.status = "delivered"; out.push({ id: m.id, text: m.text, kind: "auto", urgent: !!urgent, at: m.at, ...(contact ? { contact } : {}) }); };
+    const say = (text, urgent, contact, instr) => { if (quiet && !urgent) return; const m = this.addMsg(c, text, "auto", { urgent: !!urgent, ...(instr ? { instr } : {}) }); m.status = "delivered"; if (instr) st.pend = { id: m.id, at: now, asked: false, text: m.text }; out.push({ id: m.id, text: m.text, kind: "auto", urgent: !!urgent, at: m.at, ...(contact ? { contact } : {}) }); };
     const apt = up(p.rwy_apt) || (cur === "air" ? arr : dep);
     if (p.auto_atc === false && !this.humanCovers(c, apt || dep)) return out;   // Auto ATC off: no automatic messages or clearances (a human controller still works as usual)
     if (this.humanCovers(c, apt || dep)) {   // a human controller owns this airport: he gives the clearances, we only tag what happens without one
@@ -837,14 +841,27 @@ export class Hub {
       }
       if (Number(p.arr_nm) > 6) st.calls.ga = false;
       const an = Number(p.arr_nm), alt = Number(p.altitude_ft) || 0, cruise = parseAlt(plan.cruise_altitude);
+      if (st.retry && now > st.retry.at) { st.calls[st.retry.k] = false; st.retry = null; }
       // proactive climb to the planned cruise level once established after departure, then "no speed restrictions" through 10000
-      if (st.calls.dep && cruise > 6000 && !st.calls.cl && alt > 2500 && alt < cruise - 1000) { st.calls.cl = true; st.alt = { ft: cruise, at: now }; say(ph.climb(cruise), false); }
+      if (st.calls.dep && cruise > 6000 && !st.calls.cl && alt > 2500 && alt < cruise - 1000) { st.calls.cl = true; st.alt = { ft: cruise, at: now }; say(ph.climb(cruise), false, null, "climb"); }
       if (st.calls.cl && !st.calls.nospd && alt > 10000) { st.calls.nospd = true; say(ph.noSpd, false); }
       // top of descent (3 nm per 1000 ft to 5000 plus 10 nm): descend to the transition altitude with QNH and the expected approach
       if (arr && cruise > 6000 && !st.calls.tod && alt > TRANS_ALT + 500 && Number.isFinite(an) && p.arr_nm !== null && p.arr_nm !== undefined && an > 14 && an <= (alt - TRANS_ALT) / 1000 * 3 + 10) {
         st.calls.tod = true; st.alt = { ft: TRANS_ALT, at: now };
-        const w = this.wxNow(arr); say(ph.tod(TRANS_ALT + " feet", w && w.qnh ? w.qnh : "", cleanRunway(plan.arrival_runway)), false);
+        const w = this.wxNow(arr); say(ph.tod(TRANS_ALT + " feet", w && w.qnh ? w.qnh : "", cleanRunway(plan.arrival_runway)), false, null, "tod");
       }
+      // follow-ups: "Unable" retries later; no readback after 20 s (only for pilots who do answer) -> "Confirm: ..."; deviating from the assigned altitude
+      const pd = st.pend;
+      if (pd) {
+        const pm = this.msgs.get(pd.id);
+        if (!pm || pm.status === "wilco" || pm.status === "unable") st.pend = null;
+        else if (!pd.asked && c.replied && now - pd.at > 20_000) { pd.asked = true; say(ph.confirm(pd.text), false); }
+      }
+      { const a = st.alt, vs = Number(p.vertical_speed_ft_min) || 0;
+        if (a && now > st.grace && p.terminal !== true && !(st.gr.land > now) && ((vs > 300 && alt > a.ft + 500) || (vs < -300 && alt < a.ft - 500))) {
+          if (!st.altBad) st.altBad = now;
+          else if (now - st.altBad > 15_000 && now - (st.altSaid || 0) > 120_000) { st.altSaid = now; say(ph.confAlt(altSay(a.ft)), false); }
+        } else st.altBad = 0; }
       // arrival handoffs: approach, then tower (once each per approach; reset when far away again)
       this.wpTrack(c, st, p, now, say, ph, cur, an);
       if (arr && Number.isFinite(an) && p.arr_nm !== null && p.arr_nm !== undefined) {
@@ -852,15 +869,15 @@ export class Hub {
         else if (an <= 12 && !st.calls.twr) {
           st.calls.twr = true; st.calls.app = true; const f = this.pf(p.fq_arr, arr, ["TWR"]); say(ph.tower(f), false, "Tower" + (f ? " " + f : ""));
         } else if (an <= 35 && an > 12 && !st.calls.app) {
-          st.calls.app = true; const f = this.pf(p.fq_arr, arr, ["APP", "DEP"]); say(ph.approach(f), false, "Approach" + (f ? " " + f : ""));
+          st.calls.app = true; st.alt = null; const f = this.pf(p.fq_arr, arr, ["APP", "DEP"]); say(ph.approach(f), false, "Approach" + (f ? " " + f : ""));
           const er = cleanRunway(plan.arrival_runway); if (er) say(ph.expectRwy(er), false);
           const aw = this.wxNow(arr); if (aw && aw.qnh) say(ph.qnh(aw.qnh), false);
-          if (alt < 12000 && !st.calls.spd) { st.calls.spd = true; say(ph.spd(220), false); }
+          if (alt < 12000 && !st.calls.spd) { st.calls.spd = true; say(ph.spd(220), false, null, "spd"); }
         }
       }
     } else {
       if (prev === "air") {   // touchdown
-        st.landedAt = now; st.calls = {};
+        st.landedAt = now; st.calls = {}; st.alt = null; st.pend = null; st.retry = null;
         const lr = onRwys[0] || cleanRunway(plan.arrival_runway) || st.landRwy;
         const cleared = st.gr.land > now;
         const busy = lr && apt && this.occupant(key, apt, lr, now);
@@ -1513,7 +1530,13 @@ export class Hub {
       const me = this.clients.get(key);
       if (!msg || !me || !me.pos || me.pos.icao_address !== msg.icao) return json({ error: "message not found" }, 404);
       if (!["wilco", "unable"].includes(d.reply)) return json({ error: "reply must be wilco or unable" }, 400);
-      msg.status = d.reply; msg.replied = Date.now();
+      msg.status = d.reply; msg.replied = Date.now(); me.replied = true;
+      if (d.reply === "unable" && msg.instr && me.st) {   // an alternative instruction, and the same call again in 3 minutes
+        const lng = me.lang === "pt" ? "pt" : "en", ut = PHRASE[lng].unable[msg.instr];
+        if (ut) this.addMsg(me, ut, "auto", {});
+        me.st.alt = null; me.st.pend = null;
+        if (msg.instr === "tod" || msg.instr === "climb") me.st.retry = { k: msg.instr === "tod" ? "tod" : "cl", at: Date.now() + 180_000 };
+      }
       return json({ success: true });
     }
 
