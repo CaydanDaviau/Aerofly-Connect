@@ -150,6 +150,29 @@ function computeTA(a, b) {
   return { level: ra ? "ra" : "ta", dz_cpa: dzCpa, clock, rel_alt_ft: Math.round(dz / 100) * 100, vs_trend: B.v > 300 ? 1 : B.v < -300 ? -1 : 0, range_nm: Math.round(Math.hypot(x, y) * 10) / 10, tau_s: Math.round(t) };
 }
 
+// ---- Traffic information (below a TA): converging or close traffic worth a call. Null or {clock, range, rel_alt_ft, dir, vs}. Whatever computeTA already flags is left to the TA/RA.
+// Called when within 10 nm and 2000 ft, or on course to pass within 3 nm / 2000 ft in under 90 s.
+function trafficInfo(a, b) {
+  const n = v => { const x = Number(v); return v === null || v === undefined || v === "" || !Number.isFinite(x) ? null : x; };
+  const A = { la: n(a.latitude), lo: n(a.longitude), h: n(a.heading_true), g: n(a.ground_speed), z: n(a.altitude_ft), v: n(a.vertical_speed_ft_min) ?? 0 };
+  const B = { la: n(b.latitude), lo: n(b.longitude), h: n(b.heading_true), g: n(b.ground_speed), z: n(b.altitude_ft), v: n(b.vertical_speed_ft_min) ?? 0 };
+  for (const o of [A, B]) if (o.la === null || o.lo === null || o.h === null || o.g === null || o.z === null) return null;
+  if (A.g < TA_MIN_GS || B.g < TA_MIN_GS || computeTA(a, b)) return null;
+  const rad = Math.PI / 180;
+  const x = (B.lo - A.lo) * 60 * Math.cos((A.la + B.la) / 2 * rad), y = (B.la - A.la) * 60, range = Math.hypot(x, y), dz = B.z - A.z;
+  if (range > 12 || Math.abs(dz) > 2500) return null;
+  const rvx = (B.g * Math.sin(B.h * rad) - A.g * Math.sin(A.h * rad)) / 3600, rvy = (B.g * Math.cos(B.h * rad) - A.g * Math.cos(A.h * rad)) / 3600, v2 = rvx * rvx + rvy * rvy;
+  if (Math.sqrt(v2) * 3600 < 20) return null;
+  const dot = x * rvx + y * rvy;
+  if (dot >= 0) return null;   // diverging
+  const t = -dot / v2, miss = Math.hypot(x + rvx * t, y + rvy * t), dzCpa = Math.abs(dz + (B.v - A.v) / 60 * t);
+  if (t > 90 || miss > 3 || dzCpa > 2000) return null;
+  const rel = ((Math.atan2(x, y) / rad - A.h) % 360 + 360) % 360;
+  let clock = Math.round(rel / 30); if (clock === 0) clock = 12;
+  const dh = ((B.h - A.h) % 360 + 360) % 360, dir = dh > 135 && dh < 225 ? "opp" : (dh <= 45 || dh >= 315) ? "same" : Math.sin(dh * rad) > 0 ? "lr" : "rl";
+  return { clock, range: Math.max(1, Math.round(range)), rel_alt_ft: Math.round(dz / 100) * 100, dir, vs: B.v > 300 ? 1 : B.v < -300 ? -1 : 0 };
+}
+
 // ---- Auto-ATC (basic clearances for pilots when no human controller covers the airport) ----
 // Newest released app versions: bump when a new APK / PC build is published; clients older than this show an update notice.
 const FLIGHT_MIN_AIR_S = 180;   // airborne at least 3 min, then touchdown (no crash) = flight completed
@@ -182,6 +205,7 @@ const PHRASE = {
     busyTakeoff: (r, n, why) => `Hold position, runway ${r} occupied${why ? " by " + ({ dep: "departing traffic", land: "landing traffic", emerg: "emergency traffic" }[why] || "traffic") : ""}, number ${n}`,
     busyLand: (r, n, why) => `Runway ${r} occupied${why ? " by " + ({ dep: "departing traffic", land: "landing traffic", emerg: "emergency traffic" }[why] || "traffic") : ""}, number ${n}, extend and request again`,
     lineUp: (r, mi) => `Runway ${r}, line up and wait${mi ? ", landing traffic " + mi + " miles final" : ""}`,
+    traffic: (ty, i) => `Traffic, ${ty || "traffic"}, ${i.clock} o'clock, ${i.range} miles, ${{ opp: "opposite direction", same: "same direction", lr: "crossing left to right", rl: "crossing right to left" }[i.dir]}, ${Math.abs(i.rel_alt_ft) < 300 ? "same altitude" : Math.abs(i.rel_alt_ft) + " feet " + (i.rel_alt_ft > 0 ? "above" : "below")}${i.vs ? (i.vs > 0 ? ", climbing" : ", descending") : ""}`,
     confirm: t => `Confirm: ${t}`, confAlt: a => `Confirm cleared altitude ${a}`,
     unable: { climb: "Roger, maintain present altitude, advise ready to climb", tod: "Roger, maintain present altitude, advise ready to descend", spd: "Roger, speed at your discretion", dir: "Roger, say intentions" },
     climb: a => `Climb to ${altSay(a)}`, descent: a => `Descend to ${altSay(a)}`,
@@ -215,6 +239,7 @@ const PHRASE = {
     busyTakeoff: (r, n, why) => `Aguarde na posição, pista ${r} ocupada${why ? " por " + ({ dep: "tráfego em decolagem", land: "tráfego em pouso", emerg: "tráfego em emergência" }[why] || "tráfego") : ""}, número ${n}`,
     busyLand: (r, n, why) => `Pista ${r} ocupada${why ? " por " + ({ dep: "tráfego em decolagem", land: "tráfego em pouso", emerg: "tráfego em emergência" }[why] || "tráfego") : ""}, número ${n}, prolongue e solicite novamente`,
     lineUp: (r, mi) => `Pista ${r}, entre e aguarde${mi ? ", tráfego em final a " + mi + " milhas" : ""}`,
+    traffic: (ty, i) => `Tráfego, ${ty || "tráfego"}, ${i.clock} horas, ${i.range} milhas, ${{ opp: "sentido oposto", same: "mesmo sentido", lr: "cruzando da esquerda para a direita", rl: "cruzando da direita para a esquerda" }[i.dir]}, ${Math.abs(i.rel_alt_ft) < 300 ? "mesma altitude" : Math.abs(i.rel_alt_ft) + " pés " + (i.rel_alt_ft > 0 ? "acima" : "abaixo")}${i.vs ? (i.vs > 0 ? ", subindo" : ", descendo") : ""}`,
     confirm: t => `Confirme: ${t}`, confAlt: a => `Confirme altitude autorizada ${a}`,
     unable: { climb: "Recebido, mantenha altitude atual, informe pronto para subir", tod: "Recebido, mantenha altitude atual, informe pronto para descer", spd: "Recebido, velocidade a seu critério", dir: "Recebido, informe intenções" },
     climb: a => `Suba para ${a >= TRANS_ALT ? altSay(a) : a + " pés"}`, descent: a => `Desça para ${a >= TRANS_ALT ? altSay(a) : a + " pés"}`,
@@ -335,7 +360,7 @@ const AIRSPACE_NM = { GND: 5, TWR: 15, APP: 50 };
 const TOK_TTL_MS = 90 * 86_400_000;
 export class Hub {
   constructor(ctx) {
-    this.towers = new Map(); this.creds = new Map(); this.credOn = false; this.wx = new Map(); this.crashes = new Map(); this.ta = new Map(); this.ra = new Map(); this.sepV = new Map();
+    this.towers = new Map(); this.creds = new Map(); this.credOn = false; this.wx = new Map(); this.crashes = new Map(); this.ta = new Map(); this.tinfo = new Map(); this.ra = new Map(); this.sepV = new Map();
     this.voiceStreams = new Map(); this.latestVoiceByPeer = new Map();
     this.prof = new Map(); this.accts = new Map(); this.toks = new Map(); this.loginFail = new Map(); this.regLog = new Map(); this.locks = new Map(); this.holderKey = new Map(); this.gwLast = new Map(); this.lastClaim = new Map(); this.clients = new Map(); this.msgs = new Map(); this.rwy = new Map(); this.rwyQ = new Map(); this.gfx = new Map(); this.tres = new Map(); this.stands = new Map(); this.violations = []; this.clips = new Map(); this.listeners = new Map(); this.msgSeq = 0; this.since = Date.now(); this.counts = {};
     ctx.blockConcurrencyWhile(async () => {
@@ -849,6 +874,20 @@ export class Hub {
       if (arr && cruise > 6000 && !st.calls.tod && alt > TRANS_ALT + 500 && Number.isFinite(an) && p.arr_nm !== null && p.arr_nm !== undefined && an > 14 && an <= (alt - TRANS_ALT) / 1000 * 3 + 10) {
         st.calls.tod = true; st.alt = { ft: TRANS_ALT, at: now };
         const w = this.wxNow(arr); say(ph.tod(TRANS_ALT + " feet", w && w.qnh ? w.qnh : "", cleanRunway(plan.arrival_runway)), false, null, "tod");
+      }
+      // traffic information (one call per tick, 2 min per pair, nothing during the TA/RA window)
+      if (now > st.grace) {
+        for (const [k2, o] of this.clients) {
+          if (k2 === key || !o.pos || now - o.seen > 15_000 || o.pos.phase !== "air" || secOf(o) !== secOf(c)) continue;
+          const pk = key + "|" + k2;
+          if (now - (this.tinfo.get(pk) || 0) < 120_000) continue;
+          const ti = trafficInfo(p, o.pos);
+          if (!ti) continue;
+          this.tinfo.set(pk, now); if (this.tinfo.size > 500) for (const [k, v] of this.tinfo) if (now - v > 600_000) this.tinfo.delete(k);
+          const mdl = String(o.pos.airplane_model || "").replace(/[^\w .\/-]/g, "").trim().slice(0, 20);
+          say(ph.traffic(mdl, ti), false);
+          break;
+        }
       }
       // follow-ups: "Unable" retries later; no readback after 20 s (only for pilots who do answer) -> "Confirm: ..."; deviating from the assigned altitude
       const pd = st.pend;

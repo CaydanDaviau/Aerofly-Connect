@@ -406,6 +406,19 @@ await call("DELETE", "/api/atc/tower?name=SBBR_TWR", null, "ctl");
   hub.msgs.get(tod2.id).at -= 30000; hub.clients.get("s6").st.pend.at -= 30000;
   r = await P("s6", { phase: "air", altitude_ft: 35000, ground_speed: 450, arr_nm: 91, latitude: -23.4, longitude: -46.4 });
   T("no readback: confirm", r.messages.some(m => /^Confirm: Descend to 5000/.test(m.text)));
+  // traffic information: head-on, 6 nm apart (closure ~43 s: below the TA threshold of 40 s), same altitude
+  await call("PUT", "/api/flightplan", { callsign: "GGG7" }, "s7"); await call("PUT", "/api/flightplan", { callsign: "HHH8", }, "s8");
+  const mk = (la, lo, h, o = {}) => ({ phase: "air", altitude_ft: 10000, ground_speed: 250, heading_true: h, latitude: la, longitude: lo, vertical_speed_ft_min: 0, ...o });
+  await P("s8", mk(10, 20.1, 270, { airplane_model: "A320" })); await P("s7", mk(10, 20, 90));
+  hub.clients.get("s7").st.grace = 0;
+  await P("s8", mk(10, 20.1, 270, { airplane_model: "A320" }));
+  r = await P("s7", mk(10, 20, 90));
+  T("traffic information", r.messages.some(m => m.text === "Traffic, A320, 12 o'clock, 6 miles, opposite direction, same altitude"));
+  r = await P("s7", mk(10, 20, 90));
+  T("traffic information once per pair", !r.messages.some(m => /^Traffic/.test(m.text)));
+  await P("s8", mk(10, 20.1, 90, { airplane_model: "A320" }));
+  hub.tinfo.clear(); r = await P("s7", mk(10, 20, 90));
+  T("no traffic information for diverging/same-speed traffic", !r.messages.some(m => /^Traffic/.test(m.text)));
   // human tower: auto-ATC stays silent
   await call("PUT", "/api/atc/tower", { name: "SBBR_TWR", latitude: -15.87, longitude: -47.92 }, "atc");
   await call("PUT", "/api/flightplan", { callsign: "DDD4", departure_airport: "SBBR" }, "s4");
