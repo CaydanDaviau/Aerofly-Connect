@@ -179,8 +179,9 @@ const PHRASE = {
     gCross: r => `cross runway ${r}`, gGive: cs => `give way to ${cs}`, gWord: "Runway", gVacate: "vacate via",
     takeoff: (r, w) => cap1((w ? `Wind ${w}, ` : "") + (r ? `runway ${r}, cleared for takeoff` : "cleared for takeoff")),
     land: (r, w) => cap1((w ? `Wind ${w}, ` : "") + (r ? `runway ${r}, cleared to land` : "cleared to land")),
-    busyTakeoff: (r, n) => `Hold position, runway ${r} occupied, number ${n}`,
-    busyLand: (r, n) => `Runway ${r} occupied, number ${n}, extend and request again`,
+    busyTakeoff: (r, n, why) => `Hold position, runway ${r} occupied${why ? " by " + ({ dep: "departing traffic", land: "landing traffic", emerg: "emergency traffic" }[why] || "traffic") : ""}, number ${n}`,
+    busyLand: (r, n, why) => `Runway ${r} occupied${why ? " by " + ({ dep: "departing traffic", land: "landing traffic", emerg: "emergency traffic" }[why] || "traffic") : ""}, number ${n}, extend and request again`,
+    lineUp: (r, mi) => `Runway ${r}, line up and wait${mi ? ", landing traffic " + mi + " miles final" : ""}`,
     climb: a => `Climb to ${altSay(a)}`, descent: a => `Descend to ${altSay(a)}`,
     mayday: "Roger Mayday, say intentions",
     maydayNear: (cs, mi) => `Mayday traffic, ${cs} declared an emergency ${mi} miles from you, keep clear`,
@@ -209,8 +210,9 @@ const PHRASE = {
     gCross: r => `cruze a pista ${r}`, gGive: cs => `dê passagem a ${cs}`, gWord: "Pista", gVacate: "livre via",
     takeoff: (r, w) => cap1((w ? `Vento ${w}, ` : "") + (r ? `pista ${r}, autorizado a decolar` : "autorizado a decolar")),
     land: (r, w) => cap1((w ? `Vento ${w}, ` : "") + (r ? `pista ${r}, autorizado a pousar` : "autorizado a pousar")),
-    busyTakeoff: (r, n) => `Aguarde na posição, pista ${r} ocupada, número ${n}`,
-    busyLand: (r, n) => `Pista ${r} ocupada, número ${n}, prolongue e solicite novamente`,
+    busyTakeoff: (r, n, why) => `Aguarde na posição, pista ${r} ocupada${why ? " por " + ({ dep: "tráfego em decolagem", land: "tráfego em pouso", emerg: "tráfego em emergência" }[why] || "tráfego") : ""}, número ${n}`,
+    busyLand: (r, n, why) => `Pista ${r} ocupada${why ? " por " + ({ dep: "tráfego em decolagem", land: "tráfego em pouso", emerg: "tráfego em emergência" }[why] || "tráfego") : ""}, número ${n}, prolongue e solicite novamente`,
+    lineUp: (r, mi) => `Pista ${r}, entre e aguarde${mi ? ", tráfego em final a " + mi + " milhas" : ""}`,
     climb: a => `Suba para ${a >= TRANS_ALT ? altSay(a) : a + " pés"}`, descent: a => `Desça para ${a >= TRANS_ALT ? altSay(a) : a + " pés"}`,
     mayday: "Mayday recebido, informe intenções",
     maydayNear: (cs, mi) => `Tráfego em Mayday, ${cs} declarou emergência a ${mi} milhas, mantenha-se afastado`,
@@ -803,7 +805,9 @@ export class Hub {
     const ph = PHRASE[lang];
     if (st.at && (now - st.at > 15_000 || haversineMi(st.lat, st.lon, p.latitude, p.longitude) > 0.5)) st.grace = now + GRACE_MS;   // pause or jump
     st.at = now; st.lat = p.latitude; st.lon = p.longitude; st.ph = cur;
-    const say = (text, urgent, contact) => { const m = this.addMsg(c, text, "auto", { urgent: !!urgent }); m.status = "delivered"; out.push({ id: m.id, text: m.text, kind: "auto", urgent: !!urgent, at: m.at, ...(contact ? { contact } : {}) }); };
+    // radio silence for routine calls during the takeoff roll and below 3 nm on a cleared final (safety calls still go out)
+    const an3 = Number(p.arr_nm), quiet = (cur === "runway" && (Number(p.ground_speed) || 0) > 35 && st.gr.takeoff > now) || (cur === "air" && p.arr_nm !== null && p.arr_nm !== undefined && an3 <= 3 && st.gr.land > now);
+    const say = (text, urgent, contact) => { if (quiet && !urgent) return; const m = this.addMsg(c, text, "auto", { urgent: !!urgent }); m.status = "delivered"; out.push({ id: m.id, text: m.text, kind: "auto", urgent: !!urgent, at: m.at, ...(contact ? { contact } : {}) }); };
     const apt = up(p.rwy_apt) || (cur === "air" ? arr : dep);
     if (p.auto_atc === false && !this.humanCovers(c, apt || dep)) return out;   // Auto ATC off: no automatic messages or clearances (a human controller still works as usual)
     if (this.humanCovers(c, apt || dep)) {   // a human controller owns this airport: he gives the clearances, we only tag what happens without one
@@ -1678,7 +1682,11 @@ export class Hub {
           if (!q.includes(key)) q.push(key);
           this.rwyQ.set(lockKey, q);
           const n = q.indexOf(key) + 1 + (busy ? 1 : 0);
-          text = (type === "land" ? ph.busyLand : ph.busyTakeoff)(rwy, n);
+          const why = busy ? (holder.type === "takeoff" ? "dep" : holder.type === "land" ? "land" : holder.type === "emerg" ? "emerg" : "") : "";
+          const ho = busy && holder.type === "land" ? this.clients.get(holder.key) : null, hmi = ho && ho.pos ? Math.round(Number(ho.pos.arr_nm)) : NaN;
+          // landing traffic still far out: line up and wait (the takeoff clearance follows on the next request)
+          if (type === "takeoff" && ho && hmi >= 4 && c.pos.phase !== "air" && !q.length) text = ph.lineUp(rwy, hmi);
+          else text = (type === "land" ? ph.busyLand : ph.busyTakeoff)(rwy, n, why);
         } else {
           this.rwyQ.set(lockKey, q.filter(k => k !== key));
           text = ph[type](rwy, wnd);

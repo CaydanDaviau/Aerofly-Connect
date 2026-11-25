@@ -136,7 +136,7 @@ ok("takeoff pt", t2.messages[0].text === "Pista 29L, autorizado a decolar");
 ok("rate limit 429", (await rq("rq1", { type: "taxi" }))[0] === "429");
 await new Promise(r => setTimeout(r, 2100));
 let [, t3] = await rq("rq2", { type: "takeoff" });
-ok("runway busy", t3.messages[0].text === "Hold position, runway 29L occupied, number 2");
+ok("runway busy", t3.messages[0].text === "Hold position, runway 29L occupied by departing traffic, number 2");
 ok("auto message not redelivered", JSON.parse((await call("PUT", "/api/position", { latitude: -15.87, longitude: -47.92, freq: "122.800" }, "rq1")).slice(4)).messages.length === 0);
 // runway from request body, 9R normalised to 09R, plan has arrival_runway so plan wins
 await new Promise(r => setTimeout(r, 2100));
@@ -336,6 +336,7 @@ await call("DELETE", "/api/atc/tower?name=SBBR_TWR", null, "ctl");
   // s1 asks for takeoff behind s2: number 2; s2 departs -> contact departure once, lock released
   q = await R("s1", "takeoff");
   T("second aircraft waits", /number 2/.test(q.messages[0].text));
+  T("standby names the reason", /occupied by departing traffic, number 2/.test(q.messages[0].text));
   await P("s2", { phase: "runway", rwy_on: "11R/29L", on_rwy: "29L", rwy_apt: "SBBR", ground_speed: 80 });
   r = await P("s2", { phase: "air", altitude_ft: 4500, ground_speed: 120, fq_dep: "APP=119.1;DEP=119.5" });
   T("contact departure after takeoff, with frequency", r.messages.length === 1 && r.messages[0].text === "Contact departure 119.5" && r.messages[0].contact === "Departure 119.5");
@@ -419,7 +420,7 @@ await call("DELETE", "/api/atc/tower?name=SBBR_TWR", null, "ctl");
   const tr = JSON.parse((await call("GET", "/api/traffic?lat=-15.87&lon=-47.92&radius_miles=50", null, "m2")).slice(4));
   T("emergency flag in traffic", tr.aircraft.find(a => a.callsign === "EMG1").emergency === true && tr.aircraft.find(a => a.callsign === "NEAR2").emergency === false);
   const q = await R("m2", { type: "land" });
-  T("runway held for emergency", /occupied, number 2/.test(q.messages[0].text));
+  T("runway held for emergency", /occupied by emergency traffic, number 2/.test(q.messages[0].text));
   const c = await R("m1", { type: "mayday_cancel" });
   T("cancel", c.messages[0].text === "Mayday cancelled" && !hub.clients.get("m1").emerg && ![...hub.rwy.values()].some(l => l.type === "emerg"));
   await R("m1", { type: "mayday" });
