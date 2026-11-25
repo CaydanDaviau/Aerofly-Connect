@@ -79,7 +79,7 @@ await new Promise(r => setTimeout(r, 50));
 T("graph prefetched once", overpass === 1);
 const R = async (k, b) => { hub.clients.get(k).lastReq = 0; return call("PUT", "/api/atc/request", b, k); };
 let r = await R("t1", { type: "pushback" });
-T("pushback approved", r.messages[0].text === "Pushback approved, expect runway 27");
+T("pushback approved", r.messages[0].text === "Startup and pushback approved, facing west, expect runway 27");
 r = await R("t1", { type: "taxi" });
 T("taxi route with names", r.messages[0].text === "Taxi to holding point runway 27 via Alpha, Bravo");
 // second aircraft starts on the same taxiway: occupied/reserved edges -> give way note

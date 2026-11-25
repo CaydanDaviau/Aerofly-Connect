@@ -165,18 +165,20 @@ const tunedTo = (a, b) => !a || !b || a === b;
 const fqPick = (str, types) => { const m = {}; for (const kv of String(str || "").split(";")) { const [k, v] = kv.split("="); if (k && v && /^\d{3}\.\d{1,3}$/.test(v)) m[k] = v; } for (const t of types) if (m[t]) return m[t]; return ""; };
 const PHRASE = {
   en: {
-    clearance: (dest, r, sq) => `Cleared ${dest ? "to " + dest + ", " : ""}flight planned route${r ? ", departure runway " + r : ""}, squawk ${sq}`,
+    clearance: (dest, r, sq, init, q) => `Startup approved, cleared ${dest ? "to " + dest + ", " : ""}flight planned route${r ? ", departure runway " + r : ""}${init ? ", initial climb " + init : ""}, squawk ${sq}${q ? ", QNH " + q : ""}`,
+    wind: w => `Wind ${w}`, qnh: q => `QNH ${q}`, noSpd: "No ATC speed restrictions", spd: k => `Reduce speed to ${k} knots`,
+    tod: (a, q, r) => `Descend to ${a}${q ? ", QNH " + q : ""}${r ? ", expect ILS runway " + r : ""}`,
     taxiClr: "Taxi to the holding point",
     taxi: r => r ? `Taxi to holding point runway ${r}` : "Taxi to the holding point",
-    pushback: r => `Pushback approved${r ? ", expect runway " + r : ""}`,
+    pushback: (r, f) => `Startup and pushback approved${f ? ", facing " + f : ""}${r ? ", expect runway " + r : ""}`,
     direct: f => `Proceed direct ${f}`, expectRwy: r => `Expect runway ${r}`,
     gTaxiOut: (r, via) => `Taxi to holding point runway ${r}${via ? " via " + via : ""}`,
     gTaxiGate: (g, via) => `Taxi to ${g ? "gate " + g : "the gate"}${via ? " via " + via : ""}`,
     gHold: (via, r) => `${via ? "Taxi via " + via + ", hold" : "Hold"} short of runway ${r}`,
     gVia: via => `Taxi via ${via}`,
     gCross: r => `cross runway ${r}`, gGive: cs => `give way to ${cs}`, gWord: "Runway", gVacate: "vacate via",
-    takeoff: r => r ? `Runway ${r}, cleared for takeoff` : "Cleared for takeoff",
-    land: r => r ? `Runway ${r}, cleared to land` : "Cleared to land",
+    takeoff: (r, w) => cap1((w ? `Wind ${w}, ` : "") + (r ? `runway ${r}, cleared for takeoff` : "cleared for takeoff")),
+    land: (r, w) => cap1((w ? `Wind ${w}, ` : "") + (r ? `runway ${r}, cleared to land` : "cleared to land")),
     busyTakeoff: (r, n) => `Hold position, runway ${r} occupied, number ${n}`,
     busyLand: (r, n) => `Runway ${r} occupied, number ${n}, extend and request again`,
     climb: a => `Climb to ${altSay(a)}`, descent: a => `Descend to ${altSay(a)}`,
@@ -193,18 +195,20 @@ const PHRASE = {
     vLand: r => `Landing without clearance${r ? " on runway " + r : ""}, vacate the runway`,
   },
   pt: {
-    clearance: (dest, r, sq) => `Autorizado${dest ? " para " + dest : ""}, rota do plano de voo${r ? ", pista de saída " + r : ""}, código ${sq}`,
+    clearance: (dest, r, sq, init, q) => `Partida autorizada, autorizado${dest ? " para " + dest : ""}, rota do plano de voo${r ? ", pista de saída " + r : ""}${init ? ", subida inicial " + init : ""}, código ${sq}${q ? ", QNH " + q : ""}`,
+    wind: w => `Vento ${w}`, qnh: q => `QNH ${q}`, noSpd: "Sem restrição de velocidade do ATC", spd: k => `Reduza a velocidade para ${k} nós`,
+    tod: (a, q, r) => `Desça para ${a}${q ? ", QNH " + q : ""}${r ? ", espere ILS pista " + r : ""}`,
     taxiClr: "Táxi para o ponto de espera",
     taxi: r => r ? `Táxi para o ponto de espera da pista ${r}` : "Táxi para o ponto de espera",
-    pushback: r => `Pushback autorizado${r ? ", espere a pista " + r : ""}`,
+    pushback: (r, f) => `Partida e pushback autorizados${f ? ", de frente para " + f : ""}${r ? ", espere a pista " + r : ""}`,
     direct: f => `Proceda direto a ${f}`, expectRwy: r => `Espere a pista ${r}`,
     gTaxiOut: (r, via) => `Táxi para o ponto de espera da pista ${r}${via ? " via " + via : ""}`,
     gTaxiGate: (g, via) => `Táxi para ${g ? "o portão " + g : "o portão"}${via ? " via " + via : ""}`,
     gHold: (via, r) => `${via ? "Táxi via " + via + ", aguarde" : "Aguarde"} antes da pista ${r}`,
     gVia: via => `Táxi via ${via}`,
     gCross: r => `cruze a pista ${r}`, gGive: cs => `dê passagem a ${cs}`, gWord: "Pista", gVacate: "livre via",
-    takeoff: r => r ? `Pista ${r}, autorizado a decolar` : "Autorizado a decolar",
-    land: r => r ? `Pista ${r}, autorizado a pousar` : "Autorizado a pousar",
+    takeoff: (r, w) => cap1((w ? `Vento ${w}, ` : "") + (r ? `pista ${r}, autorizado a decolar` : "autorizado a decolar")),
+    land: (r, w) => cap1((w ? `Vento ${w}, ` : "") + (r ? `pista ${r}, autorizado a pousar` : "autorizado a pousar")),
     busyTakeoff: (r, n) => `Aguarde na posição, pista ${r} ocupada, número ${n}`,
     busyLand: (r, n) => `Pista ${r} ocupada, número ${n}, prolongue e solicite novamente`,
     climb: a => `Suba para ${a >= TRANS_ALT ? altSay(a) : a + " pés"}`, descent: a => `Desça para ${a >= TRANS_ALT ? altSay(a) : a + " pés"}`,
@@ -225,6 +229,12 @@ const REQ_LABEL = { clearance: "clearance", pushback: "pushback", taxi: "taxi", 
 // "100"/"FL100" = flight level, "5000"/"5000ft" = feet (numbers below 1000 are flight levels); returns feet or 0
 const parseAlt = v => { const t = String(v ?? "").trim().toUpperCase().replace(/\s+/g, ""); const m = /^(FL)?(\d{1,5})(FT)?$/.exec(t); if (!m) return 0; let n = Number(m[2]); if (m[1] || (!m[3] && n < 1000)) n *= 100; return n >= 500 && n <= 60000 ? n : 0; };
 const TRANS_ALT = 5000;
+const pad3 = n => String(Math.round(n)).padStart(3, "0");
+const cap1 = t => t.charAt(0).toUpperCase() + t.slice(1);
+// "230 degrees 4 knots" / "variable 3 knots" / "calm" / with gusts, from parseMetar().wind; "" when unknown
+const windSay = (w, lang) => { if (!w || !w.wind) return ""; const x = w.wind, pt = lang === "pt"; if (!x.spd) return pt ? "calmo" : "calm"; const g = x.gst && x.gst > x.spd ? (pt ? ", rajadas " : " gusting ") + x.gst : ""; return (x.dir === null ? (pt ? "variável" : "variable") : pad3(x.dir || 360) + (pt ? " graus" : " degrees")) + " " + x.spd + (pt ? " nós" : " knots") + g; };
+const FACE = ["north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest"], FACE_PT = ["norte", "nordeste", "leste", "sudeste", "sul", "sudoeste", "oeste", "noroeste"];
+const faceSay = (rwy, lang) => { const n = /^(\d{1,2})/.exec(rwy || ""); if (!n) return ""; return (lang === "pt" ? FACE_PT : FACE)[Math.round((Number(n[1]) * 10 % 360) / 45) % 8]; };
 const altSay = ft => ft >= TRANS_ALT ? "FL" + String(Math.round(ft / 100)).padStart(3, "0") : ft + " feet";
 const cleanRunway = v => {
   const m = /^(\d{1,2})([LRC]?)$/.exec(String(v || "").toUpperCase().replace(/\s/g, ""));
@@ -822,16 +832,26 @@ export class Hub {
         st.calls.ga = true; st.gr.land = 0; say(ph.goAround(lr), true);
       }
       if (Number(p.arr_nm) > 6) st.calls.ga = false;
+      const an = Number(p.arr_nm), alt = Number(p.altitude_ft) || 0, cruise = parseAlt(plan.cruise_altitude);
+      // proactive climb to the planned cruise level once established after departure, then "no speed restrictions" through 10000
+      if (st.calls.dep && cruise > 6000 && !st.calls.cl && alt > 2500 && alt < cruise - 1000) { st.calls.cl = true; st.alt = { ft: cruise, at: now }; say(ph.climb(cruise), false); }
+      if (st.calls.cl && !st.calls.nospd && alt > 10000) { st.calls.nospd = true; say(ph.noSpd, false); }
+      // top of descent (3 nm per 1000 ft to 5000 plus 10 nm): descend to the transition altitude with QNH and the expected approach
+      if (arr && cruise > 6000 && !st.calls.tod && alt > TRANS_ALT + 500 && Number.isFinite(an) && p.arr_nm !== null && p.arr_nm !== undefined && an > 14 && an <= (alt - TRANS_ALT) / 1000 * 3 + 10) {
+        st.calls.tod = true; st.alt = { ft: TRANS_ALT, at: now };
+        const w = this.wxNow(arr); say(ph.tod(TRANS_ALT + " feet", w && w.qnh ? w.qnh : "", cleanRunway(plan.arrival_runway)), false);
+      }
       // arrival handoffs: approach, then tower (once each per approach; reset when far away again)
-      const an = Number(p.arr_nm);
       this.wpTrack(c, st, p, now, say, ph, cur, an);
       if (arr && Number.isFinite(an) && p.arr_nm !== null && p.arr_nm !== undefined) {
-        if (an > 45) { st.calls.app = false; st.calls.twr = false; }
+        if (an > 45) { st.calls.app = false; st.calls.twr = false; st.calls.spd = false; }
         else if (an <= 12 && !st.calls.twr) {
           st.calls.twr = true; st.calls.app = true; const f = this.pf(p.fq_arr, arr, ["TWR"]); say(ph.tower(f), false, "Tower" + (f ? " " + f : ""));
         } else if (an <= 35 && an > 12 && !st.calls.app) {
           st.calls.app = true; const f = this.pf(p.fq_arr, arr, ["APP", "DEP"]); say(ph.approach(f), false, "Approach" + (f ? " " + f : ""));
           const er = cleanRunway(plan.arrival_runway); if (er) say(ph.expectRwy(er), false);
+          const aw = this.wxNow(arr); if (aw && aw.qnh) say(ph.qnh(aw.qnh), false);
+          if (alt < 12000 && !st.calls.spd) { st.calls.spd = true; say(ph.spd(220), false); }
         }
       }
     } else {
@@ -1113,6 +1133,13 @@ export class Hub {
     } catch (e) {}
     this.wx.set(name, { at: ok ? now : now - 240_000, w });   // failed fetch: keep the old data, retry in 1 min
     return w;
+  }
+  // cached METAR for sync callers (refresh runs in the background)
+  wxNow(name) {
+    if (!/^[A-Z]{4}$/.test(name)) return null;
+    const c = this.wx.get(name);
+    if (!c || Date.now() - c.at > 300_000) this.weather(name).catch(() => {});
+    return c ? c.w : null;
   }
   async atisFor(name) {
     const key = this.towerKey(name), t = key && this.towers.get(key);
@@ -1613,6 +1640,9 @@ export class Hub {
       }
       if (c.pos.auto_atc === false) return json({ success: true, mode: "none", messages: [] });   // Auto ATC off and no human controller: nobody answers
       let text;
+      const lang = c.lang === "pt" ? "pt" : "en";
+      const wx = /^[A-Z]{4}$/.test(apt) ? await this.weather(apt).catch(() => null) : null;
+      const wnd = windSay(wx, lang), qnh = wx && wx.qnh ? wx.qnh : "";
       const lockKey = rwy ? rwyKey(apt, rwy) : null;
       const holder = lockKey && this.rwy.get(lockKey);
       const st = c.st || (c.st = { gr: {}, ph: null, at: 0, lat: 0, lon: 0, grace: now + GRACE_MS, calls: {}, viol: {}, landedAt: 0, landRwy: "" });
@@ -1626,9 +1656,10 @@ export class Hub {
           c.assigned = { squawk: sq, at: Date.now() };
           await this.ctx.storage.put("sq:" + c.pos.icao_address, c.assigned);
         }
-        text = ph.clearance(dest, rwy, sq);
+        const cr = parseAlt(plan.cruise_altitude), init = cr && cr < TRANS_ALT ? altSay(cr) : (cr ? TRANS_ALT + " feet" : "");
+        text = ph.clearance(dest, rwy, sq, init, qnh);
       } else if (type === "pushback") {
-        text = ph.pushback(rwy); st.pushed = now;
+        text = ph.pushback(rwy, faceSay(rwy, lang)); st.pushed = now;
       } else if (type === "taxi") {
         text = ph.taxi(rwy); st.gr.taxi = now + 30 * 60_000;
         if (/^[A-Z]{4}$/.test(apt) && rwy) {
@@ -1637,7 +1668,7 @@ export class Hub {
           else if (r === undefined) this.groundRoute(key, c, "out", apt, rwy, 25_000).then(r2 => { if (r2) this.addMsg(c, r2.text, "auto", {}); }, () => {});   // download still running: route follows as a second message
         }
       } else if (!lockKey) {
-        text = ph[type](rwy);
+        text = ph[type](rwy, wnd);
         if (type === "takeoff") st.gr.takeoff = now + 10 * 60_000; else { st.gr.land = now + 15 * 60_000; st.landRwy = ""; }
       } else {
         // sequencing: the holder goes first, then the queue in order of request
@@ -1650,7 +1681,7 @@ export class Hub {
           text = (type === "land" ? ph.busyLand : ph.busyTakeoff)(rwy, n);
         } else {
           this.rwyQ.set(lockKey, q.filter(k => k !== key));
-          text = ph[type](rwy);
+          text = ph[type](rwy, wnd);
           this.rwy.set(lockKey, { key, type, until: now + REQ_LOCK_MS[type] });
           if (type === "takeoff") st.gr.takeoff = now + 10 * 60_000; else { st.gr.land = now + 15 * 60_000; st.landRwy = rwy; }
         }
