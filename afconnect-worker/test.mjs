@@ -419,6 +419,19 @@ await call("DELETE", "/api/atc/tower?name=SBBR_TWR", null, "ctl");
   await P("s8", mk(10, 20.1, 90, { airplane_model: "A320" }));
   hub.tinfo.clear(); r = await P("s7", mk(10, 20, 90));
   T("no traffic information for diverging/same-speed traffic", !r.messages.some(m => /^Traffic/.test(m.text)));
+  // approach vectoring (ILS frame injected: runway 27 at 0,0, true = magnetic): vector, sequence, clearance
+  const ILS = () => ({ thr: { lat: 0, lon: 0 }, hdg: 270, mv: 0, elev: 0, rwy: "27" });
+  await call("PUT", "/api/flightplan", { callsign: "JJJ10", arrival_airport: "SBGL", arrival_runway: "27" }, "s10"); await call("PUT", "/api/flightplan", { callsign: "KKK11", arrival_airport: "SBGL", arrival_runway: "27" }, "s11");
+  await P("s10", mk(0, 5 / 60, 270, { arr_nm: 5 })); hub.clients.get("s10").st.ils = ILS();
+  await P("s11", mk(0.1, 0.2, 180, { altitude_ft: 6000, arr_nm: 30 }));   // approach contact
+  hub.clients.get("s11").st.ils = ILS(); hub.clients.get("s11").st.grace = 0;
+  r = await P("s11", mk(0.1, 0.2, 180, { altitude_ft: 6000, arr_nm: 14 }));
+  T("vector: intercept heading + descent", r.messages.some(m => m.text === "Turn right heading 225, descend to 1500 feet, report established"));
+  T("vector: sequence", r.messages.some(m => m.text === "Number 2, follow JJJ10, 7 miles ahead"));
+  r = await P("s11", mk(0.01, 0.1, 250, { altitude_ft: 2500, arr_nm: 10 }));
+  T("ILS clearance once close to the course", r.messages.some(m => m.text === "Cleared ILS approach runway 27, report established") && !r.messages.some(m => /Contact tower/.test(m.text)));
+  r = await P("s11", mk(0.01, 0.1, 270, { altitude_ft: 2300, arr_nm: 9 }));
+  T("then the tower", r.messages.some(m => m.text === "Contact tower"));
   // human tower: auto-ATC stays silent
   await call("PUT", "/api/atc/tower", { name: "SBBR_TWR", latitude: -15.87, longitude: -47.92 }, "atc");
   await call("PUT", "/api/flightplan", { callsign: "DDD4", departure_airport: "SBBR" }, "s4");

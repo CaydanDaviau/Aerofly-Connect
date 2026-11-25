@@ -1,5 +1,5 @@
 import { parseMetar, wxSig, nextLetter } from "./atis.js";
-import { distSeg } from "./taxi.js";
+import { distSeg, runwayEnds } from "./taxi.js";
 import { fetchGraph, diag as taxiDiag, nearest, startFor, noUturn, exitAhead, noBackRunway, holdNode, holdNodes, pickHold, route as taxiRoute, legs as taxiLegs, spokenName, dist as gDist } from "./taxi.js";
 // Community backend for the Abflug Android client (v1.5.0) on Cloudflare Workers.
 // All state lives in one Durable Object (in memory, TTL-based).
@@ -173,6 +173,14 @@ function trafficInfo(a, b) {
   return { clock, range: Math.max(1, Math.round(range)), rel_alt_ft: Math.round(dz / 100) * 100, dir, vs: B.v > 300 ? 1 : B.v < -300 ? -1 : 0 };
 }
 
+// ---- ILS frame of a runway: position relative to the threshold. along = nm before the threshold on the approach side, cross = nm right of the extended centre line (flying inbound).
+// ils = {thr:{lat,lon}, hdg (true), mv (true - magnetic runway heading), elev (ft), rwy}
+function ilsPos(ils, la, lo) {
+  const rad = Math.PI / 180, H = ils.hdg * rad, dx = (lo - ils.thr.lon) * 60 * Math.cos(ils.thr.lat * rad), dy = (la - ils.thr.lat) * 60;
+  return { along: -(dx * Math.sin(H) + dy * Math.cos(H)), cross: dx * Math.cos(H) - dy * Math.sin(H) };
+}
+const n180 = a => { a = ((a % 360) + 360) % 360; return a > 180 ? a - 360 : a; };
+
 // ---- Auto-ATC (basic clearances for pilots when no human controller covers the airport) ----
 // Newest released app versions: bump when a new APK / PC build is published; clients older than this show an update notice.
 const FLIGHT_MIN_AIR_S = 180;   // airborne at least 3 min, then touchdown (no crash) = flight completed
@@ -206,6 +214,9 @@ const PHRASE = {
     busyLand: (r, n, why) => `Runway ${r} occupied${why ? " by " + ({ dep: "departing traffic", land: "landing traffic", emerg: "emergency traffic" }[why] || "traffic") : ""}, number ${n}, extend and request again`,
     lineUp: (r, mi) => `Runway ${r}, line up and wait${mi ? ", landing traffic " + mi + " miles final" : ""}`,
     traffic: (ty, i) => `Traffic, ${ty || "traffic"}, ${i.clock} o'clock, ${i.range} miles, ${{ opp: "opposite direction", same: "same direction", lr: "crossing left to right", rl: "crossing right to left" }[i.dir]}, ${Math.abs(i.rel_alt_ft) < 300 ? "same altitude" : Math.abs(i.rel_alt_ft) + " feet " + (i.rel_alt_ft > 0 ? "above" : "below")}${i.vs ? (i.vs > 0 ? ", climbing" : ", descending") : ""}`,
+    vec: (d, h, a) => `Turn ${d === "L" ? "left" : "right"} heading ${h}${a ? ", descend to " + a : ""}, report established`,
+    clearIls: r => `Cleared ILS approach runway ${r}, report established`,
+    seq: (n, t, g) => `Number ${n}, follow ${t}, ${g} miles ahead`,
     confirm: t => `Confirm: ${t}`, confAlt: a => `Confirm cleared altitude ${a}`,
     unable: { climb: "Roger, maintain present altitude, advise ready to climb", tod: "Roger, maintain present altitude, advise ready to descend", spd: "Roger, speed at your discretion", dir: "Roger, say intentions" },
     climb: a => `Climb to ${altSay(a)}`, descent: a => `Descend to ${altSay(a)}`,
@@ -240,6 +251,9 @@ const PHRASE = {
     busyLand: (r, n, why) => `Pista ${r} ocupada${why ? " por " + ({ dep: "tráfego em decolagem", land: "tráfego em pouso", emerg: "tráfego em emergência" }[why] || "tráfego") : ""}, número ${n}, prolongue e solicite novamente`,
     lineUp: (r, mi) => `Pista ${r}, entre e aguarde${mi ? ", tráfego em final a " + mi + " milhas" : ""}`,
     traffic: (ty, i) => `Tráfego, ${ty || "tráfego"}, ${i.clock} horas, ${i.range} milhas, ${{ opp: "sentido oposto", same: "mesmo sentido", lr: "cruzando da esquerda para a direita", rl: "cruzando da direita para a esquerda" }[i.dir]}, ${Math.abs(i.rel_alt_ft) < 300 ? "mesma altitude" : Math.abs(i.rel_alt_ft) + " pés " + (i.rel_alt_ft > 0 ? "acima" : "abaixo")}${i.vs ? (i.vs > 0 ? ", subindo" : ", descendo") : ""}`,
+    vec: (d, h, a) => `Vire à ${d === "L" ? "esquerda" : "direita"} proa ${h}${a ? ", desça para " + a : ""}, informe estabelecido`,
+    clearIls: r => `Autorizado aproximação ILS pista ${r}, informe estabelecido`,
+    seq: (n, t, g) => `Número ${n}, siga ${t}, ${g} milhas à frente`,
     confirm: t => `Confirme: ${t}`, confAlt: a => `Confirme altitude autorizada ${a}`,
     unable: { climb: "Recebido, mantenha altitude atual, informe pronto para subir", tod: "Recebido, mantenha altitude atual, informe pronto para descer", spd: "Recebido, velocidade a seu critério", dir: "Recebido, informe intenções" },
     climb: a => `Suba para ${a >= TRANS_ALT ? altSay(a) : a + " pés"}`, descent: a => `Desça para ${a >= TRANS_ALT ? altSay(a) : a + " pés"}`,
@@ -362,7 +376,7 @@ export class Hub {
   constructor(ctx) {
     this.towers = new Map(); this.creds = new Map(); this.credOn = false; this.wx = new Map(); this.crashes = new Map(); this.ta = new Map(); this.tinfo = new Map(); this.ra = new Map(); this.sepV = new Map();
     this.voiceStreams = new Map(); this.latestVoiceByPeer = new Map();
-    this.prof = new Map(); this.accts = new Map(); this.toks = new Map(); this.loginFail = new Map(); this.regLog = new Map(); this.locks = new Map(); this.holderKey = new Map(); this.gwLast = new Map(); this.lastClaim = new Map(); this.clients = new Map(); this.msgs = new Map(); this.rwy = new Map(); this.rwyQ = new Map(); this.gfx = new Map(); this.tres = new Map(); this.stands = new Map(); this.violations = []; this.clips = new Map(); this.listeners = new Map(); this.msgSeq = 0; this.since = Date.now(); this.counts = {};
+    this.prof = new Map(); this.accts = new Map(); this.toks = new Map(); this.loginFail = new Map(); this.regLog = new Map(); this.locks = new Map(); this.holderKey = new Map(); this.gwLast = new Map(); this.lastClaim = new Map(); this.clients = new Map(); this.msgs = new Map(); this.rwy = new Map(); this.rwyQ = new Map(); this.gfx = new Map(); this.apts = new Map(); this.tres = new Map(); this.stands = new Map(); this.violations = []; this.clips = new Map(); this.listeners = new Map(); this.msgSeq = 0; this.since = Date.now(); this.counts = {};
     ctx.blockConcurrencyWhile(async () => {
       for (const [k, v] of await ctx.storage.list({ prefix: "tower:" })) this.towers.set(k.slice(6), v);
       for (const [k, v] of await ctx.storage.list({ prefix: "cred:" })) this.creds.set(k.slice(5), v);
@@ -905,7 +919,7 @@ export class Hub {
       this.wpTrack(c, st, p, now, say, ph, cur, an);
       if (arr && Number.isFinite(an) && p.arr_nm !== null && p.arr_nm !== undefined) {
         if (an > 45) { st.calls.app = false; st.calls.twr = false; st.calls.spd = false; }
-        else if (an <= 12 && !st.calls.twr) {
+        else if (an <= 12 && !st.calls.twr && (!st.ils || st.vec === 2 || an <= 6)) {   // with vectors the tower comes after the ILS clearance
           st.calls.twr = true; st.calls.app = true; const f = this.pf(p.fq_arr, arr, ["TWR"]); say(ph.tower(f), false, "Tower" + (f ? " " + f : ""));
         } else if (an <= 35 && an > 12 && !st.calls.app) {
           st.calls.app = true; st.alt = null; const f = this.pf(p.fq_arr, arr, ["APP", "DEP"]); say(ph.approach(f), false, "Approach" + (f ? " " + f : ""));
@@ -913,10 +927,17 @@ export class Hub {
           const aw = this.wxNow(arr); if (aw && aw.qnh) say(ph.qnh(aw.qnh), false);
           if (alt < 12000 && !st.calls.spd) { st.calls.spd = true; say(ph.spd(220), false, null, "spd"); }
         }
+        // approach vectoring (needs the airport + OSM runway ends: silent when unavailable)
+        const vr = cleanRunway(plan.arrival_runway);
+        if (an <= 70 && vr && !(st.ils && st.ils.rwy === vr) && !st.ilsP && now > (st.ilsTry || 0)) {
+          st.ilsP = this.ilsFor(arr, vr).then(v => { st.ils = v; if (!v) st.ilsTry = Date.now() + 120_000; }, () => { st.ilsTry = Date.now() + 120_000; }).finally(() => { st.ilsP = null; });
+        }
+        if (st.calls.app && !st.calls.twr && st.ils) this.vecTrack(key, c, st, p, now, say, ph, alt);
+        if (an > 45) { st.vec = 0; st.vecN = 0; }
       }
     } else {
       if (prev === "air") {   // touchdown
-        st.landedAt = now; st.calls = {}; st.alt = null; st.pend = null; st.retry = null;
+        st.landedAt = now; st.calls = {}; st.alt = null; st.pend = null; st.retry = null; st.vec = 0; st.vecN = 0; st.ils = null;
         const lr = onRwys[0] || cleanRunway(plan.arrival_runway) || st.landRwy;
         const cleared = st.gr.land > now;
         const busy = lr && apt && this.occupant(key, apt, lr, now);
@@ -1193,6 +1214,69 @@ export class Hub {
     } catch (e) {}
     this.wx.set(name, { at: ok ? now : now - 240_000, w });   // failed fetch: keep the old data, retry in 1 min
     return w;
+  }
+  // airport reference point + elevation (aviationweather.gov, cached 24 h; a failure is retried after 2 min)
+  async airportFor(icao) {
+    const now = Date.now(), c = this.apts.get(icao);
+    if (c && (c.a || now - c.at < 120_000)) return c.a;
+    let a = null;
+    try {
+      const r = await fetch("https://aviationweather.gov/api/data/airport?ids=" + icao + "&format=json", { signal: AbortSignal.timeout(4000) });
+      if (r.ok) { const j = await r.json(), o = Array.isArray(j) ? j[0] : j; if (o && Number.isFinite(Number(o.lat)) && Number.isFinite(Number(o.lon))) a = { lat: Number(o.lat), lon: Number(o.lon), elev: Math.round((Number(o.elev) || 0) * 3.281) }; }
+    } catch (e) {}
+    this.apts.set(icao, { at: now, a });
+    return a;
+  }
+  // ILS frame of the arrival runway from the OSM runway ends around the airport (null when there is no data)
+  async ilsFor(icao, rwy) {
+    const a = await this.airportFor(icao);
+    if (!a) return null;
+    const g = await this.graphFor(icao, a.lat, a.lon);
+    const e = g && runwayEnds(g, rwy);
+    if (!e) return null;
+    const rad = Math.PI / 180, y = Math.sin((e.far.lon - e.thr.lon) * rad) * Math.cos(e.far.lat * rad), x = Math.cos(e.thr.lat * rad) * Math.sin(e.far.lat * rad) - Math.sin(e.thr.lat * rad) * Math.cos(e.far.lat * rad) * Math.cos((e.far.lon - e.thr.lon) * rad);
+    const hdg = (Math.atan2(y, x) / rad + 360) % 360, m = (parseInt(rwy, 10) * 10) % 360;
+    return { thr: { lat: e.thr.lat, lon: e.thr.lon }, hdg, mv: n180(hdg - m), elev: a.elev, rwy };
+  }
+  // Approach vectors: intercept heading, descent to the intercept altitude, ILS clearance, sequence behind the aircraft ahead
+  vecTrack(key, c, st, p, now, say, ph, alt) {
+    const I = st.ils;
+    if (!I || st.vec === 2) return;
+    const la = Number(p.latitude), lo = Number(p.longitude), hd = Number(p.heading_true);
+    if (![la, lo, hd].every(Number.isFinite)) return;
+    const { along, cross } = ilsPos(I, la, lo), rel = n180(hd - I.hdg), lat = Math.abs(cross), D = Math.PI / 180;
+    if (!(along > 0)) return;
+    const mag = h => String(((Math.round(h - I.mv) % 360) + 360) % 360 || 360).padStart(3, "0");
+    const clear = () => { st.vec = 2; st.alt = null; say(ph.clearIls(spokenRwy(I.rwy) || I.rwy), false, null, "ils"); };
+    if (st.vec === 1) {
+      if (lat <= 4 && Math.abs(rel) <= 60) clear();
+      else if (now - st.vecAt > 240_000 && (st.vecN || 0) < 3) st.vec = 0;   // never got onto the course: vectors again
+      return;
+    }
+    if (along > 30) return;
+    if (lat <= 2 && Math.abs(rel) <= 30) { clear(); return; }   // already lined up (long straight-in)
+    const s = cross < 0 ? 1 : -1;   // left of the course: turn right (heading above the course)
+    let ang = 0, ai = 0;
+    for (const a of [30, 45]) { ai = along - lat / Math.tan(a * D); if (a === 30 && ai > 14) return; if (ai >= (a === 30 ? 6 : 4)) { ang = a; break; } }
+    if (!ang) return;   // too close to the course to build an intercept: leave the pilot alone
+    const h = I.hdg + s * ang, right = n180(h - hd) > 0;
+    const ia = Math.max(I.elev + 1500, Math.floor((I.elev + ai * 318) / 500) * 500), down = alt > ia + 400;
+    st.vec = 1; st.vecAt = now; st.vecN = (st.vecN || 0) + 1;
+    if (down) st.alt = { ft: ia, at: now };
+    say(ph.vec(right ? "R" : "L", mag(h), down ? altSay(ia) : ""), false, null, "vec");
+    // sequence: the nearest aircraft ahead on the same runway
+    const arr = up((c.plan || {}).arrival_airport);
+    let ahead = 0, lead = null;
+    for (const [k2, o] of this.clients) {
+      if (k2 === key || !o.pos || !o.st || !o.st.ils || o.pos.phase !== "air" || now - o.seen > 15_000 || secOf(o) !== secOf(c) || up((o.plan || {}).arrival_airport) !== arr || o.st.ils.rwy !== I.rwy) continue;
+      const q = ilsPos(o.st.ils, Number(o.pos.latitude), Number(o.pos.longitude));
+      if (q.along > 0 && q.along < along) { ahead++; if (!lead || q.along > lead.along) lead = { along: q.along, o }; }
+    }
+    if (lead) {
+      const gap = Math.round(along - lead.along), who = String(lead.o.pos.airplane_model || "").replace(/[^\w .\/-]/g, "").trim().slice(0, 20) || normCallsign(lead.o.plan.callsign ?? lead.o.pos.callsign);
+      say(ph.seq(ahead + 1, who, gap), false);
+      if (gap < 5) say(ph.spd(180), false, null, "spd");
+    }
   }
   // cached METAR for sync callers (refresh runs in the background)
   wxNow(name) {
