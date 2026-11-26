@@ -1,5 +1,7 @@
 import { parseMetar, wxSig, nextLetter } from "./atis.js";
 import { distSeg, runwayEnds } from "./taxi.js";
+import { mkBot, advance as botAdvance, posOf as botPos, planOf as botPlan, statusOf as botStatus, MAX_BOTS, perf as botPerf } from "./bots.js";
+import BOTS_HTML from "./aibots.js";
 import { fetchGraph, diag as taxiDiag, nearest, startFor, noUturn, exitAhead, noBackRunway, holdNode, holdNodes, pickHold, route as taxiRoute, legs as taxiLegs, spokenName, dist as gDist } from "./taxi.js";
 // Community backend for the Abflug Android client (v1.5.0) on Cloudflare Workers.
 // All state lives in one Durable Object (in memory, TTL-based).
@@ -347,6 +349,8 @@ export default {
       return new Response(TRAIN_HTML, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
     if (url.pathname === "/players" || url.pathname === "/players/")
       return new Response(PLAYERS_HTML, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+    if (url.pathname === "/aipilots" || url.pathname === "/aipilots/")
+      return new Response(BOTS_HTML, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
     if (url.pathname === "/manager" || url.pathname === "/manager/")
       return new Response(MANAGER_HTML, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
     if (url.pathname === "/ws") {
@@ -376,7 +380,7 @@ export class Hub {
   constructor(ctx) {
     this.towers = new Map(); this.creds = new Map(); this.credOn = false; this.wx = new Map(); this.crashes = new Map(); this.ta = new Map(); this.tinfo = new Map(); this.ra = new Map(); this.sepV = new Map();
     this.voiceStreams = new Map(); this.latestVoiceByPeer = new Map();
-    this.prof = new Map(); this.accts = new Map(); this.toks = new Map(); this.loginFail = new Map(); this.regLog = new Map(); this.locks = new Map(); this.holderKey = new Map(); this.gwLast = new Map(); this.lastClaim = new Map(); this.clients = new Map(); this.msgs = new Map(); this.rwy = new Map(); this.rwyQ = new Map(); this.gfx = new Map(); this.apts = new Map(); this.tres = new Map(); this.stands = new Map(); this.violations = []; this.clips = new Map(); this.listeners = new Map(); this.msgSeq = 0; this.since = Date.now(); this.counts = {};
+    this.prof = new Map(); this.accts = new Map(); this.toks = new Map(); this.loginFail = new Map(); this.regLog = new Map(); this.locks = new Map(); this.holderKey = new Map(); this.gwLast = new Map(); this.lastClaim = new Map(); this.clients = new Map(); this.msgs = new Map(); this.rwy = new Map(); this.rwyQ = new Map(); this.gfx = new Map(); this.apts = new Map(); this.bots = new Map(); this.botSeq = 0; this.botT = 0; this.botSaved = 0; this.tres = new Map(); this.stands = new Map(); this.violations = []; this.clips = new Map(); this.listeners = new Map(); this.msgSeq = 0; this.since = Date.now(); this.counts = {};
     ctx.blockConcurrencyWhile(async () => {
       for (const [k, v] of await ctx.storage.list({ prefix: "tower:" })) this.towers.set(k.slice(6), v);
       for (const [k, v] of await ctx.storage.list({ prefix: "cred:" })) this.creds.set(k.slice(5), v);
@@ -386,11 +390,12 @@ export class Hub {
       for (const [k, v] of await ctx.storage.list({ prefix: "prof:" })) this.prof.set(k.slice(5), v);
       for (const [k, v] of await ctx.storage.list({ prefix: "acct:" })) this.accts.set(k.slice(5), v);
       for (const [k, v] of await ctx.storage.list({ prefix: "tok:" })) this.toks.set(k.slice(4), v);
+      const bl = await ctx.storage.get("bots"); if (bl) { this.botSeq = bl.seq || 0; for (const b of bl.list || []) this.bots.set(b.id, b); }
     }); this.ctx = ctx; }
 
   purge() {
     const now = Date.now();
-    for (const [k, c] of this.clients) if (now - c.seen > TTL_MS) this.clients.delete(k);
+    for (const [k, c] of this.clients) if (!c.bot && now - c.seen > TTL_MS) this.clients.delete(k);
     for (const [k, m] of this.msgs) if (now - m.at > 30 * 60 * 1000) this.msgs.delete(k);
     for (const [k, l] of this.rwy) if (now > l.until) this.rwy.delete(k);
     for (const [k, r] of this.tres) if (now > r.until || !this.clients.has(r.key)) this.tres.delete(k);
@@ -1146,7 +1151,7 @@ export class Hub {
     if (!ok(c.pos)) return;
     const A = c.pos, rad = Math.PI / 180;
     for (const [k2, o] of this.clients) {
-      if (k2 === key || !ok(o.pos) || now - o.seen > 15_000 || secOf(o) !== secOf(c)) continue;
+      if (k2 === key || o.bot || c.bot || !ok(o.pos) || now - o.seen > 15_000 || secOf(o) !== secOf(c)) continue;   // no separation violations against bots
       const B = o.pos, x = (B.longitude - A.longitude) * 60 * Math.cos((A.latitude + B.latitude) / 2 * rad), y = (B.latitude - A.latitude) * 60;
       const rvx = B.ground_speed * Math.sin(B.heading_true * rad) - A.ground_speed * Math.sin(A.heading_true * rad), rvy = B.ground_speed * Math.cos(B.heading_true * rad) - A.ground_speed * Math.cos(A.heading_true * rad);
       if (Math.hypot(rvx, rvy) < 20) continue;
@@ -1214,6 +1219,21 @@ export class Hub {
     } catch (e) {}
     this.wx.set(name, { at: ok ? now : now - 240_000, w });   // failed fetch: keep the old data, retry in 1 min
     return w;
+  }
+  // ---- AI bots: advanced lazily, only when somebody calls the Hub (no timers, no alarms); they show up as flagged pseudo-clients
+  saveBots() { this.botSaved = Date.now(); return this.ctx.storage.put("bots", { seq: this.botSeq, list: [...this.bots.values()] }); }
+  advanceBots(now) {
+    if (!this.bots.size || now - this.botT < 1000) return;
+    this.botT = now;
+    for (const [id, b] of [...this.bots]) {
+      const k = "bot:" + id;
+      if (botAdvance(b, now) === "done") { this.bots.delete(id); this.clients.delete(k); this.botSaved = 0; continue; }
+      if (b.s.mode !== "fly") { this.clients.delete(k); continue; }
+      let c = this.clients.get(k);
+      if (!c) this.clients.set(k, c = { bot: true, plan: {}, route: null, assigned: null, sec: b.def.sec || "expert", member: b.def.sec === "net" });
+      c.plan = botPlan(b); c.pos = botPos(b, now); c.seen = now;
+    }
+    if (now - this.botSaved > 30_000) this.saveBots();
   }
   // airport reference point + elevation (aviationweather.gov, cached 24 h; a failure is retried after 2 min)
   async airportFor(icao) {
@@ -1448,6 +1468,7 @@ export class Hub {
     if (key.startsWith("afa_") && !this.toks.has(key) && p !== "/api/health" && p !== "/api/stats") return json({ error: "invalid_token" }, 401);
     if (p === "/ws" && request.headers.get("Upgrade") === "websocket") return this.acceptSocket(request);
     this.purge();
+    this.advanceBots(Date.now());
 
     if (m === "GET" && p === "/api/debug") {
       const now = Date.now();
@@ -2090,6 +2111,42 @@ export class Hub {
       }
     }
 
+    if (p === "/api/manager/bots") {
+      if (request.headers.get("X-Mgr") !== "1") return json({ error: "not_manager" }, 403);
+      if (m === "GET") return json({ bots: [...this.bots.values()].map(b => ({ id: b.id, callsign: b.def.callsign, model: b.def.model, dep: b.def.dep, arr: b.def.arr, loop: !!b.def.loop, landed: b.s.landed, status: botStatus(b) })) });
+      if (m === "DELETE") {
+        const sp0 = url.searchParams;
+        if (sp0.get("all") === "1") { for (const id of this.bots.keys()) this.clients.delete("bot:" + id); this.bots.clear(); }
+        else { const id = Number(sp0.get("id")); if (!this.bots.has(id)) return json({ error: "not_found" }, 404); this.bots.delete(id); this.clients.delete("bot:" + id); }
+        await this.saveBots(); return json({ success: true });
+      }
+      if (m === "POST" || m === "PUT") {
+        const d = await request.json().catch(() => ({}));
+        const dep = up(d.dep), arr = up(d.arr), cs0 = up(d.callsign).replace(/[^A-Z0-9]/g, "").slice(0, 8);
+        if (!/^[A-Z]{4}$/.test(dep) || !/^[A-Z]{4}$/.test(arr) || dep === arr) return json({ error: "bad_airports" }, 400);
+        if (cs0.length < 2) return json({ error: "bad_callsign" }, 400);
+        const count = Math.max(1, Math.min(MAX_BOTS, Math.floor(Number(d.count) || 1)));
+        if (this.bots.size + count > MAX_BOTS) return json({ error: "too_many", detail: "max " + MAX_BOTS }, 409);
+        const cruise = parseAlt(d.cruise) || 30000;
+        const wps = (Array.isArray(d.wps) ? d.wps.map(w => [w.lat, w.lon]) : String(d.wps || "").split(/\n|;/).map(l => l.split(/[,\s]+/).filter(Boolean))).map(a => ({ lat: Number(a[0]), lon: Number(a[1]) })).filter(w => Number.isFinite(w.lat) && Number.isFinite(w.lon) && Math.abs(w.lat) <= 90 && Math.abs(w.lon) <= 180).slice(0, 12);
+        const [pa, pb] = await Promise.all([this.airportFor(dep), this.airportFor(arr)]);
+        if (!pa || !pb) return json({ error: "airport_not_found", detail: !pa ? dep : arr }, 400);
+        const warnings = [], rw = r => String(r || "").toUpperCase().replace(/\s/g, "").slice(0, 4), drw = rw(d.dep_rwy), arw = rw(d.arr_rwy);
+        const [ia, ib] = await Promise.all([drw ? this.ilsFor(dep, drw).catch(() => null) : null, arw ? this.ilsFor(arr, arw).catch(() => null) : null]);
+        if (drw && !ia) warnings.push("No runway data for " + dep + " " + drw + ": departing from the airport point.");
+        if (arw && !ib) warnings.push("No runway data for " + arr + " " + arw + ": landing at the airport point.");
+        const A = { lat: pa.lat, lon: pa.lon, elev: pa.elev, ils: ia }, B = { lat: pb.lat, lon: pb.lon, elev: pb.elev, ils: ib };
+        const mm = /^(.*?)(\d+)$/.exec(cs0), now = Date.now(), sp = Math.max(0, Number(d.spacing_min) || 0) * 60;
+        const model = String(d.model || "B738").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6) || "B738";
+        for (let i = 0; i < count; i++) {
+          const callsign = count === 1 ? cs0 : mm ? (mm[1] + String(Number(mm[2]) + i).padStart(mm[2].length, "0")).slice(0, 8) : (cs0 + (i + 1)).slice(0, 8);
+          const id = ++this.botSeq, def = { callsign, model, dep, arr, cruise, wps, loop: d.loop !== false, turn: Math.max(0, Math.min(7200, Number(d.turn) || 300)), sec: "expert", dep_rwy: drw, arr_rwy: arw };
+          this.bots.set(id, mkBot(id, def, A, B, now, i * sp));
+        }
+        await this.saveBots(); this.botT = 0; this.advanceBots(Date.now());
+        return json({ success: true, added: count, warnings });
+      }
+    }
     if (p === "/api/manager/creds") {
       if (request.headers.get("X-Mgr") !== "1") return json({ error: "not_manager" }, 403);
       const q = new URL(request.url).searchParams;
@@ -2112,7 +2169,7 @@ export class Hub {
     }
 
     if (m === "GET" && p === "/api/health")
-      return json({ status: "ok", latest_android: LATEST.android, latest_pc: LATEST.pc, active_clients: this.clients.size, pilots: [...this.clients.values()].filter(c => c.pos && secOf(c) === reqSec(request)).length, towers: [...this.towers.values()].filter(t => secOf(t) === reqSec(request)).length, mode: reqSec(request), member: request.headers.get("X-Member") === "1", atc: this.atcState(request) === "1", atc_required: this.atcState(request) !== "n", mgr: request.headers.get("X-Mgr") === "1" });
+      return json({ status: "ok", latest_android: LATEST.android, latest_pc: LATEST.pc, active_clients: this.clients.size, pilots: [...this.clients.values()].filter(c => c.pos && !c.bot && secOf(c) === reqSec(request)).length, towers: [...this.towers.values()].filter(t => secOf(t) === reqSec(request)).length, mode: reqSec(request), member: request.headers.get("X-Member") === "1", atc: this.atcState(request) === "1", atc_required: this.atcState(request) !== "n", mgr: request.headers.get("X-Mgr") === "1" });
 
     if (m === "GET" && p === "/api/traffic") {
       const q = url.searchParams;
