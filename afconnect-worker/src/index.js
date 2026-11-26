@@ -1,5 +1,6 @@
 import { parseMetar, wxSig, nextLetter } from "./atis.js";
 import { distSeg, runwayEnds } from "./taxi.js";
+import { groundFor } from "./botground.js";
 import { mkBot, advance as botAdvance, posOf as botPos, planOf as botPlan, statusOf as botStatus, MAX_BOTS, perf as botPerf } from "./bots.js";
 import BOTS_HTML from "./aibots.js";
 import { fetchGraph, diag as taxiDiag, nearest, startFor, noUturn, exitAhead, noBackRunway, holdNode, holdNodes, pickHold, route as taxiRoute, legs as taxiLegs, spokenName, dist as gDist } from "./taxi.js";
@@ -380,7 +381,7 @@ export class Hub {
   constructor(ctx) {
     this.towers = new Map(); this.creds = new Map(); this.credOn = false; this.wx = new Map(); this.crashes = new Map(); this.ta = new Map(); this.tinfo = new Map(); this.ra = new Map(); this.sepV = new Map();
     this.voiceStreams = new Map(); this.latestVoiceByPeer = new Map();
-    this.prof = new Map(); this.accts = new Map(); this.toks = new Map(); this.loginFail = new Map(); this.regLog = new Map(); this.locks = new Map(); this.holderKey = new Map(); this.gwLast = new Map(); this.lastClaim = new Map(); this.clients = new Map(); this.msgs = new Map(); this.rwy = new Map(); this.rwyQ = new Map(); this.gfx = new Map(); this.apts = new Map(); this.bots = new Map(); this.botSeq = 0; this.botT = 0; this.botSaved = 0; this.tres = new Map(); this.stands = new Map(); this.violations = []; this.clips = new Map(); this.listeners = new Map(); this.msgSeq = 0; this.since = Date.now(); this.counts = {};
+    this.prof = new Map(); this.accts = new Map(); this.toks = new Map(); this.loginFail = new Map(); this.regLog = new Map(); this.locks = new Map(); this.holderKey = new Map(); this.gwLast = new Map(); this.lastClaim = new Map(); this.clients = new Map(); this.msgs = new Map(); this.rwy = new Map(); this.rwyQ = new Map(); this.gfx = new Map(); this.apts = new Map(); this.bots = new Map(); this.botRwy = new Map(); this.botSeq = 0; this.botT = 0; this.botSaved = 0; this.tres = new Map(); this.stands = new Map(); this.violations = []; this.clips = new Map(); this.listeners = new Map(); this.msgSeq = 0; this.since = Date.now(); this.counts = {};
     ctx.blockConcurrencyWhile(async () => {
       for (const [k, v] of await ctx.storage.list({ prefix: "tower:" })) this.towers.set(k.slice(6), v);
       for (const [k, v] of await ctx.storage.list({ prefix: "cred:" })) this.creds.set(k.slice(5), v);
@@ -390,7 +391,7 @@ export class Hub {
       for (const [k, v] of await ctx.storage.list({ prefix: "prof:" })) this.prof.set(k.slice(5), v);
       for (const [k, v] of await ctx.storage.list({ prefix: "acct:" })) this.accts.set(k.slice(5), v);
       for (const [k, v] of await ctx.storage.list({ prefix: "tok:" })) this.toks.set(k.slice(4), v);
-      const bl = await ctx.storage.get("bots"); if (bl) { this.botSeq = bl.seq || 0; for (const b of bl.list || []) this.bots.set(b.id, b); }
+      const bl = await ctx.storage.get("bots"); if (bl) { this.botSeq = bl.seq || 0; for (const b of bl.list || []) { b.G = (await ctx.storage.get("botg:" + b.id)) || null; this.bots.set(b.id, b); } }
     }); this.ctx = ctx; }
 
   purge() {
@@ -1221,14 +1222,17 @@ export class Hub {
     return w;
   }
   // ---- AI bots: advanced lazily, only when somebody calls the Hub (no timers, no alarms); they show up as flagged pseudo-clients
-  saveBots() { this.botSaved = Date.now(); return this.ctx.storage.put("bots", { seq: this.botSeq, list: [...this.bots.values()] }); }
+  saveBots() { this.botSaved = Date.now(); return this.ctx.storage.put("bots", { seq: this.botSeq, list: [...this.bots.values()].map(b => ({ ...b, G: undefined })) }); }   // the (static, bigger) ground plans live under botg:<id>
+  dropBot(id) { this.bots.delete(id); this.clients.delete("bot:" + id); this.ctx.storage.delete("botg:" + id); }
   advanceBots(now) {
     if (!this.bots.size || now - this.botT < 1000) return;
+    const env = { lock: this.botRwy, skipLocks: this.botT > 0 && now - this.botT > 120_000 };   // after a long gap the runway locks are meaningless
     this.botT = now;
+    for (const [k0, l] of this.botRwy) if (l.until < now - 600_000) this.botRwy.delete(k0);
     for (const [id, b] of [...this.bots]) {
       const k = "bot:" + id;
-      if (botAdvance(b, now) === "done") { this.bots.delete(id); this.clients.delete(k); this.botSaved = 0; continue; }
-      if (b.s.mode !== "fly") { this.clients.delete(k); continue; }
+      if (botAdvance(b, now, env) === "done") { this.dropBot(id); this.botSaved = 0; continue; }
+      if (b.s.mode === "wait") { this.clients.delete(k); continue; }
       let c = this.clients.get(k);
       if (!c) this.clients.set(k, c = { bot: true, plan: {}, route: null, assigned: null, sec: b.def.sec || "expert", member: b.def.sec === "net" });
       c.plan = botPlan(b); c.pos = botPos(b, now); c.seen = now;
@@ -2116,8 +2120,8 @@ export class Hub {
       if (m === "GET") return json({ bots: [...this.bots.values()].map(b => ({ id: b.id, callsign: b.def.callsign, model: b.def.model, dep: b.def.dep, arr: b.def.arr, loop: !!b.def.loop, landed: b.s.landed, status: botStatus(b) })) });
       if (m === "DELETE") {
         const sp0 = url.searchParams;
-        if (sp0.get("all") === "1") { for (const id of this.bots.keys()) this.clients.delete("bot:" + id); this.bots.clear(); }
-        else { const id = Number(sp0.get("id")); if (!this.bots.has(id)) return json({ error: "not_found" }, 404); this.bots.delete(id); this.clients.delete("bot:" + id); }
+        if (sp0.get("all") === "1") { for (const id of [...this.bots.keys()]) this.dropBot(id); }
+        else { const id = Number(sp0.get("id")); if (!this.bots.has(id)) return json({ error: "not_found" }, 404); this.dropBot(id); }
         await this.saveBots(); return json({ success: true });
       }
       if (m === "POST" || m === "PUT") {
@@ -2136,13 +2140,27 @@ export class Hub {
         if (drw && !ia) warnings.push("No runway data for " + dep + " " + drw + ": departing from the airport point.");
         if (arw && !ib) warnings.push("No runway data for " + arr + " " + arw + ": landing at the airport point.");
         const A = { lat: pa.lat, lon: pa.lon, elev: pa.elev, ils: ia }, B = { lat: pb.lat, lon: pb.lon, elev: pb.elev, ils: ib };
+        // ground plans (stand, taxi routes, runway exit) need both runways and OSM taxiway data at both airports
+        let ga = null, gb = null;
+        if (ia && ib) { [ga, gb] = await Promise.all([this.graphFor(dep, pa.lat, pa.lon).catch(() => null), this.graphFor(arr, pb.lat, pb.lon).catch(() => null)]); }
+        const usedAt = new Map(), use = (apt, ref) => { if (!usedAt.has(apt)) usedAt.set(apt, new Set()); usedAt.get(apt).add(ref); };
+        for (const o of this.bots.values()) if (o.G) { use(o.def.dep, o.G.A.ref); use(o.def.arr, o.G.B.ref); }
+        let noGround = 0;
         const mm = /^(.*?)(\d+)$/.exec(cs0), now = Date.now(), sp = Math.max(0, Number(d.spacing_min) || 0) * 60;
         const model = String(d.model || "B738").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6) || "B738";
         for (let i = 0; i < count; i++) {
           const callsign = count === 1 ? cs0 : mm ? (mm[1] + String(Number(mm[2]) + i).padStart(mm[2].length, "0")).slice(0, 8) : (cs0 + (i + 1)).slice(0, 8);
           const id = ++this.botSeq, def = { callsign, model, dep, arr, cruise, wps, loop: d.loop !== false, turn: Math.max(0, Math.min(7200, Number(d.turn) || 300)), sec: "expert", dep_rwy: drw, arr_rwy: arw };
-          this.bots.set(id, mkBot(id, def, A, B, now, i * sp));
+          let G = null;
+          if (ga && gb) {
+            const x = groundFor(ga, ia, drw, usedAt.get(dep) || new Set()), y = x && groundFor(gb, ib, arw, usedAt.get(arr) || new Set());
+            if (x && y) { G = { A: x, B: y }; use(dep, x.ref); use(arr, y.ref); await this.ctx.storage.put("botg:" + id, G); } else noGround++;
+          }
+          this.bots.set(id, mkBot(id, def, A, B, now, i * sp, G));
         }
+        if (ia && ib && !(ga && gb)) warnings.push("No taxiway data for " + (!ga ? dep : arr) + ": bots start in the air and disappear at touchdown.");
+        else if (noGround) warnings.push(noGround + " bot(s) found no free stand with a taxi route and use the simple start (airborne, disappear at touchdown).");
+        else if (!ia || !ib) warnings.push("Give both runways to get gate-to-gate ground handling.");
         await this.saveBots(); this.botT = 0; this.advanceBots(Date.now());
         return json({ success: true, added: count, warnings });
       }

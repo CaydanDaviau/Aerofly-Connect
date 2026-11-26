@@ -1,6 +1,8 @@
 // AI traffic ("bots"): simple flight model, advanced lazily (only when somebody reads the Hub), no timers, no extra requests.
 // A bot flies  origin -> [waypoints] -> destination, lands (despawns at the threshold), waits (hidden), then flies back (if looping).
-// Stage 1: bots start airborne over the departure airport (no ground handling yet) and ignore ATC instructions.
+// Stage 2: with ground data (b.G, see botground.js: stand, taxi routes, runway exit) a bot parks at a stand, pushes back, taxis to the hold-short point, lines up,
+// rolls, flies, lands, rolls out, taxis to its stand and parks; one runway lock per physical runway keeps bots from sharing it. Without ground data
+// (no OSM taxi/runway data) it keeps the Stage 1 behaviour: spawn airborne, despawn at touchdown, wait hidden. Bots ignore ATC instructions.
 const R = Math.PI / 180;
 export const MAX_BOTS = 60;
 
@@ -25,8 +27,9 @@ function frame(ils, p) {
 }
 
 // def: {callsign, model, dep, arr, cruise (ft), wps:[{lat,lon}], loop, turn (s), sec, dep_rwy, arr_rwy}; A/B: {lat, lon, elev, ils|null}
-export function mkBot(id, def, A, B, now, delaySec = 0) {
-  return { id, def, A, B, s: { mode: "wait", waitUntil: now + delaySec * 1000, leg: 0, t: now, lat: A.lat, lon: A.lon, alt: A.elev, hdg: 0, gs: 0, vs: 0, wi: 0, final: false, landed: 0 } };
+export function mkBot(id, def, A, B, now, delaySec = 0, G = null) {
+  const st = G ? { mode: "park", waitUntil: now + delaySec * 1000, leg: 0, t: now, lat: G.A.stand.lat, lon: G.A.stand.lon, alt: A.elev, hdg: G.A.stand.hdg, gs: 0, vs: 0, wi: 0, final: false, landed: 0 } : null;
+  return { id, def, A, B, G, s: st || { mode: "wait", waitUntil: now + delaySec * 1000, leg: 0, t: now, lat: A.lat, lon: A.lon, alt: A.elev, hdg: 0, gs: 0, vs: 0, wi: 0, final: false, landed: 0 } };
 }
 const legOf = b => b.s.leg === 0 ? { o: b.A, d: b.B, wps: b.def.wps || [] } : { o: b.B, d: b.A, wps: [...(b.def.wps || [])].reverse() };
 
@@ -86,8 +89,71 @@ function step(b, dt, now) {
   return null;
 }
 
+// ---- ground
+const MS = 0.514444;   // kt -> m/s
+// physical runway key (09L and 27R are the same runway)
+export function rwyKey(apt, ident) {
+  const n = parseInt(ident, 10) || 0, l = (/[LRC]$/.exec(String(ident)) || [""])[0];
+  return n <= 18 ? apt + "/" + n + l : apt + "/" + (n - 18) + ({ L: "R", R: "L", C: "C" }[l] || "");
+}
+function moveAlong(s, path, meters) {   // follow a [[lat,lon]] polyline; true at its end
+  while (s.pi < path.length) {
+    const tg = { lat: path[s.pi][0], lon: path[s.pi][1] }, cur = { lat: s.lat, lon: s.lon }, dm = dist(cur, tg) * 1852;
+    if (dm > 0.5) s.hdg = brg(cur, tg);
+    if (dm <= meters) { s.lat = tg.lat; s.lon = tg.lon; meters -= dm; s.pi++; }
+    else { const f = meters / dm; s.lat += (tg.lat - s.lat) * f; s.lon += (tg.lon - s.lon) * f; return false; }
+  }
+  return true;
+}
+const fwd = (s, nm) => { const p = offset({ lat: s.lat, lon: s.lon }, s.hdg, nm); s.lat = p.lat; s.lon = p.lon; };
+const lockFree = (env, key, t) => env.skipLocks || !((env.lock.get(key) || {}).until > t);
+const lockSet = (env, key, until) => { const c = env.lock.get(key); if (!c || until > c.until) env.lock.set(key, { until }); };
+const GROUND = new Set(["park", "push", "taxi", "hold", "lineup", "lined"]);
+export const onRunway = m => m === "lineup" || m === "lined" || m === "roll" || m === "rollout";
+
+// one ground step (modes: park push taxi hold lineup lined roll rollout); returns "done" for a one-way bot that has parked
+function stepGround(b, dt, t, env) {
+  const s = b.s, p = perf(b.def.model), ak = s.leg === 0 ? "A" : "B", ap = b[ak], g = b.G[ak];
+  s.t = t;
+  switch (s.mode) {
+    case "park":
+      s.gs = 0; if (s.doneAt && t >= s.doneAt) return "done";
+      if (!s.doneAt && t >= s.waitUntil) { s.mode = "push"; s.until = t + 45_000; }
+      break;
+    case "push": s.gs = 0; if (t >= s.until) { s.mode = "taxi"; s.path = g.out; s.pi = 1; s.after = "hold"; } break;
+    case "taxi": {
+      s.gs += clamp(18 - s.gs, -3 * dt, 3 * dt);
+      if (moveAlong(s, s.path, s.gs * MS * dt)) {
+        s.gs = 0;
+        if (s.after === "hold") { s.mode = "hold"; s.until = t + (15 + (b.id * 7) % 25) * 1000; }
+        else { s.mode = "park"; s.waitUntil = t + Math.max(0, Number(b.def.turn) || 300) * 1000; if (!b.def.loop) s.doneAt = t + 60_000; }
+      }
+      break;
+    }
+    case "hold": {
+      s.gs = 0; const key = rwyKey(b.def[ak === "A" ? "dep" : "arr"], ap.ils.rwy);
+      if (t >= s.until && lockFree(env, key, t)) { lockSet(env, key, t + 100_000); s.mode = "lineup"; s.path = [g.lineup]; s.pi = 0; }
+      break;
+    }
+    case "lineup":
+      s.gs += clamp(8 - s.gs, -3 * dt, 3 * dt);
+      if (moveAlong(s, s.path, s.gs * MS * dt)) { s.gs = 0; s.hdg = ap.ils.hdg; s.mode = "lined"; s.until = t + 6000; }
+      break;
+    case "lined": s.gs = 0; s.hdg = ap.ils.hdg; if (t >= s.until) s.mode = "roll"; break;
+    case "roll":
+      s.gs += 4 * dt; fwd(s, s.gs * dt / 3600);
+      if (s.gs >= p.vapp + 15) { s.mode = "fly"; s.alt = ap.elev; s.vs = 300; s.wi = 0; s.final = false; lockSet(env, rwyKey(b.def[ak === "A" ? "dep" : "arr"], ap.ils.rwy), t + 25_000); }
+      break;
+    case "rollout":
+      s.gs = Math.max(25, s.gs - 2.5 * dt); const m = s.gs * MS * dt; fwd(s, m / 1852); s.rolled = (s.rolled || 0) + m;
+      if (s.rolled >= g.inRoll) { s.mode = "taxi"; s.path = g.in; s.pi = 0; s.after = "park"; s.gs = Math.min(s.gs, 18); }
+      break;
+  }
+  return null;
+}
+
 // Advance a bot to `now`. Returns "done" when a one-way bot has landed (remove it).
-export function advance(b, now) {
+export function advance(b, now, env = { lock: new Map(), skipLocks: false }) {
   const s = b.s;
   let t = s.t;
   if (s.mode === "wait") {
@@ -97,7 +163,19 @@ export function advance(b, now) {
   const gap = now - t, dt = gap > 120_000 ? 10 : 2;
   for (let n = 0; n < 4000 && t < now; n++) {
     const h = Math.min(dt, (now - t) / 1000); t += h * 1000;
-    if (step(b, h, t) === "landed") {
+    if (s.mode !== "fly") { if (stepGround(b, h, t, env) === "done") return "done"; continue; }
+    const ils0 = legOf(b).d.ils, r0 = step(b, h, t);
+    if (b.G && ils0 && s.final) {   // runway lock: the runway is taken from 4.5 nm out until the lander has left it
+      const al = frame(ils0, { lat: s.lat, lon: s.lon }).along, k = rwyKey(b.def[s.leg === 0 ? "arr" : "dep"], ils0.rwy);
+      if (al <= 4.5 && r0 !== "landed") lockSet(env, k, t + al / Math.max(60, s.gs) * 3_600_000 + 70_000);
+    }
+    if (r0 === "landed" && b.G) {   // touchdown on the runway: roll out, taxi to the stand
+      const k = rwyKey(b.def[s.leg === 0 ? "arr" : "dep"], ils0.rwy), nx = s.leg === 0 ? "B" : "A";
+      s.landed++; s.leg = 1 - s.leg; s.mode = "rollout"; s.alt = legOf(b).o.elev; s.vs = 0; s.rolled = 0; s.final = false; s.hdg = ils0.hdg;
+      lockSet(env, k, t + (b.G[nx].inRoll / 12 + 20) * 1000);
+      continue;
+    }
+    if (r0 === "landed") {
       s.landed++; s.mode = "wait"; s.alt = (s.leg === 0 ? b.B : b.A).elev; s.gs = 0; s.vs = 0;
       if (!b.def.loop) return "done";
       s.leg = 1 - s.leg; s.waitUntil = t + Math.max(0, Number(b.def.turn) || 300) * 1000; s.t = now;
@@ -112,12 +190,20 @@ export function advance(b, now) {
 export function posOf(b, now) {
   const s = b.s, d = legOf(b).d, sq = 2000 + (b.id * 37) % 3000;
   const left = s.final && d.ils ? Math.max(0, frame(d.ils, { lat: s.lat, lon: s.lon }).along) : dist({ lat: s.lat, lon: s.lon }, d);
+  const phase = s.mode === "fly" ? "air" : onRunway(s.mode) ? "runway" : "ground", air = phase === "air";
   return {
     icao_address: "BB" + b.id.toString(16).toUpperCase().padStart(4, "0"), callsign: b.def.callsign,
-    latitude: s.lat, longitude: s.lon, altitude_ft: Math.round(s.alt), heading_true: Math.round(s.hdg), ground_speed: Math.round(s.gs), vertical_speed_ft_min: Math.round(s.vs),
-    squawk_code: String(sq).replace(/[89]/g, "1"), airplane_model: b.def.model, airplane_livery: "", voice: false, auto_atc: true, phase: "air",
+    latitude: s.lat, longitude: s.lon, altitude_ft: Math.round(s.alt), heading_true: Math.round(s.hdg), ground_speed: Math.round(s.gs), vertical_speed_ft_min: air ? Math.round(s.vs) : 0,
+    squawk_code: String(sq).replace(/[89]/g, "1"), airplane_model: b.def.model, airplane_livery: "", voice: false, auto_atc: true, phase,
     arr_nm: Math.round(left * 10) / 10, timestamp: Math.floor(now / 1000), bot: true,
   };
 }
 export const planOf = b => ({ callsign: b.def.callsign, departure_airport: b.s.leg === 0 ? b.def.dep : b.def.arr, arrival_airport: b.s.leg === 0 ? b.def.arr : b.def.dep, cruise_altitude: String(b.def.cruise || ""), arrival_runway: (b.s.leg === 0 ? b.def.arr_rwy : b.def.dep_rwy) || "" });
-export const statusOf = b => { const s = b.s; return s.mode === "wait" ? { phase: "waiting", at: s.leg === 0 ? b.def.dep : b.def.arr, until: s.waitUntil } : { phase: s.final ? "final" : "enroute", alt: Math.round(s.alt), gs: Math.round(s.gs), to: s.leg === 0 ? b.def.arr : b.def.dep }; };
+const MODE_TXT = { park: "parked", push: "pushback", taxi: "taxiing", hold: "holding short", lineup: "lining up", lined: "lined up", roll: "takeoff roll", rollout: "landing roll" };
+export const statusOf = b => {
+  const s = b.s, at = s.leg === 0 ? b.def.dep : b.def.arr, to = s.leg === 0 ? b.def.arr : b.def.dep;
+  const text = s.mode === "wait" ? "waiting at " + at + (s.waitUntil > s.t ? " (" + Math.ceil((s.waitUntil - s.t) / 60000) + " min)" : "")
+    : s.mode === "fly" ? (s.final ? "final" : "enroute") + " to " + to + ", " + Math.round(s.alt) + " ft, " + Math.round(s.gs) + " kt"
+    : MODE_TXT[s.mode] + " at " + (s.mode === "park" && s.doneAt ? at : at) + (s.mode === "park" && s.waitUntil > s.t ? " (departs in " + Math.ceil((s.waitUntil - s.t) / 60000) + " min)" : "");
+  return { phase: s.mode, at, to, text };
+};
