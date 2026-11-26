@@ -2,7 +2,10 @@
 // A bot flies  origin -> [waypoints] -> destination, lands (despawns at the threshold), waits (hidden), then flies back (if looping).
 // Stage 2: with ground data (b.G, see botground.js: stand, taxi routes, runway exit) a bot parks at a stand, pushes back, taxis to the hold-short point, lines up,
 // rolls, flies, lands, rolls out, taxis to its stand and parks; one runway lock per physical runway keeps bots from sharing it. Without ground data
-// (no OSM taxi/runway data) it keeps the Stage 1 behaviour: spawn airborne, despawn at touchdown, wait hidden. Bots ignore ATC instructions.
+// (no OSM taxi/runway data) it keeps the Stage 1 behaviour: spawn airborne, despawn at touchdown, wait hidden.
+// Stage 3: where a human controller covers the flight (b.h, set by the Hub before each advance) the bot behaves like a pilot: it REQUESTS clearance, pushback, taxi, takeoff,
+// landing and descent (b.s.want, sent by the Hub through the normal request endpoint), waits for the grants (st.gr, st.alt, text it understands: see hear()), flies assigned
+// headings/altitudes/speeds, holds an orbit at the final fix until cleared for the approach, and goes around without a landing clearance. Without a human it stays autonomous.
 const R = Math.PI / 180;
 export const MAX_BOTS = 60;
 
@@ -43,18 +46,27 @@ function spawn(b) {
 
 // one step of dt seconds; returns "landed" when the bot touches down
 function step(b, dt, now) {
+  const t = now;
   const s = b.s, p = perf(b.def.model), { o, d, wps } = legOf(b), ils = d.ils;
   const here = { lat: s.lat, lon: s.lon };
+  const h = b.h || {}, hum = !!h.air || !!s.ga, gr = h.gr || {};   // hum: a human controller flies this one with instructions
+  if (h.air) { if (!s.hm) { s.hm = true; if (s.holdAlt == null) s.holdAlt = Math.round(s.alt / 100) * 100; } if (h.alt) s.holdAlt = h.alt; }
+  else if (s.hm) { s.hm = false; if (!s.ga) { s.holdAlt = null; s.hdgTgt = null; s.spdTgt = null; s.orbit = false; } }
+  if (s.ga && !h.air && !h.land) { s.ga = false; s.holdAlt = null; s.hdgTgt = null; }
   const cruise = Math.min(Number(b.def.cruise) || 30000, p.ceil);
   // lateral target
   let des, dd;   // desired heading; distance (nm) still to fly to the touchdown point (straight line, via the final fix)
   let fix = null, fr = null;
   if (ils) { fix = offset(ils.thr, n360(ils.hdg + 180), 12); fr = frame(ils, here); }
-  const goal = ils ? ils.thr : d;
   if (!s.final && s.wi < wps.length) {
     const w = wps[s.wi]; if (dist(here, w) < Math.max(1.5, s.gs / 3600 * 9)) s.wi++;
   }
-  if (s.final || (ils && s.wi >= wps.length && fr.along <= 14 && Math.abs(fr.cross) < 3 && Math.abs(n180(s.hdg - ils.hdg)) < 70)) {
+  if (ils && s.final) {   // human tower: ask for the landing clearance on final; no clearance at 2.5 nm (or told to) = go around
+    const lc = h.land && gr.land > t;
+    if (h.land && fr.along <= 8 && !lc) ask(s, t, "land");
+    if (s.gaOrder || (h.land && fr.along <= 2.5 && !lc)) { s.final = false; s.ilsClr = false; s.gaOrder = false; s.ga = true; s.hdgTgt = ils.hdg; s.holdAlt = Math.round((d.elev + 3000) / 500) * 500; s.orbit = false; s.wi = wps.length; s.vs = Math.max(s.vs, 700); }
+  }
+  if (s.final || (ils && (!h.dst || s.ilsClr) && s.wi >= wps.length && fr.along <= 14 && Math.abs(fr.cross) < 3 && Math.abs(n180(s.hdg - ils.hdg)) < 70)) {
     s.final = true; des = ils.hdg - clamp(fr.cross * 20, -25, 25); dd = Math.max(0, fr.along);
   } else {
     const tgt = s.wi < wps.length ? wps[s.wi] : (fix || d);
@@ -62,6 +74,9 @@ function step(b, dt, now) {
     dd = (s.wi < wps.length ? dist(here, tgt) : 0) + (fix ? dist(here, fix) + 12 : dist(here, d));
     for (let i = s.wi + 1; i < wps.length; i++) dd += dist(wps[i - 1], wps[i]);   // rest of the route (approximate, straight legs)
     if (s.wi < wps.length) dd += dist(wps[wps.length - 1], fix || d);
+    if (hum && s.hdgTgt != null) des = s.hdgTgt;   // assigned heading
+    else if (h.dst && ils && s.wi >= wps.length && !s.ilsClr && dist(here, fix) < 2.5) s.orbit = true;   // at the final fix without an approach clearance: hold (orbit)
+    if (s.orbit) { if (s.ilsClr || s.hdgTgt != null) s.orbit = false; else des = n360(s.hdg + 30); }
   }
   const turn = clamp(n180(des - s.hdg), -3 * dt, 3 * dt); s.hdg = n360(s.hdg + turn);
   // vertical: climb to the cruise level, descend on a 3 deg profile (318 ft/nm) to the touchdown point; never below 2500 ft AGL before the final
@@ -71,11 +86,15 @@ function step(b, dt, now) {
   if (ils && !s.final) tgtAlt = Math.max(tgtAlt, elev + 2500);
   const aglO = s.alt - o.elev;
   if (aglO < 1500 && dist(here, o) < 15 && s.landed >= 0 && s.mode === "fly" && dd > 40) tgtAlt = Math.max(tgtAlt, s.alt);   // keep climbing out of the airport
+  if (hum && !s.final && s.holdAlt != null) tgtAlt = Math.min(s.holdAlt, p.ceil);   // controller's altitude (or the one held since he took over)
+  if (h.dst && !s.final && s.alt > 5600 && dd <= (s.alt - 5000) / 1000 * 3 + 15 && !(h.alt && h.alt < s.alt - 200)) ask(s, t, "descent", 5000);
   const vsT = clamp((tgtAlt - s.alt) * 3, -p.des, p.clb);
   s.vs += clamp(vsT - s.vs, -400 * dt, 400 * dt);
   s.alt += s.vs * dt / 60;
   // speed: 250 below 10000, cruise above, slower near the airport, approach speed on final
   let gsT = s.alt < 10000 ? Math.min(p.v250, p.cr) : p.cr;
+  if (hum && s.spdTgt) gsT = clamp(s.spdTgt, p.vapp + 5, p.cr);
+  if (s.orbit) gsT = Math.min(gsT, 220);
   if (s.alt - o.elev < 3000 && dist(here, o) < 12) gsT = Math.min(gsT, 190);
   if (dd < 25) gsT = Math.min(gsT, 220);
   if (dd < 14) gsT = Math.min(gsT, p.vapp + 40);
@@ -87,6 +106,32 @@ function step(b, dt, now) {
   s.t = now;
   if (ils ? (s.final && frame(ils, { lat: s.lat, lon: s.lon }).along <= 0.05) || (s.final && s.alt <= elev + 20) : dist({ lat: s.lat, lon: s.lon }, d) < 0.4) return "landed";
   return null;
+}
+
+// a request for the Hub to send as this pilot (de-duplicated: the same request is repeated after 3 minutes)
+function ask(s, t, type, alt) {
+  if (s.req && s.req.type === type && t - s.req.at < 180_000) return;
+  s.req = { type, at: t }; (s.want || (s.want = [])).push(alt ? { type, altitude: alt } : { type });
+}
+// Understand a controller's text (en/pt). Sets flags on b.s and returns {alt} when it assigned an altitude.
+export function hear(b, text, parseAlt) {
+  const s = b.s, t = String(text || "").toLowerCase(), out = {};
+  const neg = /\b(not|no|unable|negative|cancel\w*|stand\s?by|n[ãa]o|negativo|aguarde)\b/.test(t);
+  const mv = ((s.leg === 0 ? b.B : b.A).ils || (s.leg === 0 ? b.A : b.B).ils || {}).mv || 0;
+  if (/(^|\W)(push\s?back|recu[oa])/.test(t) && !neg) { s.okPush = true; s.okClr = true; }
+  else if (/\bcleared\s+to\b|\bflight\s+planned\s+route\b|\bsquawk\b|\bc[óo]digo\b|rota\s+do\s+plano/.test(t) && !/\bcleared\s+to\s+land\b/.test(t) && !neg) s.okClr = true;
+  if (/hold\s+position|hold\s+short|\bstop\b|aguarde\s+na\s+posi|\bpare\b/.test(t)) s.stop = true;
+  else if (/\btaxi\b|\bt[áa]xi\b|\bcontinue\b|\bresume\b|prossiga|cleared\s+(for\s+)?take-?off|cleared\s+to\s+land/.test(t) && !neg) s.stop = false;
+  if (/line\s*up\s*(and|&)\s*wait|entre\s+e\s+aguarde/.test(t)) s.luaw = true;
+  const hd = /(?:heading|proa)\s*(\d{1,3})\b/.exec(t);
+  if (hd && !neg) { s.hdgTgt = n360(Number(hd[1]) + mv); s.orbit = false; }
+  const al = /(?:climb|descend|maintain|desça|desca|suba|mantenha)[^.,;]*?\b(fl\s?\d{2,3}|\d{3,5})\s*(?:feet|ft|pés|pes)?/.exec(t);
+  if (al && !neg && !/heading|proa|speed|velocidade/.test(al[0])) { const ft = parseAlt(al[1].replace(/\s/g, "")); if (ft) out.alt = ft; }
+  if (/no\s+(atc\s+)?speed\s+restriction|sem\s+restri[çc][ãa]o\s+de\s+velocidade|speed\s+at\s+your\s+discretion/.test(t)) s.spdTgt = null;
+  else { const sp = /(?:speed|velocidade)\D{0,12}(\d{2,3})\b|(?:reduce|increase|reduza|aumente)\D{0,30}?(\d{2,3})\s*(?:knots|kt|n[óo]s)/.exec(t); if (sp && !neg) s.spdTgt = Number(sp[1] || sp[2]); }
+  if (/cleared\s+(for\s+)?(the\s+)?(ils|approach|visual|rnav|loc)\b|autorizad\w+\s+(para\s+)?(a\s+)?(aproxima|ils)/.test(t) && !neg) { s.ilsClr = true; s.ga = false; s.orbit = false; }
+  if (/go\s*around|arremet/.test(t) && !/cleared\s+to\s+land/.test(t)) s.gaOrder = true;
+  return out;
 }
 
 // ---- ground
@@ -113,16 +158,29 @@ export const onRunway = m => m === "lineup" || m === "lined" || m === "roll" || 
 
 // one ground step (modes: park push taxi hold lineup lined roll rollout); returns "done" for a one-way bot that has parked
 function stepGround(b, dt, t, env) {
-  const s = b.s, p = perf(b.def.model), ak = s.leg === 0 ? "A" : "B", ap = b[ak], g = b.G[ak];
+  const s = b.s, p = perf(b.def.model), ak = s.leg === 0 ? "A" : "B", ap = b[ak], g = b.G[ak], h = b.h || {}, gr = h.gr || {};
   s.t = t;
   switch (s.mode) {
     case "park":
       s.gs = 0; if (s.doneAt && t >= s.doneAt) return "done";
-      if (!s.doneAt && t >= s.waitUntil) { s.mode = "push"; s.until = t + 45_000; }
+      if (!s.doneAt && t >= s.waitUntil) {
+        if (h.gnd) {   // a human covers the ground: clearance, then pushback, each when he has answered (a taxi clearance covers both)
+          const tx = gr.taxi > t;
+          if (!s.okClr && !s.okPush && !tx) { ask(s, t, "clearance"); break; }
+          if (!s.okPush && !tx) { ask(s, t, "pushback"); break; }
+        }
+        s.mode = "push"; s.until = t + 45_000;
+      }
       break;
-    case "push": s.gs = 0; if (t >= s.until) { s.mode = "taxi"; s.path = g.out; s.pi = 1; s.after = "hold"; } break;
+    case "push":
+      s.gs = 0;
+      if (t >= s.until) {
+        if (h.gnd && !(gr.taxi > t)) { ask(s, t, "taxi"); break; }
+        s.mode = "taxi"; s.path = g.out; s.pi = 1; s.after = "hold";
+      }
+      break;
     case "taxi": {
-      s.gs += clamp(18 - s.gs, -3 * dt, 3 * dt);
+      s.gs = s.stop ? Math.max(0, s.gs - 3 * dt) : s.gs + clamp(18 - s.gs, -3 * dt, 3 * dt);
       if (moveAlong(s, s.path, s.gs * MS * dt)) {
         s.gs = 0;
         if (s.after === "hold") { s.mode = "hold"; s.until = t + (15 + (b.id * 7) % 25) * 1000; }
@@ -132,17 +190,28 @@ function stepGround(b, dt, t, env) {
     }
     case "hold": {
       s.gs = 0; const key = rwyKey(b.def[ak === "A" ? "dep" : "arr"], ap.ils.rwy);
-      if (t >= s.until && lockFree(env, key, t)) { lockSet(env, key, t + 100_000); s.mode = "lineup"; s.path = [g.lineup]; s.pi = 0; }
+      if (t < s.until) break;
+      if (h.twr) {   // a human tower: needs takeoff clearance (or "line up and wait") to enter the runway
+        if (!(gr.takeoff > t) && !s.luaw) { ask(s, t, "takeoff"); break; }
+        s.mode = "lineup"; s.path = [g.lineup]; s.pi = 0;
+      } else if (lockFree(env, key, t)) { lockSet(env, key, t + 100_000); s.mode = "lineup"; s.path = [g.lineup]; s.pi = 0; }
       break;
     }
     case "lineup":
       s.gs += clamp(8 - s.gs, -3 * dt, 3 * dt);
       if (moveAlong(s, s.path, s.gs * MS * dt)) { s.gs = 0; s.hdg = ap.ils.hdg; s.mode = "lined"; s.until = t + 6000; }
       break;
-    case "lined": s.gs = 0; s.hdg = ap.ils.hdg; if (t >= s.until) s.mode = "roll"; break;
+    case "lined":
+      s.gs = 0; s.hdg = ap.ils.hdg;
+      if (t >= s.until) { if (h.twr && !(gr.takeoff > t)) { ask(s, t, "takeoff"); break; } s.mode = "roll"; }
+      break;
     case "roll":
       s.gs += 4 * dt; fwd(s, s.gs * dt / 3600);
-      if (s.gs >= p.vapp + 15) { s.mode = "fly"; s.alt = ap.elev; s.vs = 300; s.wi = 0; s.final = false; lockSet(env, rwyKey(b.def[ak === "A" ? "dep" : "arr"], ap.ils.rwy), t + 25_000); }
+      if (s.gs >= p.vapp + 15) {
+        s.mode = "fly"; s.alt = ap.elev; s.vs = 300; s.wi = 0; s.final = false; lockSet(env, rwyKey(b.def[ak === "A" ? "dep" : "arr"], ap.ils.rwy), t + 25_000);
+        s.okClr = s.okPush = s.luaw = s.stop = false; s.req = null; s.holdAlt = Math.min(Number(b.def.cruise) || 30000, Math.round((ap.elev + 3000) / 500) * 500);   // initial climb until a controller says more
+        if (env.on) env.on(b, "liftoff", t);
+      }
       break;
     case "rollout":
       s.gs = Math.max(25, s.gs - 2.5 * dt); const m = s.gs * MS * dt; fwd(s, m / 1852); s.rolled = (s.rolled || 0) + m;
@@ -172,10 +241,12 @@ export function advance(b, now, env = { lock: new Map(), skipLocks: false }) {
     if (r0 === "landed" && b.G) {   // touchdown on the runway: roll out, taxi to the stand
       const k = rwyKey(b.def[s.leg === 0 ? "arr" : "dep"], ils0.rwy), nx = s.leg === 0 ? "B" : "A";
       s.landed++; s.leg = 1 - s.leg; s.mode = "rollout"; s.alt = legOf(b).o.elev; s.vs = 0; s.rolled = 0; s.final = false; s.hdg = ils0.hdg;
+      s.ilsClr = s.ga = s.gaOrder = s.orbit = s.hm = false; s.holdAlt = s.hdgTgt = s.spdTgt = null; s.req = null; if (env.on) env.on(b, "touchdown", t);
       lockSet(env, k, t + (b.G[nx].inRoll / 12 + 20) * 1000);
       continue;
     }
     if (r0 === "landed") {
+      s.ilsClr = s.ga = s.gaOrder = s.orbit = s.hm = false; s.holdAlt = s.hdgTgt = s.spdTgt = null; s.req = null; if (env.on) env.on(b, "touchdown", t);
       s.landed++; s.mode = "wait"; s.alt = (s.leg === 0 ? b.B : b.A).elev; s.gs = 0; s.vs = 0;
       if (!b.def.loop) return "done";
       s.leg = 1 - s.leg; s.waitUntil = t + Math.max(0, Number(b.def.turn) || 300) * 1000; s.t = now;
@@ -198,7 +269,7 @@ export function posOf(b, now) {
     arr_nm: Math.round(left * 10) / 10, timestamp: Math.floor(now / 1000), bot: true,
   };
 }
-export const planOf = b => ({ callsign: b.def.callsign, departure_airport: b.s.leg === 0 ? b.def.dep : b.def.arr, arrival_airport: b.s.leg === 0 ? b.def.arr : b.def.dep, cruise_altitude: String(b.def.cruise || ""), arrival_runway: (b.s.leg === 0 ? b.def.arr_rwy : b.def.dep_rwy) || "" });
+export const planOf = b => ({ callsign: b.def.callsign, departure_airport: b.s.leg === 0 ? b.def.dep : b.def.arr, arrival_airport: b.s.leg === 0 ? b.def.arr : b.def.dep, cruise_altitude: String(b.def.cruise || ""), departure_runway: (b.s.leg === 0 ? b.def.dep_rwy : b.def.arr_rwy) || "", arrival_runway: (b.s.leg === 0 ? b.def.arr_rwy : b.def.dep_rwy) || "" });
 const MODE_TXT = { park: "parked", push: "pushback", taxi: "taxiing", hold: "holding short", lineup: "lining up", lined: "lined up", roll: "takeoff roll", rollout: "landing roll" };
 export const statusOf = b => {
   const s = b.s, at = s.leg === 0 ? b.def.dep : b.def.arr, to = s.leg === 0 ? b.def.arr : b.def.dep;

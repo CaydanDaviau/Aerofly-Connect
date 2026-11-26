@@ -1,7 +1,7 @@
 import { parseMetar, wxSig, nextLetter } from "./atis.js";
 import { distSeg, runwayEnds } from "./taxi.js";
 import { groundFor } from "./botground.js";
-import { mkBot, advance as botAdvance, posOf as botPos, planOf as botPlan, statusOf as botStatus, MAX_BOTS, perf as botPerf } from "./bots.js";
+import { hear as botHear, mkBot, advance as botAdvance, posOf as botPos, planOf as botPlan, statusOf as botStatus, MAX_BOTS, perf as botPerf } from "./bots.js";
 import BOTS_HTML from "./aibots.js";
 import { fetchGraph, diag as taxiDiag, nearest, startFor, noUturn, exitAhead, noBackRunway, holdNode, holdNodes, pickHold, route as taxiRoute, legs as taxiLegs, spokenName, dist as gDist } from "./taxi.js";
 // Community backend for the Abflug Android client (v1.5.0) on Cloudflare Workers.
@@ -735,6 +735,7 @@ export class Hub {
     const m = { id, icao: pos.icao_address, callsign: normCallsign(target.plan.callsign ?? pos.callsign), text: String(text).slice(0, 300), kind, at: Date.now(), status: "sent", ...extra };
     this.msgs.set(id, m);
     if (this.msgs.size > 300) this.msgs.delete(this.msgs.keys().next().value);
+    if (target.bot && kind !== "request") this.botHearMsg(target, m);   // a bot "listens": text from a controller (or the auto-ATC) steers it
     return m;
   }
 
@@ -1222,20 +1223,51 @@ export class Hub {
     return w;
   }
   // ---- AI bots: advanced lazily, only when somebody calls the Hub (no timers, no alarms); they show up as flagged pseudo-clients
-  saveBots() { this.botSaved = Date.now(); return this.ctx.storage.put("bots", { seq: this.botSeq, list: [...this.bots.values()].map(b => ({ ...b, G: undefined })) }); }   // the (static, bigger) ground plans live under botg:<id>
+  botHearMsg(c, m) {
+    const b = this.bots.get(c.botId);
+    if (!b) return;
+    const r = botHear(b, m.text, parseAlt);
+    if (r.alt && c.st) c.st.alt = { ft: r.alt, at: Date.now() };
+  }
+  // a bot sends a request as a pilot would: the normal request endpoint decides between a human controller (strip) and the auto-ATC
+  botRequest(k, c, w) {
+    return this.fetch(new Request("https://hub.internal/api/atc/request", { method: "POST", headers: { "X-API-Key": k, "Content-Type": "application/json", "X-Sec": secOf(c), "X-Member": c.member ? "1" : "0", "X-Atc": "n", "X-IP": "bot" }, body: JSON.stringify({ ...w, lang: "en" }) })).catch(() => {});
+  }
+  // the controller a bot would be tuned to: ground, tower or approach/centre of the airport it is dealing with (a staffed human position first)
+  botFreq(c, b) {
+    const s = b.s, o = s.leg === 0 ? b.def.dep : b.def.arr, d = s.leg === 0 ? b.def.arr : b.def.dep, ph = c.pos.phase, nm = Number(c.pos.arr_nm);
+    let apt = o, roles = ["TWR", "ALL"];
+    if (ph === "ground") roles = s.mode === "hold" ? ["TWR", "GND", "ALL"] : ["GND", "TWR", "ALL"];
+    else if (ph === "air") { apt = nm <= 50 ? d : o; roles = nm <= 12 ? ["TWR", "ALL"] : ["APP", "TWR", "CTR", "ALL"]; }
+    return normFreq(this.pf("", apt, roles)) || "118.000";
+  }
+  saveBots() { this.botSaved = Date.now(); return this.ctx.storage.put("bots", { seq: this.botSeq, list: [...this.bots.values()].map(b => ({ ...b, G: undefined, h: undefined })) }); }   // the (static, bigger) ground plans live under botg:<id>
   dropBot(id) { this.bots.delete(id); this.clients.delete("bot:" + id); this.ctx.storage.delete("botg:" + id); }
   advanceBots(now) {
     if (!this.bots.size || now - this.botT < 1000) return;
-    const env = { lock: this.botRwy, skipLocks: this.botT > 0 && now - this.botT > 120_000 };   // after a long gap the runway locks are meaningless
+    const env = { lock: this.botRwy, skipLocks: this.botT > 0 && now - this.botT > 120_000, on: (b, ev, t) => {   // clearance bookkeeping a tracked pilot gets from humanTrack
+      const cc = this.clients.get("bot:" + b.id); if (!cc || !cc.st) return;
+      if (ev === "liftoff") { cc.st.gr.takeoff = 0; cc.st.gr.taxi = 0; }
+      else if (ev === "touchdown") { cc.st.gr.land = 0; cc.st.gr.taxi = t + 30 * 60_000; cc.st.alt = null; }
+    } };   // after a long gap the runway locks are meaningless
     this.botT = now;
     for (const [k0, l] of this.botRwy) if (l.until < now - 600_000) this.botRwy.delete(k0);
     for (const [id, b] of [...this.bots]) {
       const k = "bot:" + id;
+      const cc = this.clients.get(k) || (b.s.mode === "wait" ? null : { bot: true, plan: botPlan(b), pos: botPos(b, now), sec: b.def.sec || "expert", member: b.def.sec === "net", st: { gr: {} } });
+      if (cc && cc.pos && cc.st) {   // which controllers of the airports involved cover this flight right now
+        const s = b.s, o = s.leg === 0 ? b.def.dep : b.def.arr, d = s.leg === 0 ? b.def.arr : b.def.dep;
+        b.h = { gnd: this.humanCovers(cc, o, "taxi"), twr: this.humanCovers(cc, o, "takeoff"), air: this.humanCovers(cc, o, "climb") || this.humanCovers(cc, d, "descent"), dst: this.humanCovers(cc, d, "descent"), land: this.humanCovers(cc, d, "land"), gr: cc.st.gr, alt: cc.st.alt ? cc.st.alt.ft : null };
+      } else b.h = null;
       if (botAdvance(b, now, env) === "done") { this.dropBot(id); this.botSaved = 0; continue; }
       if (b.s.mode === "wait") { this.clients.delete(k); continue; }
       let c = this.clients.get(k);
-      if (!c) this.clients.set(k, c = { bot: true, plan: {}, route: null, assigned: null, sec: b.def.sec || "expert", member: b.def.sec === "net" });
-      c.plan = botPlan(b); c.pos = botPos(b, now); c.seen = now;
+      if (!c) this.clients.set(k, c = { bot: true, botId: id, lang: "en", plan: {}, route: null, assigned: null, sec: b.def.sec || "expert", member: b.def.sec === "net", st: { gr: {}, ph: null, at: 0, lat: 0, lon: 0, grace: now + GRACE_MS, calls: {}, viol: {}, landedAt: 0, landRwy: "" } });
+      c.plan = botPlan(b); c.pos = botPos(b, now); c.seen = now; c.pos.freq = this.botFreq(c, b);
+      if (b.s.want && b.s.want.length) {
+        const w = b.s.want.splice(0), sent = new Set();
+        if (!env.skipLocks) for (const q of w.reverse()) if (!sent.has(q.type)) { sent.add(q.type); this.botRequest(k, c, q); }
+      }
     }
     if (now - this.botSaved > 30_000) this.saveBots();
   }
@@ -2150,7 +2182,7 @@ export class Hub {
         const model = String(d.model || "B738").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6) || "B738";
         for (let i = 0; i < count; i++) {
           const callsign = count === 1 ? cs0 : mm ? (mm[1] + String(Number(mm[2]) + i).padStart(mm[2].length, "0")).slice(0, 8) : (cs0 + (i + 1)).slice(0, 8);
-          const id = ++this.botSeq, def = { callsign, model, dep, arr, cruise, wps, loop: d.loop !== false, turn: Math.max(0, Math.min(7200, Number(d.turn) || 300)), sec: "expert", dep_rwy: drw, arr_rwy: arw };
+          const id = ++this.botSeq, def = { callsign, model, dep, arr, cruise, wps, loop: d.loop !== false, turn: Math.max(0, Math.min(7200, Number(d.turn) || 300)), sec: ["expert", "casual", "net"].includes(d.sec) ? d.sec : "expert", dep_rwy: drw, arr_rwy: arw };
           let G = null;
           if (ga && gb) {
             const x = groundFor(ga, ia, drw, usedAt.get(dep) || new Set()), y = x && groundFor(gb, ib, arw, usedAt.get(arr) || new Set());
