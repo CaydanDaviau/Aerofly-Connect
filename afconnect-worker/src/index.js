@@ -2147,6 +2147,19 @@ export class Hub {
       }
     }
 
+    if (p === "/api/manager/simbrief") {   // import a SimBrief flight plan (latest OFP of a username / pilot id) as bot form fields
+      if (request.headers.get("X-Mgr") !== "1") return json({ error: "not_manager" }, 403);
+      const u = (url.searchParams.get("user") || "").trim();
+      if (!u) return json({ error: "user_required" }, 400);
+      let j; try { const r = await fetch("https://www.simbrief.com/api/xml.fetcher.php?json=1&" + (/^\d+$/.test(u) ? "userid=" : "username=") + encodeURIComponent(u)); if (!r.ok) return json({ error: "simbrief_not_found" }, 404); j = await r.json(); } catch (e) { return json({ error: "simbrief_failed" }, 502); }
+      const g = j.general || {}, fx = [].concat((j.navlog || {}).fix || []);
+      const pts = fx.filter(f => f.type !== "apt" && f.is_sid_star !== "1" && Number.isFinite(Number(f.pos_lat)) && Number.isFinite(Number(f.pos_long)));
+      const step = Math.max(1, Math.ceil(pts.length / 12)), wps = pts.filter((_, i) => i % step === 0).slice(0, 12).map(f => ({ lat: Math.round(Number(f.pos_lat) * 1e4) / 1e4, lon: Math.round(Number(f.pos_long) * 1e4) / 1e4, ident: f.ident }));
+      const dep = ((j.origin || {}).icao_code || "").toUpperCase(), arr = ((j.destination || {}).icao_code || "").toUpperCase();
+      if (!dep || !arr) return json({ error: "simbrief_no_plan" }, 404);
+      return json({ callsign: String((g.icao_airline || "") + (g.flight_number || "")).toUpperCase() || undefined, model: ((j.aircraft || {}).icaocode || "").toUpperCase(), dep, arr, dep_rwy: (j.origin || {}).plan_rwy || "", arr_rwy: (j.destination || {}).plan_rwy || "", cruise: String(Number(g.initial_altitude) || ""), route: g.route || "", wps });
+    }
+
     if (p === "/api/manager/bots") {
       if (request.headers.get("X-Mgr") !== "1") return json({ error: "not_manager" }, 403);
       if (m === "GET") return json({ bots: [...this.bots.values()].map(b => ({ id: b.id, callsign: b.def.callsign, model: b.def.model, dep: b.def.dep, arr: b.def.arr, loop: !!b.def.loop, landed: b.s.landed, status: botStatus(b) })) });
@@ -2182,7 +2195,7 @@ export class Hub {
         const model = String(d.model || "B738").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6) || "B738";
         for (let i = 0; i < count; i++) {
           const callsign = count === 1 ? cs0 : mm ? (mm[1] + String(Number(mm[2]) + i).padStart(mm[2].length, "0")).slice(0, 8) : (cs0 + (i + 1)).slice(0, 8);
-          const id = ++this.botSeq, def = { callsign, model, dep, arr, cruise, wps, loop: d.loop !== false, turn: Math.max(0, Math.min(7200, Number(d.turn) || 300)), sec: ["expert", "casual", "net"].includes(d.sec) ? d.sec : "expert", dep_rwy: drw, arr_rwy: arw };
+          const id = ++this.botSeq, def = { callsign, model, dep, arr, cruise, wps, loop: d.loop !== false, turn: Math.max(0, Math.min(7200, Number(d.turn) || 300)), sec: "expert", dep_rwy: drw, arr_rwy: arw };
           let G = null;
           if (ga && gb) {
             const x = groundFor(ga, ia, drw, usedAt.get(dep) || new Set()), y = x && groundFor(gb, ib, arw, usedAt.get(arr) || new Set());

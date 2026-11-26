@@ -18,6 +18,7 @@ button.s{background:transparent;color:var(--acc);border:1px solid var(--stroke)}
 <div class="c" id="login"><div class="dim">Manager code</div><input id="mc" type="password" autocomplete="off" autocapitalize="off" spellcheck="false"><button id="go">Sign in</button><div class="msg" id="lm"></div></div>
 <div id="panel" hidden>
 <div class="c"><div class="dim" style="margin-bottom:4px">Add bot(s)</div>
+<div class="g"><div><label>SimBrief username or pilot ID (fills the form from the latest flight plan)</label><input id="sbu" autocomplete="off"></div><div style="display:flex;align-items:flex-end"><button class="s" id="sbi" style="margin:4px 0">Import from SimBrief</button></div></div><div class="msg" id="sbm"></div>
 <div class="g">
 <div><label>Callsign (a trailing number counts up when adding several)</label><input id="cs" maxlength="8" placeholder="TAM3001"></div>
 <div><label>Aircraft model</label><select id="md"><option>B738</option><option>A320</option><option>A321</option><option>E190</option><option>B77W</option><option>A333</option><option>B789</option><option>AT72</option><option>DH8D</option><option>C172</option></select></div>
@@ -27,7 +28,6 @@ button.s{background:transparent;color:var(--acc);border:1px solid var(--stroke)}
 <div><label>Arrival runway (optional, e.g. 10)</label><input id="arw" maxlength="4"></div>
 <div><label>Cruise altitude (FL350 / 35000)</label><input id="cr" placeholder="FL350"></div>
 <div><label>Turnaround at the airport (seconds)</label><input id="tn" type="number" min="0" value="300"></div>
-<div><label>Section</label><select id="sc"><option value="expert">Expert</option><option value="casual">Casual</option><option value="net">Network members</option></select></div>
 <div><label>Number of flights</label><input id="ct" type="number" min="1" max="60" value="1"></div>
 <div><label>Minutes between flights (and before the first)</label><input id="sp" type="number" min="0" value="0"></div>
 </div>
@@ -55,9 +55,13 @@ async function load(){const r=await api("GET","/api/manager/bots");if(r.s!==200)
  for(const b of r.j.bots){const row=document.createElement("div");row.className="r";const n=document.createElement("div");n.className="n";
   const t=document.createElement("b");t.textContent=b.callsign;const sm=document.createElement("small");sm.textContent=b.model+" "+b.dep+(b.loop?" ⇄ ":" → ")+b.arr+" · "+st(b)+" · "+b.landed+" landings";
   n.append(t,sm);const rm=document.createElement("button");rm.className="d";rm.textContent="Remove";rm.onclick=async()=>{await api("DELETE","/api/manager/bots?id="+b.id);load()};row.append(n,rm);L.appendChild(row)}}
+$("sbi").onclick=async()=>{const m=$("sbm");m.className="msg";m.textContent="Importing...";const r=await api("GET","/api/manager/simbrief?user="+encodeURIComponent($("sbu").value));
+ if(r.s!==200){m.className="msg err";m.textContent="SimBrief: "+(r.j.error||r.s);return}const j=r.j;
+ if(j.callsign)$("cs").value=j.callsign;if([...$("md").options].some(o=>o.value===j.model))$("md").value=j.model;$("dp").value=j.dep;$("ar").value=j.arr;$("drw").value=j.dep_rwy;$("arw").value=j.arr_rwy;$("cr").value=j.cruise;$("wp").value=j.wps.map(w=>w.lat+", "+w.lon).join("\n");
+ m.textContent="Imported "+j.dep+" > "+j.arr+" ("+j.wps.length+" waypoints"+([...$("md").options].some(o=>o.value===j.model)?"":", model "+j.model+" not in list, kept "+$("md").value)+"). Check the fields, then Add."};
 $("all").onclick=async()=>{if(!confirm("Remove all bots?"))return;await api("DELETE","/api/manager/bots?all=1");load()};
 $("add").onclick=async()=>{const m=$("am");m.className="msg";m.textContent="Adding...";
- const body={callsign:$("cs").value,model:$("md").value,dep:$("dp").value,arr:$("ar").value,dep_rwy:$("drw").value,arr_rwy:$("arw").value,cruise:$("cr").value,turn:+$("tn").value,count:+$("ct").value,sec:$("sc").value,spacing_min:+$("sp").value,wps:$("wp").value,loop:$("lp").checked};
+ const body={callsign:$("cs").value,model:$("md").value,dep:$("dp").value,arr:$("ar").value,dep_rwy:$("drw").value,arr_rwy:$("arw").value,cruise:$("cr").value,turn:+$("tn").value,count:+$("ct").value,spacing_min:+$("sp").value,wps:$("wp").value,loop:$("lp").checked};
  const r=await api("POST","/api/manager/bots",body);
  if(r.s!==200){m.className="msg err";m.textContent="Failed: "+(r.j.error||r.s)+(r.j.detail?" ("+r.j.detail+")":"");return}
  m.textContent="Added "+r.j.added+(r.j.warnings&&r.j.warnings.length?". "+r.j.warnings.join(" "):"");load()};
