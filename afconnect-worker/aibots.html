@@ -28,6 +28,7 @@ button.s{background:transparent;color:var(--acc);border:1px solid var(--stroke)}
 <div><label>Arrival runway (optional, e.g. 10)</label><input id="arw" maxlength="4"></div>
 <div><label>Cruise altitude (FL350 / 35000)</label><input id="cr" placeholder="FL350"></div>
 <div><label>Turnaround at the airport (seconds)</label><input id="tn" type="number" min="0" value="300"></div>
+<div><label>Network</label><select id="sc"><option value="expert">Public</option><option value="net">Private network</option></select></div>
 <div><label>Number of flights</label><input id="ct" type="number" min="1" max="60" value="1"></div>
 <div><label>Minutes between flights (and before the first)</label><input id="sp" type="number" min="0" value="0"></div>
 </div>
@@ -61,7 +62,7 @@ $("sbi").onclick=async()=>{const m=$("sbm");m.className="msg";m.textContent="Imp
  m.textContent="Imported "+j.dep+" > "+j.arr+" ("+j.wps.length+" waypoints"+([...$("md").options].some(o=>o.value===j.model)?"":", model "+j.model+" not in list, kept "+$("md").value)+"). Check the fields, then Add."};
 $("all").onclick=async()=>{if(!confirm("Remove all bots?"))return;await api("DELETE","/api/manager/bots?all=1");load()};
 $("add").onclick=async()=>{const m=$("am");m.className="msg";m.textContent="Adding...";
- const body={callsign:$("cs").value,model:$("md").value,dep:$("dp").value,arr:$("ar").value,dep_rwy:$("drw").value,arr_rwy:$("arw").value,cruise:$("cr").value,turn:+$("tn").value,count:+$("ct").value,spacing_min:+$("sp").value,wps:$("wp").value,loop:$("lp").checked};
+ const body={callsign:$("cs").value,model:$("md").value,dep:$("dp").value,arr:$("ar").value,dep_rwy:$("drw").value,arr_rwy:$("arw").value,cruise:$("cr").value,turn:+$("tn").value,count:+$("ct").value,sec:$("sc").value,spacing_min:+$("sp").value,wps:$("wp").value,loop:$("lp").checked};
  const r=await api("POST","/api/manager/bots",body);
  if(r.s!==200){m.className="msg err";m.textContent="Failed: "+(r.j.error||r.s)+(r.j.detail?" ("+r.j.detail+")":"");return}
  m.textContent="Added "+r.j.added+(r.j.warnings&&r.j.warnings.length?". "+r.j.warnings.join(" "):"");load()};

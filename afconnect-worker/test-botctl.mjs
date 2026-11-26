@@ -53,6 +53,9 @@ T("liftoff clears the takeoff grant", !c.st.gr.takeoff || b.s.mode === "roll");
 run(300); T("is airborne", b.s.mode === "fly");
 hub.addMsg(c, "CTL1 fly heading 180", "atc"); run(30); T("heading order stored", b.s.hdgTgt != null);
 hub.addMsg(c, "CTL1 climb and maintain 5000", "atc"); T("altitude order stored on the client", c.st.alt && c.st.alt.ft === 5000);
+T("bot has a route line (has_route) with dep and arr ends", c.route && c.route.points.length >= 2 && c.route.points[0][3] === "AAAA");
+await call("POST", "/api/manager/bots", { callsign: "NET1", dep: "AAAA", arr: "BBBB", sec: "net" }, M);
+T("bot can be added to the private network", [...hub.bots.values()].some(x => x.def.callsign === "NET1" && x.def.sec === "net"));
 // autonomous without humans
 hub.towers.clear(); await call("DELETE", "/api/manager/bots?all=1", null, M);
 await call("POST", "/api/manager/bots", { callsign: "AUT1", model: "A320", dep: "AAAA", arr: "BBBB", dep_rwy: "09", arr_rwy: "09", cruise: "FL200", turn: 60, loop: true }, M);

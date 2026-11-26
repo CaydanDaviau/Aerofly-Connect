@@ -1264,6 +1264,11 @@ export class Hub {
       let c = this.clients.get(k);
       if (!c) this.clients.set(k, c = { bot: true, botId: id, lang: "en", plan: {}, route: null, assigned: null, sec: b.def.sec || "expert", member: b.def.sec === "net", st: { gr: {}, ph: null, at: 0, lat: 0, lon: 0, grace: now + GRACE_MS, calls: {}, viol: {}, landedAt: 0, landRwy: "" } });
       c.plan = botPlan(b); c.pos = botPos(b, now); c.seen = now; c.pos.freq = this.botFreq(c, b);
+      if (c.routeLeg !== b.s.leg) {   // the flown route as a purple line when the bot is tapped on the map (same record as a pilot's SimBrief route)
+        const o = b.s.leg === 0 ? b.A : b.B, d = b.s.leg === 0 ? b.B : b.A, w = (b.def.wps || []).map(x => [x.lat, x.lon, null, ""]);
+        if (b.s.leg === 1) w.reverse();
+        c.routeLeg = b.s.leg; c.route = { points: [[o.lat, o.lon, null, b.s.leg === 0 ? b.def.dep : b.def.arr], ...w, [d.lat, d.lon, null, b.s.leg === 0 ? b.def.arr : b.def.dep]], route: "", at: now };
+      }
       if (b.s.want && b.s.want.length) {
         const w = b.s.want.splice(0), sent = new Set();
         if (!env.skipLocks) for (const q of w.reverse()) if (!sent.has(q.type)) { sent.add(q.type); this.botRequest(k, c, q); }
@@ -2195,7 +2200,7 @@ export class Hub {
         const model = String(d.model || "B738").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6) || "B738";
         for (let i = 0; i < count; i++) {
           const callsign = count === 1 ? cs0 : mm ? (mm[1] + String(Number(mm[2]) + i).padStart(mm[2].length, "0")).slice(0, 8) : (cs0 + (i + 1)).slice(0, 8);
-          const id = ++this.botSeq, def = { callsign, model, dep, arr, cruise, wps, loop: d.loop !== false, turn: Math.max(0, Math.min(7200, Number(d.turn) || 300)), sec: "expert", dep_rwy: drw, arr_rwy: arw };
+          const id = ++this.botSeq, def = { callsign, model, dep, arr, cruise, wps, loop: d.loop !== false, turn: Math.max(0, Math.min(7200, Number(d.turn) || 300)), sec: d.sec === "net" ? "net" : "expert", dep_rwy: drw, arr_rwy: arw };
           let G = null;
           if (ga && gb) {
             const x = groundFor(ga, ia, drw, usedAt.get(dep) || new Set()), y = x && groundFor(gb, ib, arw, usedAt.get(arr) || new Set());
