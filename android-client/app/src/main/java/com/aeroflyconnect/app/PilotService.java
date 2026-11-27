@@ -26,7 +26,7 @@ public class PilotService extends Service {
     static volatile int okCount, failCount;
     // Last valid sim position, read by the map screen.
     static volatile boolean hasPos;
-    static volatile double lastLat, lastLon, lastHdg, lastGs, lastAlt;
+    static volatile double lastLat, lastLon, lastHdg, lastGs, lastAlt, lastVs;
 
     static volatile boolean mapShown;
     /** Own track, one point per upload, kept 30 min (also while the map is closed); handed to the map page when it opens. */
@@ -122,7 +122,7 @@ public class PilotService extends Service {
         }
 
         inst = this;
-        Phase.reset(); emergency = false; wasAir = false; fqDep = ""; fqArr = ""; contact = "";
+        RadioLog.clear(); Phase.reset(); emergency = false; wasAir = false; fqDep = ""; fqArr = ""; contact = "";
         if (Overlay.allowed(this)) { overlay = new Overlay(this); overlay.show(); }
 
         RadioPlayer.start(this, "pilot");   // background radio (only plays if enabled in Settings)
@@ -188,7 +188,7 @@ public class PilotService extends Service {
                 if (pos != null) {
                     lastLat = pos.optDouble("latitude"); lastLon = pos.optDouble("longitude");
                     lastHdg = pos.optDouble("heading_true", 0); lastGs = pos.optDouble("ground_speed", 0);
-                    lastAlt = pos.optDouble("altitude_ft", 0); hasPos = true;
+                    lastAlt = pos.optDouble("altitude_ft", 0); lastVs = pos.optDouble("vertical_speed_ft_min", 0); hasPos = true;
                     addTrace(lastLat, lastLon, System.currentTimeMillis());
                     boolean airNow = Phase.phaseName.equals("air");
                     if (emergency && wasAir && !airNow) emergency = false;   // the server ends it at touchdown too
@@ -284,6 +284,15 @@ public class PilotService extends Service {
     private AtcVoice voice;
     private String voiceLang;
     private static volatile byte[] lastVoiceReplay;
+
+    /** Speaks a message again (overlay "Repeat last instruction"). */
+    static void speakAgain(final String text) {
+        final PilotService s = inst;
+        if (s == null || text == null || text.isEmpty()) return;
+        new Thread(new Runnable() {
+            @Override public void run() { s.speak(text, new Runnable() { @Override public void run() { } }); }
+        }, "atc-repeat").start();
+    }
 
     /** Speaks the message with the radio effect, if "Speak" is on. Created on first use. */
     private synchronized void speak(String text, Runnable onStart) {
@@ -390,6 +399,7 @@ public class PilotService extends Service {
                 boolean urgent = m.optBoolean("urgent", false);
                 String ct = m.optString("contact");
                 if (!ct.isEmpty()) { contact = ct; Overlay.poke(); }
+                RadioLog.add(false, RadioLog.atcName(contact), text);
                 // Spoken normal messages get no notification (answer with the PiP buttons).
                 // Urgent ones, or any message when Speak is off, pop up with Wilco / Unable.
                 if (urgent || !Api.speakOn(this)) {

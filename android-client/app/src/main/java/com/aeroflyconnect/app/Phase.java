@@ -24,6 +24,9 @@ final class Phase {
     static volatile String rwyOn = "", onRwy = "", rwyApt = "";
     /** Straight-line distance to the arrival airport in nm, -1 = unknown. */
     static volatile double arrNm = -1;
+    /** Nearest departure/arrival runway end while on the ground (name and metres to its centre line), "" / -1 when none within 3 km. */
+    static volatile String nearRwy = "";
+    static volatile int nearM = -1;
     private static String depIcao = "", arrIcao = "";
     private static double candFpm;
     private static long candAt;
@@ -119,6 +122,22 @@ final class Phase {
             }
         }
         rwyOn = pair; onRwy = lined2; rwyApt = apt;
+        String nr = ""; int nm = -1;
+        if (!airborne) {
+            double bd = 3000;
+            for (Airports.Apt ap : new Airports.Apt[] { dep, arr }) {
+                if (ap == null) continue;
+                for (Airports.Rwy r : ap.rwys) {
+                    double dm = distToSegM(la, lo, r.aLat, r.aLon, r.bLat, r.bLon);
+                    if (dm >= bd) continue;
+                    double a1 = angDiff(bearing(r.aLat, r.aLon, r.bLat, r.bLon), hdgTrue);
+                    double a2 = angDiff(bearing(r.bLat, r.bLon, r.aLat, r.aLon), hdgTrue);
+                    bd = dm; nr = a1 <= a2 ? r.a : r.b;
+                }
+            }
+            if (!nr.isEmpty()) nm = (int) Math.round(bd / 10.0) * 10;
+        }
+        nearRwy = nr; nearM = nm;
         phaseName = airborne ? "air" : (pair.isEmpty() ? "ground" : "runway");
 
         terminal = (dep != null && distNm(la, lo, dep.lat, dep.lon) <= 6) || (arr != null && distNm(la, lo, arr.lat, arr.lon) <= 8);

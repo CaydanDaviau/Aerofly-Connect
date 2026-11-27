@@ -35,6 +35,7 @@ import android.widget.TextView;
  */
 final class Overlay {
     static volatile boolean active;
+    private static final int PW = 220;   // panel width in dp
     private static volatile Overlay inst;
 
     /** Switch on in Settings and permission granted. */
@@ -72,6 +73,19 @@ final class Overlay {
     private String alertText = "";
     private ScrollView msgScroll;
     private LinearLayout panel, msgRow, reqGrid;
+    private LinearLayout radioPane, flightPane, logList, msgCard;
+    private ScrollView logScroll;
+    private Button tabRadio, tabFlight, bMap, bRepeat;
+    private boolean flightTab;
+    private int logVer = -1;
+    private TextView ctxView, noProc, msgHead, tAlt, tHdg, tGs, tVs, tPos, tPlan, tLink;
+    private final Runnable tick = new Runnable() {
+        @Override public void run() {
+            if (!expanded) return;
+            if (flightTab) updateFlight();
+            h.postDelayed(this, 1000);
+        }
+    };
     private Button bProc;
     private boolean procOpen;
     private GradientDrawable bubbleBg;
@@ -243,6 +257,28 @@ final class Overlay {
             head.addView(min, new LinearLayout.LayoutParams(dp(28), dp(22)));
             panel.addView(head);
 
+            LinearLayout tabs = new LinearLayout(ctx);
+            tabs.setOrientation(LinearLayout.HORIZONTAL);
+            tabs.setBackground(Ui.shape(ctx, Ui.FIELD, Ui.STROKE, 8));
+            tabs.setPadding(dp(2), dp(2), dp(2), dp(2));
+            tabRadio = new Button(ctx); tabFlight = new Button(ctx);
+            View.OnClickListener tl = new View.OnClickListener() {
+                @Override public void onClick(View v) { flightTab = v == tabFlight; refresh(); if (flightTab) updateFlight(); }
+            };
+            for (Button tb : new Button[] { tabRadio, tabFlight }) {
+                tb.setAllCaps(false); tb.setTextSize(11); tb.setTypeface(Typeface.DEFAULT_BOLD);
+                tb.setMinHeight(0); tb.setMinimumHeight(0); tb.setMinWidth(0); tb.setMinimumWidth(0);
+                tb.setPadding(0, 0, 0, 0); tb.setStateListAnimator(null);
+                tb.setOnClickListener(tl);
+                tabs.addView(tb, new LinearLayout.LayoutParams(0, dp(26), 1f));
+            }
+            tabRadio.setText(Api.t(ctx, "Radio", "Rádio"));
+            tabFlight.setText(Api.t(ctx, "Flight", "Voo"));
+            LinearLayout.LayoutParams tbp = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            tbp.topMargin = dp(2); tbp.bottomMargin = dp(3);
+            panel.addView(tabs, tbp);
+
             alertView = new TextView(ctx);
             alertView.setTextSize(12);
             alertView.setTypeface(Typeface.DEFAULT_BOLD);
@@ -254,6 +290,23 @@ final class Overlay {
                     LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
             alp.bottomMargin = dp(2);
             panel.addView(alertView, alp);
+
+            final LinearLayout mainPanel = panel;
+            radioPane = new LinearLayout(ctx);
+            radioPane.setOrientation(LinearLayout.VERTICAL);
+            panel = radioPane;   // everything below is the Radio tab
+
+            logList = new LinearLayout(ctx);
+            logList.setOrientation(LinearLayout.VERTICAL);
+            logScroll = new ScrollView(ctx) {
+                @Override protected void onMeasure(int w, int hs) {
+                    super.onMeasure(w, MeasureSpec.makeMeasureSpec(maxLogHeight(), MeasureSpec.AT_MOST));
+                }
+            };
+            logScroll.setVerticalScrollBarEnabled(false);
+            logScroll.addView(logList);
+            logScroll.setVisibility(View.GONE);
+            panel.addView(logScroll);
 
             msgText = new TextView(ctx);
             msgText.setTextSize(12);
@@ -268,26 +321,41 @@ final class Overlay {
             msgScroll.setVerticalScrollBarEnabled(true);
             msgScroll.setVisibility(View.GONE);
             msgScroll.addView(msgText);
-            panel.addView(msgScroll);
+            msgCard = new LinearLayout(ctx);
+            msgCard.setOrientation(LinearLayout.VERTICAL);
+            msgCard.setPadding(dp(6), dp(4), dp(6), dp(5));
+            msgCard.setBackground(Ui.shape(ctx, Ui.FIELD, 0xFFFFB020, 10));
+            msgCard.setVisibility(View.GONE);
+            msgHead = new TextView(ctx);
+            msgHead.setTextSize(9);
+            msgHead.setTypeface(Typeface.DEFAULT_BOLD);
+            msgHead.setTextColor(0xFFFFB020);
+            msgCard.addView(msgHead);
+            msgCard.addView(msgScroll);
 
             msgRow = new LinearLayout(ctx);
             msgRow.setOrientation(LinearLayout.HORIZONTAL);
             bWilco = small(Api.t(ctx, "Read back", "Colacionar"), Ui.PRIMARY);
+            bWilco.setMinHeight(dp(34)); bWilco.setMinimumHeight(dp(34));
             bUnable = small(Api.t(ctx, "Unable", "Impossível"), Ui.DANGER);
             bWilco.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { reply("wilco"); } });
             bUnable.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { reply("unable"); } });
-            LinearLayout.LayoutParams wl = weight(); wl.weight = 1.7f;
+            LinearLayout.LayoutParams wl = new LinearLayout.LayoutParams(0, dp(34), 1.7f); wl.leftMargin = dp(1); wl.rightMargin = dp(1);
             msgRow.addView(bWilco, wl);
             msgRow.addView(bUnable, weight());
             msgRow.setVisibility(View.GONE);
-            panel.addView(msgRow);
+            msgCard.addView(msgRow);
+            LinearLayout.LayoutParams mcp = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            mcp.topMargin = dp(3);
+            panel.addView(msgCard, mcp);
 
             // 2x2 grid, always visible: buttons that do not fit the flight phase are dimmed and inactive.
             reqGrid = new LinearLayout(ctx);
             reqGrid.setOrientation(LinearLayout.VERTICAL);
-            bClr = small(Api.t(ctx, "Clearance", "Autoriz."), Ui.SECONDARY);
-            bPush = small(Api.t(ctx, "Pushback", "Pushback"), Ui.SECONDARY);
-            bTaxi = small(Api.t(ctx, "Taxi", "Táxi"), Ui.SECONDARY);
+            bClr = small(Api.t(ctx, "Request clearance", "Pedir autorização"), Ui.SECONDARY);
+            bPush = small(Api.t(ctx, "Request pushback", "Pedir pushback"), Ui.SECONDARY);
+            bTaxi = small(Api.t(ctx, "Request taxi", "Pedir táxi"), Ui.SECONDARY);
             bRwy = small(Api.t(ctx, "Take off", "Decolar"), Ui.SECONDARY);   // Take off on the ground, Landing in the air
             bClimb = small(Api.t(ctx, "Climb", "Subir"), Ui.SECONDARY);
             bDescent = small(Api.t(ctx, "Desc.", "Desc."), Ui.SECONDARY);
@@ -322,19 +390,39 @@ final class Overlay {
             bRwy.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { request(Phase.air ? "land" : "takeoff"); } });
             bClimb.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { requestAlt("climb"); } });
             bDescent.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { requestAlt("descent"); } });
-            LinearLayout r1 = new LinearLayout(ctx), r2 = new LinearLayout(ctx);
-            r1.setOrientation(LinearLayout.HORIZONTAL); r2.setOrientation(LinearLayout.HORIZONTAL);
-            r2.setGravity(Gravity.CENTER_VERTICAL);
-            r1.addView(bClr, weight()); r1.addView(bPush, weight()); r1.addView(bTaxi, weight());
+            bRepeat = small(Api.t(ctx, "Repeat last instruction", "Repetir última instrução"), Ui.SECONDARY);
+            bRepeat.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View v) {
+                    String t = RadioLog.lastAtc();
+                    if (t.isEmpty()) return;
+                    PilotService.speakAgain(t);
+                    setStatus(Api.t(ctx, "Repeating...", "Repetindo..."), 3000);
+                }
+            });
+            for (Button rb : new Button[] { bClr, bPush, bTaxi, bRwy, bRepeat }) {
+                rb.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
+                rb.setPadding(dp(8), 0, dp(8), 0);
+                rb.setTextSize(12);
+                LinearLayout.LayoutParams lpr = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(30));
+                lpr.topMargin = dp(2);
+                reqGrid.addView(rb, lpr);
+            }
+            noProc = new TextView(ctx);
+            noProc.setTextSize(10);
+            noProc.setTextColor(Ui.DIM);
+            noProc.setText(Api.t(ctx, "Nothing to request right now", "Nada a solicitar agora"));
+            noProc.setPadding(dp(4), dp(4), dp(4), dp(2));
+            reqGrid.addView(noProc);
+            LinearLayout altRow = new LinearLayout(ctx);
+            altRow.setOrientation(LinearLayout.HORIZONTAL);
+            altRow.setGravity(Gravity.CENTER_VERTICAL);
             LinearLayout.LayoutParams ap2 = weight(); ap2.weight = 0.9f;
-            r2.addView(bRwy, weight());
-            r2.addView(altIn, ap2);
-            r2.addView(bClimb, weight()); r2.addView(bDescent, weight());
-            reqGrid.addView(r1);
-            LinearLayout.LayoutParams r2p = new LinearLayout.LayoutParams(
+            altRow.addView(altIn, ap2);
+            altRow.addView(bClimb, weight()); altRow.addView(bDescent, weight());
+            LinearLayout.LayoutParams arp = new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-            r2p.topMargin = dp(2);
-            reqGrid.addView(r2, r2p);
+            arp.topMargin = dp(2);
+            reqGrid.addView(altRow, arp);
             LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
             rp.topMargin = dp(3);
@@ -417,6 +505,13 @@ final class Overlay {
             LinearLayout.LayoutParams ep = new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
             ep.topMargin = dp(3);
+            ctxView = new TextView(ctx);
+            ctxView.setTextSize(10);
+            ctxView.setTextColor(Ui.CYAN);
+            ctxView.setSingleLine(true);
+            ctxView.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            ctxView.setPadding(dp(2), dp(4), dp(2), 0);
+            panel.addView(ctxView);
             panel.addView(emRow, ep);
             panel.addView(reqGrid, rp);
             panel.addView(atisBox, abp);
@@ -532,9 +627,13 @@ final class Overlay {
                     LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
             crp.topMargin = dp(4);
             panel.addView(chatRow, crp);
+            panel = mainPanel;
+            panel.addView(radioPane);
+            buildFlightPane();
+            panel.addView(flightPane);
 
             panel.setVisibility(View.GONE);
-            root.addView(panel, new FrameLayout.LayoutParams(dp(200), FrameLayout.LayoutParams.WRAP_CONTENT));
+            root.addView(panel, new FrameLayout.LayoutParams(dp(PW), FrameLayout.LayoutParams.WRAP_CONTENT));
 
             lp = new WindowManager.LayoutParams(
                     dp(34), dp(34),   // explicit sizes per state: a wrap-content window stayed bubble-sized and clipped the panel
@@ -606,7 +705,7 @@ final class Overlay {
         int w = dp(34), hh = dp(34);
         if (expanded) {
             // measure the panel ourselves: a wrap-content window gets cut at the screen edge and then reports the cut size
-            w = dp(200);
+            w = dp(PW);
             panel.measure(View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY),
                     View.MeasureSpec.makeMeasureSpec(dm.heightPixels, View.MeasureSpec.AT_MOST));
             hh = Math.min(panel.getMeasuredHeight(), dm.heightPixels);
@@ -624,13 +723,164 @@ final class Overlay {
         return Math.max(dp(48), Math.min(dp(110), dm.heightPixels - dp(300)));
     }
 
+    private int maxLogHeight() {
+        DisplayMetrics dm = new DisplayMetrics();
+        wm.getDefaultDisplay().getRealMetrics(dm);
+        return Math.max(dp(48), Math.min(dp(110), dm.heightPixels - dp(330)));
+    }
+
+    private TextView cell(LinearLayout row, String label) {
+        LinearLayout c = new LinearLayout(ctx);
+        c.setOrientation(LinearLayout.VERTICAL);
+        TextView l = new TextView(ctx);
+        l.setText(label); l.setTextSize(8); l.setTextColor(Ui.DIM); l.setTypeface(Typeface.DEFAULT_BOLD);
+        TextView v = new TextView(ctx);
+        v.setTextSize(15); v.setTextColor(Ui.TXT); v.setTypeface(Typeface.DEFAULT_BOLD); v.setSingleLine(true);
+        c.addView(l); c.addView(v);
+        row.addView(c, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        return v;
+    }
+
+    private void buildFlightPane() {
+        flightPane = new LinearLayout(ctx);
+        flightPane.setOrientation(LinearLayout.VERTICAL);
+        flightPane.setVisibility(View.GONE);
+        LinearLayout card = new LinearLayout(ctx);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(8), dp(6), dp(8), dp(6));
+        card.setBackground(Ui.shape(ctx, Ui.FIELD, Ui.STROKE, 10));
+        LinearLayout r1 = new LinearLayout(ctx), r2 = new LinearLayout(ctx);
+        r1.setOrientation(LinearLayout.HORIZONTAL); r2.setOrientation(LinearLayout.HORIZONTAL);
+        tAlt = cell(r1, Api.t(ctx, "ALTITUDE", "ALTITUDE"));
+        tHdg = cell(r1, Api.t(ctx, "HDG TRUE", "PROA VERD."));
+        tGs = cell(r2, Api.t(ctx, "GROUND SPEED", "VEL. SOLO"));
+        tVs = cell(r2, Api.t(ctx, "V/S", "V/S"));
+        card.addView(r1);
+        LinearLayout.LayoutParams p2 = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        p2.topMargin = dp(4);
+        card.addView(r2, p2);
+        tPos = new TextView(ctx);
+        tPos.setTextSize(10); tPos.setTextColor(Ui.DIM); tPos.setTypeface(Typeface.MONOSPACE); tPos.setSingleLine(true);
+        tPos.setPadding(0, dp(5), 0, 0);
+        card.addView(tPos);
+        flightPane.addView(card);
+
+        tPlan = new TextView(ctx);
+        tPlan.setTextSize(11); tPlan.setTextColor(Ui.TXT);
+        tPlan.setMaxLines(4);
+        tPlan.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        tPlan.setPadding(dp(8), dp(6), dp(8), dp(6));
+        tPlan.setBackground(Ui.shape(ctx, Ui.FIELD, Ui.STROKE, 10));
+        LinearLayout.LayoutParams pp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        pp.topMargin = dp(4);
+        flightPane.addView(tPlan, pp);
+
+        tLink = new TextView(ctx);
+        tLink.setTextSize(9); tLink.setTextColor(Ui.DIM); tLink.setSingleLine(true);
+        tLink.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        tLink.setPadding(dp(2), dp(4), dp(2), 0);
+        flightPane.addView(tLink);
+
+        bMap = small("", Ui.SECONDARY);
+        bMap.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                try {
+                    ctx.startActivity(new android.content.Intent(ctx, MapActivity.class)
+                            .setAction(MapActivity.ACT_TOGGLE).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK));
+                } catch (Exception ignored) { }
+                h.postDelayed(refreshRun, 800);
+            }
+        });
+        LinearLayout.LayoutParams mp2 = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(30));
+        mp2.topMargin = dp(4);
+        flightPane.addView(bMap, mp2);
+    }
+
+    private void updateFlight() {
+        if (tAlt == null) return;
+        boolean pt = "pt".equals(Api.uiLang(ctx));
+        if (PilotService.hasPos) {
+            tAlt.setText(Math.round(PilotService.lastAlt) + " ft");
+            tHdg.setText(String.format(java.util.Locale.US, "%03d\u00B0", Math.round(PilotService.lastHdg) % 360));
+            tGs.setText(Math.round(PilotService.lastGs) + " kt");
+            tVs.setText(Math.round(PilotService.lastVs) + " fpm");
+            tPos.setText(String.format(java.util.Locale.US, "%+.4f  %+.4f", PilotService.lastLat, PilotService.lastLon));
+        } else {
+            tAlt.setText("-"); tHdg.setText("-"); tGs.setText("-"); tVs.setText("-"); tPos.setText(Api.t(ctx, "Waiting for the sim...", "Aguardando o simulador..."));
+        }
+        String dep = Api.field(ctx, "dep").trim().toUpperCase(), arr = Api.field(ctx, "arr").trim().toUpperCase();
+        String dr = Api.field(ctx, "deprwy").trim().toUpperCase(), ar = Api.field(ctx, "arrrwy").trim().toUpperCase();
+        String cr = Api.field(ctx, "cruise").trim(), rt = Api.field(ctx, "route").trim();
+        StringBuilder sb = new StringBuilder();
+        sb.append(dep.isEmpty() ? "----" : dep).append(dr.isEmpty() ? "" : " " + dr).append("  \u2192  ")
+                .append(arr.isEmpty() ? "----" : arr).append(ar.isEmpty() ? "" : " " + ar);
+        if (!cr.isEmpty()) sb.append("\n").append(Api.t(ctx, "Cruise ", "Cruzeiro ")).append(cr);
+        if (!rt.isEmpty()) sb.append("\n").append(rt);
+        tPlan.setText(sb.toString());
+        tLink.setText("Sim: " + PilotService.simState + "  \u00B7  " + Api.t(ctx, "Server: ", "Servidor: ") + PilotService.serverState);
+        bMap.setText(PilotService.mapShown ? Api.t(ctx, "Hide map", "Ocultar mapa") : Api.t(ctx, "Show map", "Mostrar mapa"));
+    }
+
+    private String contextLine() {
+        boolean pt = "pt".equals(Api.uiLang(ctx));
+        if (!PilotService.hasPos) return "";
+        if (Phase.air) {
+            StringBuilder b = new StringBuilder(Api.t(ctx, "Airborne", "Em voo"));
+            if (Phase.arrNm >= 0) b.append("  \u00B7  ").append(Math.round(Phase.arrNm)).append(" nm");
+            if (Phase.etaMin >= 0) b.append("  \u00B7  ETA ").append(Phase.etaMin).append(" min");
+            return b.toString();
+        }
+        if (!Phase.onRwy.isEmpty()) return Api.t(ctx, "On runway ", "Na pista ") + Phase.onRwy;
+        if (!Phase.nearRwy.isEmpty() && Phase.nearM >= 0)
+            return Api.t(ctx, "Near runway ", "Perto da pista ") + Phase.nearRwy + "  \u00B7  " + Phase.nearM + " m";
+        return Api.t(ctx, "On the ground", "No solo");
+    }
+
+    private void renderLog() {
+        int v = RadioLog.version();
+        if (v == logVer) return;
+        logVer = v;
+        logList.removeAllViews();
+        java.util.List<RadioLog.Entry> es = RadioLog.snapshot();
+        for (RadioLog.Entry e : es) {
+            LinearLayout row = new LinearLayout(ctx);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            View bar = new View(ctx);
+            bar.setBackgroundColor(e.pilot ? 0xFFFFB020 : Ui.CYAN);
+            row.addView(bar, new LinearLayout.LayoutParams(dp(2), LinearLayout.LayoutParams.MATCH_PARENT));
+            LinearLayout col = new LinearLayout(ctx);
+            col.setOrientation(LinearLayout.VERTICAL);
+            col.setPadding(dp(5), 0, 0, 0);
+            TextView hd = new TextView(ctx);
+            hd.setText((e.pilot ? Api.t(ctx, "PILOT", "PILOTO") : e.who.toUpperCase()) + "  " + e.time);
+            hd.setTextSize(8); hd.setTypeface(Typeface.DEFAULT_BOLD);
+            hd.setTextColor(e.pilot ? 0xFFFFB020 : Ui.CYAN);
+            TextView tx = new TextView(ctx);
+            tx.setText(e.text); tx.setTextSize(11); tx.setTextColor(Ui.TXT);
+            col.addView(hd); col.addView(tx);
+            row.addView(col, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+            LinearLayout.LayoutParams rl = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            rl.topMargin = dp(3);
+            logList.addView(row, rl);
+        }
+        logScroll.setVisibility(es.isEmpty() ? View.GONE : View.VISIBLE);
+        logScroll.post(new Runnable() { @Override public void run() { logScroll.fullScroll(View.FOCUS_DOWN); } });
+    }
+
+    private void tabStyle(Button b, boolean on) {
+        b.setBackground(on ? Ui.shape(ctx, 0xFF1E7480, 0xFF1E7480, 6) : null);
+        b.setTextColor(on ? Ui.TXT : Ui.DIM);
+    }
+
     private void setExpanded(boolean e) {
         if (root == null) return;
         if (!e) endTyping();
         expanded = e;
+        h.removeCallbacks(tick);
+        if (e) h.postDelayed(tick, 1000);
         bubble.setVisibility(e ? View.GONE : View.VISIBLE);
         panel.setVisibility(e ? View.VISIBLE : View.GONE);
-        lp.width = e ? dp(200) : dp(34);
+        lp.width = e ? dp(PW) : dp(34);
         lp.height = e ? WindowManager.LayoutParams.WRAP_CONTENT : dp(34);
         try { wm.updateViewLayout(root, lp); } catch (Exception ignored) { }
         root.post(new Runnable() { @Override public void run() { clamp(); } });
@@ -665,6 +915,12 @@ final class Overlay {
             msgRow.setVisibility(View.GONE);
             if (expanded && autoExpanded && alertText.isEmpty()) { h.removeCallbacks(autoCollapse); h.postDelayed(autoCollapse, 6000); }
         }
+        msgCard.setVisibility(it != null ? View.VISIBLE : View.GONE);
+        if (it != null) msgHead.setText(instruction(it.text) ? Api.t(ctx, "READBACK REQUIRED", "COLACIONE") : Api.t(ctx, "INFORMATION", "INFORMAÇÃO"));
+        radioPane.setVisibility(flightTab ? View.GONE : View.VISIBLE);
+        flightPane.setVisibility(flightTab ? View.VISIBLE : View.GONE);
+        tabStyle(tabRadio, !flightTab); tabStyle(tabFlight, flightTab);
+        if (!flightTab) { renderLog(); ctxView.setText(contextLine()); }
         alertView.setText(alertText);
         alertView.setVisibility(alertText.isEmpty() ? View.GONE : View.VISIBLE);
         reqGrid.setVisibility(procOpen && !atisOpen ? View.VISIBLE : View.GONE);
@@ -672,8 +928,12 @@ final class Overlay {
         bubbleBg.setStroke(dp(it != null ? 2 : 1), it != null ? 0xFFFFB020 : Ui.STROKE);
         atisBox.setVisibility(atisOpen ? View.VISIBLE : View.GONE);
         bAtis.setText(atisOpen ? Api.t(ctx, "Back", "Voltar") : (atisShownLetter.isEmpty() ? "ATIS" : "ATIS " + atisShownLetter));
-        dim(bClr, Phase.clearance); dim(bPush, Phase.pushback); dim(bTaxi, Phase.taxi); bRwy.setText(Phase.air ? Api.t(ctx, "Landing", "Pouso") : Api.t(ctx, "Take off", "Decolar"));
-        dim(bRwy, Phase.air ? Phase.land : Phase.takeoff);
+bRwy.setText(Phase.air ? Api.t(ctx, "Request landing", "Pedir pouso") : Api.t(ctx, "Ready for departure", "Pronto para decolagem"));
+        show(bClr, Phase.clearance); show(bPush, Phase.pushback); show(bTaxi, Phase.taxi);
+        show(bRwy, Phase.air ? Phase.land : Phase.takeoff);
+        show(bRepeat, !RadioLog.lastAtc().isEmpty());
+        noProc.setVisibility(!Phase.clearance && !Phase.pushback && !Phase.taxi && !(Phase.air ? Phase.land : Phase.takeoff) && !Phase.air ? View.VISIBLE : View.GONE);
+        altIn.setVisibility(Phase.air ? View.VISIBLE : View.GONE); bClimb.setVisibility(Phase.air ? View.VISIBLE : View.GONE); bDescent.setVisibility(Phase.air ? View.VISIBLE : View.GONE);
         dim(bClimb, Phase.air); dim(bDescent, Phase.air);
         if (it != null) bWilco.setText(instruction(it.text) ? Api.t(ctx, "Read back", "Colacionar") : Api.t(ctx, "Roger", "Ciente"));
         bWilco.setEnabled(!replyBusy); bUnable.setEnabled(!replyBusy);
@@ -689,6 +949,11 @@ final class Overlay {
     }
 
     /** Fits the phase: normal and tappable (unless a request is in flight); otherwise dimmed and inactive. */
+    private void show(Button b, boolean fits) {
+        b.setVisibility(fits ? View.VISIBLE : View.GONE);
+        b.setEnabled(!reqBusy);
+    }
+
     private void dim(Button b, boolean fits) {
         b.setEnabled(fits && !reqBusy);
         b.setAlpha(fits ? 1f : 0.35f);
@@ -705,6 +970,12 @@ final class Overlay {
                 h.post(new Runnable() {
                     @Override public void run() {
                         replyBusy = false;
+                        if (ok) {
+                            boolean pt = "pt".equals(Api.uiLang(ctx));
+                            String cs = Api.callsign(ctx).trim().toUpperCase();
+                            RadioLog.add(true, "PILOT", r.equals("unable") ? (pt ? "Impossível" : "Unable") + (cs.isEmpty() ? "." : ", " + cs + ".")
+                                    : RadioLog.readback(pt, instruction(it.text), it.text, cs));
+                        }
                         setStatus(ok ? "" : Api.t(ctx, "Not sent, try again", "Não enviado, tente de novo"), 5000);
                     }
                 });
@@ -862,6 +1133,7 @@ final class Overlay {
                 h.post(new Runnable() {
                     @Override public void run() {
                         chatBusy = false;
+                        if (feedback != null && (feedback.startsWith("Sent") || feedback.startsWith("Enviado"))) RadioLog.add(true, "PILOT", text);
                         if (sendBtn != null) { sendBtn.setEnabled(true); sendBtn.invalidate(); }
                         setStatus(feedback, 6000);
                     }
@@ -1086,6 +1358,9 @@ final class Overlay {
             @Override public void done(final String feedback) {
                 h.post(new Runnable() {
                     @Override public void run() {
+                        if (feedback != null && (feedback.startsWith("Request sent") || feedback.startsWith("Pedido enviado")))
+                            RadioLog.add(true, "PILOT", RadioLog.callFor("pt".equals(Api.uiLang(ctx)), type, altitude,
+                                    Api.callsign(ctx).trim().toUpperCase(), Phase.air, PilotService.contact));
                         setStatus(feedback, 5000);
                         h.postDelayed(unlockReq, 2500);   // the server allows one request every 2 s
                     }
