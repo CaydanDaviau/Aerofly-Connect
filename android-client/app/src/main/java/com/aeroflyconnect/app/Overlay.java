@@ -143,17 +143,20 @@ final class Overlay {
     // ---------- build ----------
     private Button small(String text, int kind) {
         Button b = Ui.button(ctx, text, kind);
-        b.setTextSize(13);
-        b.setMinHeight(dp(40));
-        b.setMinimumHeight(dp(40));
-        b.setPadding(dp(4), 0, dp(4), 0);
+        b.setTextSize(11);
+        b.setMinHeight(dp(30));
+        b.setMinimumHeight(dp(30));
+        b.setMinWidth(0);
+        b.setMinimumWidth(0);
+        b.setPadding(dp(2), 0, dp(2), 0);
+        b.setLayoutParams(new LinearLayout.LayoutParams(0, dp(30), 1f));
         b.setSingleLine(true);
         return b;
     }
 
     private LinearLayout.LayoutParams weight() {
-        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
-        p.leftMargin = dp(2); p.rightMargin = dp(2);
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, dp(30), 1f);
+        p.leftMargin = dp(1); p.rightMargin = dp(1);
         return p;
     }
 
@@ -173,62 +176,62 @@ final class Overlay {
 
             bubble = new TextView(ctx);
             bubble.setText("ATC");
-            bubble.setTextSize(12);
+            bubble.setTextSize(9);
             bubble.setTypeface(Typeface.DEFAULT_BOLD);
             bubble.setTextColor(Ui.CYAN);
             bubble.setGravity(Gravity.CENTER);
             GradientDrawable g = new GradientDrawable();
             g.setShape(GradientDrawable.OVAL);
-            g.setColor(0xF0012C33);
-            g.setStroke(dp(2), Ui.CYAN);
+            g.setColor(0xCC012C33);
+            g.setStroke(dp(1), Ui.CYAN);
             bubble.setBackground(g);
             bubble.setOnTouchListener(dragger);
-            root.addView(bubble, new FrameLayout.LayoutParams(dp(52), dp(52)));
+            root.addView(bubble, new FrameLayout.LayoutParams(dp(34), dp(34)));
 
             panel = new LinearLayout(ctx);
             panel.setOrientation(LinearLayout.VERTICAL);
-            panel.setPadding(dp(10), dp(6), dp(10), dp(10));
-            panel.setBackground(Ui.shape(ctx, 0xF2012C33, Ui.STROKE, 16));
+            panel.setPadding(dp(6), dp(2), dp(6), dp(6));
+            panel.setBackground(Ui.shape(ctx, 0xEB012C33, Ui.STROKE, 12));
 
             LinearLayout head = new LinearLayout(ctx);
             head.setOrientation(LinearLayout.HORIZONTAL);
             head.setGravity(Gravity.CENTER_VERTICAL);
             TextView title = new TextView(ctx);
-            title.setText("ATC  ·  " + Api.t(ctx, "drag to move", "arraste para mover"));
-            title.setTextSize(12);
+            title.setText("ATC");
+            title.setTextSize(11);
             title.setTypeface(Typeface.DEFAULT_BOLD);
             title.setTextColor(Ui.CYAN);
             title.setGravity(Gravity.CENTER_VERTICAL);
             title.setOnTouchListener(dragger);
-            head.addView(title, new LinearLayout.LayoutParams(0, dp(40), 1f));
+            head.addView(title, new LinearLayout.LayoutParams(0, dp(24), 1f));
             TextView min = new TextView(ctx);
             min.setText("–");
-            min.setTextSize(22);
+            min.setTextSize(16);
             min.setTextColor(Ui.TXT);
             min.setGravity(Gravity.CENTER);
             min.setBackground(Ui.ripple(ctx, Ui.FIELD, Ui.STROKE, 10));
             min.setOnClickListener(new View.OnClickListener() {
                 @Override public void onClick(View v) { autoExpanded = false; setExpanded(false); }
             });
-            head.addView(min, new LinearLayout.LayoutParams(dp(40), dp(40)));
+            head.addView(min, new LinearLayout.LayoutParams(dp(28), dp(22)));
             panel.addView(head);
 
             alertView = new TextView(ctx);
-            alertView.setTextSize(14);
+            alertView.setTextSize(12);
             alertView.setTypeface(Typeface.DEFAULT_BOLD);
             alertView.setTextColor(0xFFFFFFFF);
-            alertView.setPadding(dp(8), dp(6), dp(8), dp(6));
+            alertView.setPadding(dp(6), dp(3), dp(6), dp(3));
             alertView.setBackground(Ui.shape(ctx, 0xFFB3261E, 0xFFFF6B5E, 8));
             alertView.setVisibility(View.GONE);
             LinearLayout.LayoutParams alp = new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-            alp.bottomMargin = dp(4);
+            alp.bottomMargin = dp(2);
             panel.addView(alertView, alp);
 
             msgText = new TextView(ctx);
-            msgText.setTextSize(15);
+            msgText.setTextSize(12);
             msgText.setTextColor(Ui.TXT);
-            msgText.setPadding(0, dp(4), 0, dp(6));
+            msgText.setPadding(0, dp(2), 0, dp(4));
             msgScroll = new ScrollView(ctx) {
                 @Override protected void onMeasure(int w, int hs) {
                     // long messages scroll inside a capped height so Wilco / Unable never leave the screen
@@ -254,17 +257,17 @@ final class Overlay {
             // 2x2 grid, always visible: buttons that do not fit the flight phase are dimmed and inactive.
             reqGrid = new LinearLayout(ctx);
             reqGrid.setOrientation(LinearLayout.VERTICAL);
-            bClr = small(Api.t(ctx, "Clearance", "Autorização"), Ui.SECONDARY);
+            bClr = small(Api.t(ctx, "Clearance", "Autoriz."), Ui.SECONDARY);
             bPush = small(Api.t(ctx, "Pushback", "Pushback"), Ui.SECONDARY);
             bTaxi = small(Api.t(ctx, "Taxi", "Táxi"), Ui.SECONDARY);
             bRwy = small(Api.t(ctx, "Take off", "Decolar"), Ui.SECONDARY);   // Take off on the ground, Landing in the air
             bClimb = small(Api.t(ctx, "Climb", "Subir"), Ui.SECONDARY);
-            bDescent = small(Api.t(ctx, "Descend", "Descer"), Ui.SECONDARY);
+            bDescent = small(Api.t(ctx, "Desc.", "Desc."), Ui.SECONDARY);
             altIn = new EditText(ctx);
             altIn.setHint("ALT");
             altIn.setHintTextColor(Ui.DIM);
             altIn.setTextColor(Ui.TXT);
-            altIn.setTextSize(14);
+            altIn.setTextSize(12);
             altIn.setGravity(Gravity.CENTER);
             altIn.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
             altIn.setSingleLine(true);
@@ -293,25 +296,20 @@ final class Overlay {
             bDescent.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { requestAlt("descent"); } });
             LinearLayout r1 = new LinearLayout(ctx), r2 = new LinearLayout(ctx);
             r1.setOrientation(LinearLayout.HORIZONTAL); r2.setOrientation(LinearLayout.HORIZONTAL);
-            r1.addView(bClr, weight()); r1.addView(bPush, weight());
-            r2.addView(bTaxi, weight()); r2.addView(bRwy, weight());
-            LinearLayout r3 = new LinearLayout(ctx);
-            r3.setOrientation(LinearLayout.HORIZONTAL);
-            r3.setGravity(Gravity.CENTER_VERTICAL);
-            r3.addView(altIn, new LinearLayout.LayoutParams(0, dp(40), 0.8f));
-            r3.addView(bClimb, weight()); r3.addView(bDescent, weight());
+            r2.setGravity(Gravity.CENTER_VERTICAL);
+            r1.addView(bClr, weight()); r1.addView(bPush, weight()); r1.addView(bTaxi, weight());
+            LinearLayout.LayoutParams ap2 = weight(); ap2.weight = 0.9f;
+            r2.addView(bRwy, weight());
+            r2.addView(altIn, ap2);
+            r2.addView(bClimb, weight()); r2.addView(bDescent, weight());
             reqGrid.addView(r1);
             LinearLayout.LayoutParams r2p = new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-            r2p.topMargin = dp(4);
+            r2p.topMargin = dp(2);
             reqGrid.addView(r2, r2p);
-            LinearLayout.LayoutParams r3p = new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-            r3p.topMargin = dp(4);
-            reqGrid.addView(r3, r3p);
             LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-            rp.topMargin = dp(6);
+            rp.topMargin = dp(3);
             panel.addView(reqGrid, rp);
 
             // ATIS view: replaces the request grid while open (keeps the panel the same height)
@@ -322,7 +320,7 @@ final class Overlay {
             atHead.setGravity(Gravity.CENTER_VERTICAL);
             TextView atTitle = new TextView(ctx);
             atTitle.setText("ATIS");
-            atTitle.setTextSize(12);
+            atTitle.setTextSize(11);
             atTitle.setTypeface(Typeface.DEFAULT_BOLD);
             atTitle.setTextColor(Ui.CYAN);
             atHead.addView(atTitle, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
@@ -330,17 +328,17 @@ final class Overlay {
             bAtisSwap.setOnClickListener(new View.OnClickListener() {
                 @Override public void onClick(View v) { atisArr = !atisArr; atisPicked = true; loadAtis(); }
             });
-            atHead.addView(bAtisSwap, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(36)));
+            atHead.addView(bAtisSwap, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(28)));
             atisBox.addView(atHead);
             atisText = new TextView(ctx);
-            atisText.setTextSize(13);
+            atisText.setTextSize(11);
             atisText.setTextColor(Ui.TXT);
             atisText.setPadding(0, dp(4), 0, dp(2));
             atisScroll = new ScrollView(ctx) {
                 @Override protected void onMeasure(int w, int hs) {
                     DisplayMetrics dm = new DisplayMetrics();
                     wm.getDefaultDisplay().getRealMetrics(dm);
-                    int cap = Math.max(dp(60), Math.min(dp(150), dm.heightPixels - dp(330)));
+                    int cap = Math.max(dp(60), Math.min(dp(110), dm.heightPixels - dp(260)));
                     super.onMeasure(w, MeasureSpec.makeMeasureSpec(cap, MeasureSpec.AT_MOST));
                 }
             };
@@ -350,7 +348,7 @@ final class Overlay {
             atisBox.setVisibility(View.GONE);
             LinearLayout.LayoutParams abp = new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-            abp.topMargin = dp(6);
+            abp.topMargin = dp(3);
             panel.addView(atisBox, abp);
 
             // Emergency (Mayday): two taps, the second within 4 s; once declared the same button cancels it.
@@ -372,23 +370,23 @@ final class Overlay {
             bAtis.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { toggleAtis(); } });
             LinearLayout emRow = new LinearLayout(ctx);
             emRow.setOrientation(LinearLayout.HORIZONTAL);
-            LinearLayout.LayoutParams emw = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 2f);
-            emw.rightMargin = dp(2);
-            LinearLayout.LayoutParams atw = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
-            atw.leftMargin = dp(2);
+            LinearLayout.LayoutParams emw = new LinearLayout.LayoutParams(0, dp(30), 2f);
+            emw.rightMargin = dp(1);
+            LinearLayout.LayoutParams atw = new LinearLayout.LayoutParams(0, dp(30), 1f);
+            atw.leftMargin = dp(1);
             emRow.addView(bEmerg, emw);
             emRow.addView(bAtis, atw);
             LinearLayout.LayoutParams ep = new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-            ep.topMargin = dp(6);
+            ep.topMargin = dp(3);
             panel.addView(emRow, ep);
 
             buildFreqRows();
 
             statusView = new TextView(ctx);
-            statusView.setTextSize(12);
+            statusView.setTextSize(10);
             statusView.setTextColor(Ui.DIM);
-            statusView.setPadding(0, dp(6), 0, 0);
+            statusView.setPadding(0, dp(3), 0, 0);
             statusView.setVisibility(View.GONE);
             panel.addView(statusView);
 
@@ -400,12 +398,12 @@ final class Overlay {
             chatIn.setHint(Api.t(ctx, "Message to ATC", "Mensagem ao ATC"));
             chatIn.setHintTextColor(Ui.DIM);
             chatIn.setTextColor(Ui.TXT);
-            chatIn.setTextSize(14);
+            chatIn.setTextSize(12);
             chatIn.setSingleLine(true);
             chatIn.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
             chatIn.setImeOptions(EditorInfo.IME_ACTION_SEND | EditorInfo.IME_FLAG_NO_EXTRACT_UI);
             chatIn.setFilters(new android.text.InputFilter[] { new android.text.InputFilter.LengthFilter(200) });
-            chatIn.setPadding(dp(10), 0, dp(10), 0);
+            chatIn.setPadding(dp(6), 0, dp(6), 0);
             chatIn.setBackground(Ui.shape(ctx, Ui.FIELD, Ui.STROKE, 10));
             chatIn.setOnTouchListener(new View.OnTouchListener() {
                 @Override public boolean onTouch(View v, MotionEvent e) {
@@ -419,7 +417,7 @@ final class Overlay {
                     return false;
                 }
             });
-            chatRow.addView(chatIn, new LinearLayout.LayoutParams(0, dp(40), 1f));
+            chatRow.addView(chatIn, new LinearLayout.LayoutParams(0, dp(30), 1f));
             // push-to-talk: hold to record (max 20 s), release to send; only with Voice on in Settings and the mic permission
             micBtn = new View(ctx) {
                 private final Paint pt = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -451,22 +449,23 @@ final class Overlay {
                 }
             });
             if (Mic.available(ctx)) {
-                LinearLayout.LayoutParams mp = new LinearLayout.LayoutParams(dp(40), dp(40));
-                mp.leftMargin = dp(4);
+                LinearLayout.LayoutParams mp = new LinearLayout.LayoutParams(dp(30), dp(30));
+                mp.leftMargin = dp(3);
                 chatRow.addView(micBtn, mp);
             }
             android.widget.Button replayBtn = new android.widget.Button(ctx);
             replayBtn.setText("↻");
-            replayBtn.setTextSize(18);
+            replayBtn.setTextSize(14);
             replayBtn.setContentDescription(Api.t(ctx, "Replay last voice transmission", "Repetir última transmissão de voz"));
             replayBtn.setMinWidth(0);
-            replayBtn.setMinimumWidth(dp(40));
+            replayBtn.setMinimumWidth(0);
+            replayBtn.setMinHeight(0); replayBtn.setMinimumHeight(0);
             replayBtn.setPadding(0, 0, 0, 0);
             replayBtn.setOnClickListener(new View.OnClickListener() {
                 @Override public void onClick(View v) { PilotService.replayLastVoice(ctx); }
             });
-            LinearLayout.LayoutParams rbp = new LinearLayout.LayoutParams(dp(40), dp(40));
-            rbp.leftMargin = dp(4);
+            LinearLayout.LayoutParams rbp = new LinearLayout.LayoutParams(dp(30), dp(30));
+            rbp.leftMargin = dp(3);
             chatRow.addView(replayBtn, rbp);
             // send symbol: a paper plane drawn on a canvas (no text, no emoji font dependency)
             sendBtn = new View(ctx) {
@@ -491,19 +490,19 @@ final class Overlay {
             sendBtn.setBackground(Ui.ripple(ctx, Ui.CYAN, Ui.CYAN, 10));
             sendBtn.setContentDescription(Api.t(ctx, "Send", "Enviar"));
             sendBtn.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { sendChat(); } });
-            LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(dp(40), dp(40));
-            sp.leftMargin = dp(4);
+            LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(dp(30), dp(30));
+            sp.leftMargin = dp(3);
             chatRow.addView(sendBtn, sp);
             LinearLayout.LayoutParams crp = new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-            crp.topMargin = dp(8);
+            crp.topMargin = dp(4);
             panel.addView(chatRow, crp);
 
             panel.setVisibility(View.GONE);
-            root.addView(panel, new FrameLayout.LayoutParams(dp(236), FrameLayout.LayoutParams.WRAP_CONTENT));
+            root.addView(panel, new FrameLayout.LayoutParams(dp(200), FrameLayout.LayoutParams.WRAP_CONTENT));
 
             lp = new WindowManager.LayoutParams(
-                    dp(52), dp(52),   // explicit sizes per state: a wrap-content window stayed bubble-sized and clipped the panel
+                    dp(34), dp(34),   // explicit sizes per state: a wrap-content window stayed bubble-sized and clipped the panel
                     WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
                             | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
@@ -569,10 +568,10 @@ final class Overlay {
         if (root == null) return;
         DisplayMetrics dm = new DisplayMetrics();
         wm.getDefaultDisplay().getRealMetrics(dm);   // current rotation
-        int w = dp(52), hh = dp(52);
+        int w = dp(34), hh = dp(34);
         if (expanded) {
             // measure the panel ourselves: a wrap-content window gets cut at the screen edge and then reports the cut size
-            w = dp(236);
+            w = dp(200);
             panel.measure(View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY),
                     View.MeasureSpec.makeMeasureSpec(dm.heightPixels, View.MeasureSpec.AT_MOST));
             hh = Math.min(panel.getMeasuredHeight(), dm.heightPixels);
@@ -587,7 +586,7 @@ final class Overlay {
     private int maxMsgHeight() {
         DisplayMetrics dm = new DisplayMetrics();
         wm.getDefaultDisplay().getRealMetrics(dm);
-        return Math.max(dp(48), Math.min(dp(170), dm.heightPixels - dp(370)));
+        return Math.max(dp(48), Math.min(dp(110), dm.heightPixels - dp(300)));
     }
 
     private void setExpanded(boolean e) {
@@ -596,8 +595,8 @@ final class Overlay {
         expanded = e;
         bubble.setVisibility(e ? View.GONE : View.VISIBLE);
         panel.setVisibility(e ? View.VISIBLE : View.GONE);
-        lp.width = e ? dp(236) : dp(52);
-        lp.height = e ? WindowManager.LayoutParams.WRAP_CONTENT : dp(52);
+        lp.width = e ? dp(200) : dp(34);
+        lp.height = e ? WindowManager.LayoutParams.WRAP_CONTENT : dp(34);
         try { wm.updateViewLayout(root, lp); } catch (Exception ignored) { }
         root.post(new Runnable() { @Override public void run() { clamp(); } });
         h.postDelayed(new Runnable() { @Override public void run() { clamp(); } }, 150);   // after the panel has been measured
@@ -923,7 +922,7 @@ final class Overlay {
         freqIn.setHint(Api.t(ctx, "FREQ (all)", "FREQ (todas)"));
         freqIn.setHintTextColor(Ui.DIM);
         freqIn.setTextColor(Ui.TXT);
-        freqIn.setTextSize(15);
+        freqIn.setTextSize(12);
         freqIn.setGravity(Gravity.CENTER);
         freqIn.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
         freqIn.setSingleLine(true);
@@ -944,19 +943,19 @@ final class Overlay {
                 return false;
             }
         });
-        LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(dp(44), dp(40));
-        bp.rightMargin = dp(3);
-        LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(dp(54), dp(40));
-        ap.rightMargin = dp(3);
+        LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(dp(30), dp(30));
+        bp.rightMargin = dp(2);
+        LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(dp(40), dp(30));
+        ap.rightMargin = dp(2);
         row.addView(bFqAll, ap);
         row.addView(bFqDn, bp);
-        LinearLayout.LayoutParams fp = new LinearLayout.LayoutParams(0, dp(40), 1f);
-        fp.rightMargin = dp(3);
+        LinearLayout.LayoutParams fp = new LinearLayout.LayoutParams(0, dp(30), 1f);
+        fp.rightMargin = dp(2);
         row.addView(freqIn, fp);
-        row.addView(bFqUp, new LinearLayout.LayoutParams(dp(44), dp(40)));
+        row.addView(bFqUp, new LinearLayout.LayoutParams(dp(30), dp(30)));
         LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        rp.topMargin = dp(6);
+        rp.topMargin = dp(3);
         panel.addView(row, rp);
 
         quickRow = new LinearLayout(ctx);
@@ -1004,8 +1003,11 @@ final class Overlay {
             quickSig = sig;
             quickRow.removeAllViews();
             for (final String[] e : q) {
-                Button b = small(e[0] + " " + e[1], Ui.SECONDARY);
-                b.setTextSize(11);
+                Button b = small(e[0] + "\n" + e[1], Ui.SECONDARY);
+                b.setTextSize(9);
+                b.setSingleLine(false);
+                b.setMaxLines(2);
+                b.setLineSpacing(0, 0.9f);
                 b.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { setFreq(e[1]); } });
                 quickRow.addView(b, weight());
             }
