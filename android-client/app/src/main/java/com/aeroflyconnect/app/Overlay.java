@@ -72,6 +72,9 @@ final class Overlay {
     private String alertText = "";
     private ScrollView msgScroll;
     private LinearLayout panel, msgRow, reqGrid;
+    private Button bProc;
+    private boolean procOpen;
+    private GradientDrawable bubbleBg;
     private Button bWilco, bUnable, bClr, bPush, bTaxi, bRwy, bClimb, bDescent, bEmerg;
     private EditText altIn;
     private EditText chatIn;
@@ -174,17 +177,32 @@ final class Overlay {
                 }
             };
 
-            bubble = new TextView(ctx);
-            bubble.setText("ATC");
-            bubble.setTextSize(9);
-            bubble.setTypeface(Typeface.DEFAULT_BOLD);
-            bubble.setTextColor(Ui.CYAN);
-            bubble.setGravity(Gravity.CENTER);
-            GradientDrawable g = new GradientDrawable();
-            g.setShape(GradientDrawable.OVAL);
-            g.setColor(0xCC012C33);
-            g.setStroke(dp(1), Ui.CYAN);
-            bubble.setBackground(g);
+            bubble = new TextView(ctx) {
+                private final Paint pt = new Paint(Paint.ANTI_ALIAS_FLAG);
+                private final RectF rf = new RectF();
+                @Override protected void onDraw(Canvas c) {
+                    super.onDraw(c);
+                    float w = getWidth(), hh = getHeight(), cx = w / 2f, cy = hh / 2f;
+                    pt.setColor(Ui.CYAN);
+                    pt.setStyle(Paint.Style.FILL);
+                    c.drawCircle(cx, cy, w * 0.08f, pt);
+                    pt.setStyle(Paint.Style.STROKE);
+                    pt.setStrokeWidth(w * 0.055f);
+                    pt.setStrokeCap(Paint.Cap.ROUND);
+                    for (int i = 1; i <= 2; i++) {
+                        float r = w * (0.12f + 0.12f * i);
+                        rf.set(cx - r, cy - r, cx + r, cy + r);
+                        c.drawArc(rf, -50, 100, false, pt);
+                        c.drawArc(rf, 130, 100, false, pt);
+                    }
+                }
+            };
+            bubble.setContentDescription("ATC");
+            bubbleBg = new GradientDrawable();
+            bubbleBg.setShape(GradientDrawable.OVAL);
+            bubbleBg.setColor(0xCC012C33);
+            bubbleBg.setStroke(dp(1), Ui.STROKE);
+            bubble.setBackground(bubbleBg);
             bubble.setOnTouchListener(dragger);
             root.addView(bubble, new FrameLayout.LayoutParams(dp(34), dp(34)));
 
@@ -198,12 +216,21 @@ final class Overlay {
             head.setGravity(Gravity.CENTER_VERTICAL);
             TextView title = new TextView(ctx);
             title.setText("ATC");
+            title.setPadding(dp(2), 0, dp(6), 0);
             title.setTextSize(11);
             title.setTypeface(Typeface.DEFAULT_BOLD);
             title.setTextColor(Ui.CYAN);
             title.setGravity(Gravity.CENTER_VERTICAL);
             title.setOnTouchListener(dragger);
-            head.addView(title, new LinearLayout.LayoutParams(0, dp(24), 1f));
+            head.addView(title, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(24)));
+            statusView = new TextView(ctx);
+            statusView.setTextSize(10);
+            statusView.setTextColor(Ui.DIM);
+            statusView.setSingleLine(true);
+            statusView.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            statusView.setGravity(Gravity.CENTER_VERTICAL);
+            statusView.setOnTouchListener(dragger);
+            head.addView(statusView, new LinearLayout.LayoutParams(0, dp(24), 1f));
             TextView min = new TextView(ctx);
             min.setText("–");
             min.setTextSize(16);
@@ -245,11 +272,12 @@ final class Overlay {
 
             msgRow = new LinearLayout(ctx);
             msgRow.setOrientation(LinearLayout.HORIZONTAL);
-            bWilco = small("Wilco", Ui.PRIMARY);
+            bWilco = small(Api.t(ctx, "Read back", "Colacionar"), Ui.PRIMARY);
             bUnable = small(Api.t(ctx, "Unable", "Impossível"), Ui.DANGER);
             bWilco.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { reply("wilco"); } });
             bUnable.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { reply("unable"); } });
-            msgRow.addView(bWilco, weight());
+            LinearLayout.LayoutParams wl = weight(); wl.weight = 1.7f;
+            msgRow.addView(bWilco, wl);
             msgRow.addView(bUnable, weight());
             msgRow.setVisibility(View.GONE);
             panel.addView(msgRow);
@@ -310,7 +338,7 @@ final class Overlay {
             LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
             rp.topMargin = dp(3);
-            panel.addView(reqGrid, rp);
+            reqGrid.setVisibility(View.GONE);
 
             // ATIS view: replaces the request grid while open (keeps the panel the same height)
             atisBox = new LinearLayout(ctx);
@@ -349,10 +377,17 @@ final class Overlay {
             LinearLayout.LayoutParams abp = new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
             abp.topMargin = dp(3);
-            panel.addView(atisBox, abp);
 
             // Emergency (Mayday): two taps, the second within 4 s; once declared the same button cancels it.
-            bEmerg = small(Api.t(ctx, "Emergency", "Emergência"), Ui.DANGER);
+            bEmerg = small("Mayday", Ui.DANGER);
+            bProc = small("", Ui.SECONDARY);
+            bProc.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View v) {
+                    procOpen = !procOpen;
+                    if (procOpen && atisOpen) toggleAtis();
+                    refresh();
+                }
+            });
             bEmerg.setOnClickListener(new View.OnClickListener() {
                 @Override public void onClick(View v) {
                     if (PilotService.emergency) { request("mayday_cancel"); return; }
@@ -370,25 +405,25 @@ final class Overlay {
             bAtis.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { toggleAtis(); } });
             LinearLayout emRow = new LinearLayout(ctx);
             emRow.setOrientation(LinearLayout.HORIZONTAL);
-            LinearLayout.LayoutParams emw = new LinearLayout.LayoutParams(0, dp(30), 2f);
-            emw.rightMargin = dp(1);
+            LinearLayout.LayoutParams emw = new LinearLayout.LayoutParams(0, dp(30), 1.1f);
+            emw.leftMargin = dp(1);
             LinearLayout.LayoutParams atw = new LinearLayout.LayoutParams(0, dp(30), 1f);
             atw.leftMargin = dp(1);
-            emRow.addView(bEmerg, emw);
+            LinearLayout.LayoutParams pw = new LinearLayout.LayoutParams(0, dp(30), 1.6f);
+            pw.rightMargin = dp(1);
+            emRow.addView(bProc, pw);
             emRow.addView(bAtis, atw);
+            emRow.addView(bEmerg, emw);
             LinearLayout.LayoutParams ep = new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
             ep.topMargin = dp(3);
             panel.addView(emRow, ep);
+            panel.addView(reqGrid, rp);
+            panel.addView(atisBox, abp);
 
             buildFreqRows();
 
-            statusView = new TextView(ctx);
-            statusView.setTextSize(10);
-            statusView.setTextColor(Ui.DIM);
-            statusView.setPadding(0, dp(3), 0, 0);
-            statusView.setVisibility(View.GONE);
-            panel.addView(statusView);
+
 
             // Pilot -> ATC text: the window only takes focus while the field is being used, so the sim keeps its input otherwise.
             LinearLayout chatRow = new LinearLayout(ctx);
@@ -632,21 +667,24 @@ final class Overlay {
         }
         alertView.setText(alertText);
         alertView.setVisibility(alertText.isEmpty() ? View.GONE : View.VISIBLE);
-        reqGrid.setVisibility(atisOpen ? View.GONE : View.VISIBLE);
+        reqGrid.setVisibility(procOpen && !atisOpen ? View.VISIBLE : View.GONE);
+        bProc.setText(procOpen ? Api.t(ctx, "Procedures \u2304", "Procedimentos \u2304") : Api.t(ctx, "Procedures \u203A", "Procedimentos \u203A"));
+        bubbleBg.setStroke(dp(it != null ? 2 : 1), it != null ? 0xFFFFB020 : Ui.STROKE);
         atisBox.setVisibility(atisOpen ? View.VISIBLE : View.GONE);
         bAtis.setText(atisOpen ? Api.t(ctx, "Back", "Voltar") : (atisShownLetter.isEmpty() ? "ATIS" : "ATIS " + atisShownLetter));
         dim(bClr, Phase.clearance); dim(bPush, Phase.pushback); dim(bTaxi, Phase.taxi); bRwy.setText(Phase.air ? Api.t(ctx, "Landing", "Pouso") : Api.t(ctx, "Take off", "Decolar"));
         dim(bRwy, Phase.air ? Phase.land : Phase.takeoff);
         dim(bClimb, Phase.air); dim(bDescent, Phase.air);
+        if (it != null) bWilco.setText(instruction(it.text) ? Api.t(ctx, "Read back", "Colacionar") : Api.t(ctx, "Roger", "Ciente"));
         bWilco.setEnabled(!replyBusy); bUnable.setEnabled(!replyBusy);
         bEmerg.setEnabled(!reqBusy);
-        bEmerg.setText(PilotService.emergency ? Api.t(ctx, "Cancel Mayday", "Cancelar Mayday")
-                : emergArmed ? Api.t(ctx, "Tap again: MAYDAY", "Toque de novo: MAYDAY") : Api.t(ctx, "Emergency", "Emergência"));
+        bEmerg.setText(PilotService.emergency ? Api.t(ctx, "Cancel", "Cancelar")
+                : emergArmed ? Api.t(ctx, "Confirm?", "Confirmar?") : "Mayday");
         updateFreqUi();
         String st = statusMsg;
         if (st.isEmpty() && !PilotService.contact.isEmpty()) st = Api.t(ctx, "Controller: ", "Controlador: ") + PilotService.contact;
         statusView.setText(st);
-        statusView.setVisibility(st.isEmpty() ? View.GONE : View.VISIBLE);
+        
         if (expanded) root.post(new Runnable() { @Override public void run() { clamp(); } });
     }
 
@@ -682,6 +720,7 @@ final class Overlay {
     private void toggleAtis() {
         atisOpen = !atisOpen;
         if (atisOpen) {
+            procOpen = false;
             if (!atisPicked) {   // default: arrival airport once airborne, otherwise departure
                 String dep = Api.field(ctx, "dep").trim(), arr = Api.field(ctx, "arr").trim();
                 atisArr = (!arr.isEmpty() && "air".equals(Phase.phaseName)) || dep.isEmpty();
@@ -1018,6 +1057,16 @@ final class Overlay {
         }
     }
 
+    /** Instruction (needs a readback) versus plain information (just "Roger"). */
+    private static boolean instruction(String t) {
+        String l = t == null ? "" : t.toLowerCase(java.util.Locale.ROOT);
+        if (l.matches(".*\\d.*")) return true;
+        String[] k = {"cleared", "taxi", "hold", "line up", "climb", "descend", "suba", "desça", "squawk", "contact", "proceed",
+                "turn", "vire", "autoriz", "mantenha", "reduce", "increase", "pushback", "approved", "aprovad", "go around", "cross"};
+        for (String w : k) if (l.contains(w)) return true;
+        return false;
+    }
+
     private void requestAlt(String type) {
         if (reqBusy) return;
         String a = altIn.getText().toString().trim();
@@ -1030,6 +1079,7 @@ final class Overlay {
     private void request(String type, String altitude) {
         if (reqBusy) return;
         reqBusy = true;
+        procOpen = false;
         autoExpanded = false;
         setStatus(Api.t(ctx, "Sending...", "Enviando..."), 0);
         PilotService.request(ctx, type, altitude, new PilotService.ReqCb() {
