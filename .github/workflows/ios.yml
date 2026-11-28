@@ -1,0 +1,73 @@
+# Builds the iPhone/iPad app (.ipa, UNSIGNED: sideload it with AltStore / Sideloadly / TrollStore, they sign it) on a GitHub Mac.
+# www = the PC app's renderer + core (pc-electron/) bundled for the phone, see ios/build.mjs. Release: ios-latest / AFConnect-iOS.ipa
+name: Build iOS app (.ipa)
+
+on:
+  push:
+    branches: [main]
+    paths: ['ios/**', 'pc-electron/core/**', 'pc-electron/renderer/**', '.github/workflows/ios.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ios-build
+  cancel-in-progress: true
+
+env:
+  CORDOVA_VERSION: "13.0.0"
+  CORDOVA_IOS_VERSION: "8.1.1"
+
+jobs:
+  ipa:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: PC core tests (shared code)
+        run: cd pc-electron && npm install --no-audit --no-fund && npm test
+      - name: Build www
+        run: cd ios && npm install --no-audit --no-fund && npm run build
+      - name: Web smoke test (stubbed native plugin)
+        run: |
+          python3 -m pip install --quiet playwright && python3 -m playwright install chromium
+          cd ios && sed 's#executable_path="/usr/bin/google-chrome", ##' test/smoke.py > /tmp/smoke.py && cp /tmp/smoke.py test/smoke_ci.py && python3 test/smoke_ci.py
+      - name: Cordova iOS project
+        run: |
+          npm install -g --no-audit --no-fund "cordova@$CORDOVA_VERSION"
+          cordova create "$RUNNER_TEMP/app" com.aeroflyconnect.ios "Aerofly Connect"
+          cd "$RUNNER_TEMP/app"
+          rm -rf www && cp -R "$GITHUB_WORKSPACE/ios/www" www
+          cp "$GITHUB_WORKSPACE/ios/config.xml" config.xml
+          mkdir -p res && cp "$GITHUB_WORKSPACE/ios/res/icon-1024.png" res/
+          cordova platform add "ios@$CORDOVA_IOS_VERSION" --no-telemetry
+          cordova plugin add "$GITHUB_WORKSPACE/ios/plugin" --no-telemetry
+          cordova prepare ios --no-telemetry
+      - name: Xcode archive (unsigned)
+        run: |
+          cd "$RUNNER_TEMP/app/platforms/ios"
+          if [ -d App.xcworkspace ]; then SRC=(-workspace App.xcworkspace); else SRC=(-project App.xcodeproj); fi
+          xcodebuild "${SRC[@]}" -scheme App -configuration Release -sdk iphoneos -destination "generic/platform=iOS" \
+            -archivePath "$RUNNER_TEMP/App.xcarchive" archive \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM="" 2>&1 | tail -60
+          test -d "$RUNNER_TEMP/App.xcarchive/Products/Applications"
+      - name: Package the .ipa
+        run: |
+          cd "$RUNNER_TEMP" && rm -rf Payload && mkdir Payload
+          cp -R App.xcarchive/Products/Applications/*.app Payload/
+          zip -qry AFConnect-iOS.ipa Payload && ls -la AFConnect-iOS.ipa
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AFConnect-iOS.ipa
+          path: ${{ runner.temp }}/AFConnect-iOS.ipa
+          if-no-files-found: error
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view ios-latest >/dev/null 2>&1 || gh release create ios-latest --title "Aerofly Connect iOS (unsigned IPA)" --notes "Rolling build. Unsigned: sideload with AltStore, Sideloadly or TrollStore." --target "$GITHUB_SHA"
+          gh release upload ios-latest "$RUNNER_TEMP/AFConnect-iOS.ipa" --clobber

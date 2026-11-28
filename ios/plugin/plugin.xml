@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<plugin xmlns="http://apache.org/cordova/ns/plugins/1.0" id="cordova-plugin-afsim" version="1.0.0">
+  <name>AFSim</name>
+  <js-module src="afsim.js" name="AFSim"><clobbers target="AFSim"/></js-module>
+  <platform name="ios">
+    <config-file target="config.xml" parent="/*"><feature name="AFSim"><param name="ios-package" value="AFSim"/></feature></config-file>
+    <config-file target="*-Info.plist" parent="UIBackgroundModes"><array><string>audio</string></array></config-file>
+    <config-file target="*-Info.plist" parent="NSLocalNetworkUsageDescription"><string>Aerofly Connect reads your flight from Aerofly running on another device in your network.</string></config-file>
+    <config-file target="*-Info.plist" parent="NSMicrophoneUsageDescription"><string>Used for push-to-talk radio calls to air traffic control.</string></config-file>
+    <header-file src="src/ios/AFSim.h"/>
+    <source-file src="src/ios/AFSim.m"/>
+    <framework src="AVFoundation.framework"/>
+  </platform>
+</plugin>

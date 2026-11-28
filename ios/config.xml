@@ -1,0 +1,19 @@
+<?xml version='1.0' encoding='utf-8'?>
+<widget id="com.aeroflyconnect.ios" version="1.0.0" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0">
+  <name>Aerofly Connect</name>
+  <description>Aerofly Connect for iPhone and iPad</description>
+  <author email="none@example.com">Cayden</author>
+  <content src="index.html" />
+  <access origin="*" />
+  <allow-navigation href="https://aeroflytest.caydanphoenix14.workers.dev/*" />
+  <allow-intent href="https://*/*" />
+  <preference name="Orientation" value="all" />
+  <preference name="BackgroundColor" value="0xff00414b" />
+  <preference name="AllowInlineMediaPlayback" value="true" />
+  <preference name="MediaTypesRequiringUserActionForPlayback" value="none" />
+  <preference name="WKWebViewOnly" value="true" />
+  <preference name="deployment-target" value="14.0" />
+  <platform name="ios">
+    <icon src="res/icon-1024.png" width="1024" height="1024" />
+  </platform>
+</widget>

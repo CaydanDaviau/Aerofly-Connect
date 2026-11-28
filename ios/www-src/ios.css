@@ -1,0 +1,12 @@
+html,body{height:100%;margin:0}
+body{padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);-webkit-user-select:none;overscroll-behavior:none}
+input,textarea{-webkit-user-select:text;font-size:16px}
+#sheet,#atcSheet{position:fixed;inset:0;z-index:50;background:#00414B;display:flex;flex-direction:column;padding-top:env(safe-area-inset-top)}
+#sheet[hidden],#atcSheet[hidden]{display:none}
+#atcSheet{z-index:60}
+.bar{display:flex;justify-content:space-between;align-items:center;padding:8px 14px;color:#4FE3D0;background:#012C33}
+.bar button{background:none;border:1px solid #1E7480;color:#4FE3D0;border-radius:10px;padding:6px 12px;font-size:16px}
+#sheet iframe,#atcSheet iframe{flex:1;border:0;width:100%;background:#1a1a1a}
+#atcFab{position:fixed;right:14px;bottom:calc(18px + env(safe-area-inset-bottom));z-index:40;width:56px;height:56px;border-radius:50%;background:rgba(1,44,51,.95);border:2px solid #4FE3D0;color:#4FE3D0;font-weight:800}
+body.flying #atcFab{display:block}
+#atcFab[hidden]{display:none}

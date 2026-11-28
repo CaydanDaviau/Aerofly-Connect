@@ -1,0 +1,3 @@
+ios/node_modules/
+ios/www/
+ios/test/smoke_ci.py

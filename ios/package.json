@@ -1,0 +1,1 @@
+{ "name": "aerofly-connect-ios", "version": "1.0.0", "private": true, "scripts": { "build": "node build.mjs", "test": "node test/host.test.mjs" }, "devDependencies": { "esbuild": "^0.24.0" } }
