@@ -75,9 +75,13 @@ final class Overlay {
     private LinearLayout panel, msgRow, reqGrid;
     private LinearLayout radioPane, flightPane, logList, msgCard;
     private ScrollView logScroll;
-    private Button tabRadio, tabFlight, bMap, bRepeat;
+    private Button tabRadio, tabFlight, bRepeat;
     private MiniMap mini;
     private boolean flightTab;
+    private static boolean miniView = true;
+    private LinearLayout telemCard;
+    private ScrollView planScroll;
+    private Button bPlanTab, bMiniTab;
     private int logVer = -1;
     private TextView ctxView, noProc, msgHead, tAlt, tHdg, tGs, tVs, tPos, tPlan, tLink;
     private final Runnable tick = new Runnable() {
@@ -748,6 +752,7 @@ final class Overlay {
         flightPane.setOrientation(LinearLayout.VERTICAL);
         flightPane.setVisibility(View.GONE);
         LinearLayout card = new LinearLayout(ctx);
+        telemCard = card;
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(8), dp(6), dp(8), dp(6));
         card.setBackground(Ui.shape(ctx, Ui.FIELD, Ui.STROKE, 10));
@@ -777,13 +782,21 @@ final class Overlay {
 
         tPlan = new TextView(ctx);
         tPlan.setTextSize(11); tPlan.setTextColor(Ui.TXT);
-        tPlan.setMaxLines(2);
-        tPlan.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        tPlan.setTextIsSelectable(false);
         tPlan.setPadding(dp(8), dp(6), dp(8), dp(6));
         tPlan.setBackground(Ui.shape(ctx, Ui.FIELD, Ui.STROKE, 10));
         LinearLayout.LayoutParams pp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         pp.topMargin = dp(4);
-        flightPane.addView(tPlan, pp);
+        planScroll = new ScrollView(ctx) {
+            @Override protected void onMeasure(int w, int hs) {
+                DisplayMetrics d2 = new DisplayMetrics();
+                wm.getDefaultDisplay().getRealMetrics(d2);
+                super.onMeasure(w, MeasureSpec.makeMeasureSpec(Math.max(dp(80), Math.min(dp(220), d2.heightPixels - dp(300))), MeasureSpec.AT_MOST));
+            }
+        };
+        planScroll.setVerticalScrollBarEnabled(false);
+        planScroll.addView(tPlan);
+        flightPane.addView(planScroll, pp);
 
         tLink = new TextView(ctx);
         tLink.setTextSize(9); tLink.setTextColor(Ui.DIM); tLink.setSingleLine(true);
@@ -791,19 +804,17 @@ final class Overlay {
         tLink.setPadding(dp(2), dp(4), dp(2), 0);
         flightPane.addView(tLink);
 
-        bMap = small("", Ui.SECONDARY);
-        bMap.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) {
-                try {
-                    ctx.startActivity(new android.content.Intent(ctx, MapActivity.class)
-                            .setAction(MapActivity.ACT_TOGGLE).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK));
-                } catch (Exception ignored) { }
-                h.postDelayed(refreshRun, 800);
-            }
-        });
+        LinearLayout seg = new LinearLayout(ctx);
+        seg.setOrientation(LinearLayout.HORIZONTAL);
+        seg.setBackground(Ui.shape(ctx, Ui.FIELD, Ui.STROKE, 8));
+        bPlanTab = small(Api.t(ctx, "Flight plan", "Plano de voo"), Ui.SECONDARY);
+        bMiniTab = small(Api.t(ctx, "Minimap", "Minimapa"), Ui.SECONDARY);
+        bPlanTab.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { miniView = false; refresh(); updateFlight(); } });
+        bMiniTab.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { miniView = true; refresh(); updateFlight(); } });
+        seg.addView(bPlanTab); seg.addView(bMiniTab);
         LinearLayout.LayoutParams mp2 = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(30));
         mp2.topMargin = dp(4);
-        flightPane.addView(bMap, mp2);
+        flightPane.addView(seg, 0, mp2);
     }
 
     private void updateFlight() {
@@ -828,7 +839,6 @@ final class Overlay {
         if (!rt.isEmpty()) sb.append("\n").append(rt);
         tPlan.setText(sb.toString());
         tLink.setText("Sim: " + PilotService.simState + "  \u00B7  " + Api.t(ctx, "Server: ", "Servidor: ") + PilotService.serverState);
-        bMap.setText(PilotService.mapShown ? Api.t(ctx, "Close full map", "Fechar mapa completo") : Api.t(ctx, "Open full map", "Abrir mapa completo"));
     }
 
     private String contextLine() {
@@ -931,7 +941,13 @@ final class Overlay {
         radioPane.setVisibility(flightTab ? View.GONE : View.VISIBLE);
         flightPane.setVisibility(flightTab ? View.VISIBLE : View.GONE);
         tabStyle(tabRadio, !flightTab); tabStyle(tabFlight, flightTab);
-        if (expanded && flightTab) mini.start(); else mini.stop();
+        boolean showMini = flightTab && miniView;
+        telemCard.setVisibility(miniView ? View.GONE : View.VISIBLE);
+        mini.view().setVisibility(miniView ? View.VISIBLE : View.GONE);
+        planScroll.setVisibility(miniView ? View.GONE : View.VISIBLE);
+        tLink.setVisibility(miniView ? View.GONE : View.VISIBLE);
+        tabStyle(bPlanTab, !miniView); tabStyle(bMiniTab, miniView);
+        if (expanded && showMini) mini.start(); else mini.stop();
         if (!flightTab) { renderLog(); ctxView.setText(contextLine()); }
         alertView.setText(alertText);
         alertView.setVisibility(alertText.isEmpty() ? View.GONE : View.VISIBLE);
