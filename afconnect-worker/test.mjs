@@ -85,8 +85,13 @@ await call("PUT", "/api/position", { latitude: 10, longitude: 14, freq: "122.800
 const farIcao = JSON.parse((await call("GET", "/api/traffic?lat=10&lon=10&radius_miles=500")).slice(4)).aircraft.find(a => a.callsign === "FAR1").icao_address;
 const farMsg = async h => JSON.parse((await call("PUT", "/api/atc/message", { icao_address: farIcao, text: "Hello", holder: h }, "ctl")).slice(4));
 console.log("airspace TWR blocked far aircraft:", (await farMsg("ctl-holder")).error === "outside_airspace" ? "PASS" : "FAIL");
-await call("PUT", "/api/atc/tower", { name: "SBBR_CTR", holder: "ctr-holder", latitude: 50, longitude: 50 }, "ctr");
-console.log("airspace CTR handles it:", (await farMsg("ctr-holder")).success ? "PASS" : "FAIL");
+const badR = JSON.parse((await call("PUT", "/api/atc/tower", { name: "SBBR_CTR", holder: "ctr-holder", latitude: 10, longitude: 10.05, radius: 400 }, "ctr")).slice(4));
+console.log("center bad radius refused:", badR.error === "bad_radius" ? "PASS" : "FAIL");
+await call("PUT", "/api/atc/tower", { name: "SBBR_CTR", holder: "ctr-holder", latitude: 10, longitude: 10.05, radius: 100 }, "ctr");
+console.log("center 100 nm blocks 236 nm aircraft:", (await farMsg("ctr-holder")).error === "outside_airspace" ? "PASS" : "FAIL");
+await call("PUT", "/api/atc/tower", { name: "SBBR_CTR", holder: "ctr-holder", latitude: 10, longitude: 10.05, radius: 300 }, "ctr");
+console.log("center 300 nm handles it:", (await farMsg("ctr-holder")).success ? "PASS" : "FAIL");
+{ const ap = JSON.parse((await call("GET", "/api/traffic?lat=10&lon=10&radius_miles=500")).slice(4)).aircraft.find(a => a.virtual_tower && (a.positions || []).some(q => q.pos === "CTR")); console.log("center radius listed:", ap && ap.positions.find(q => q.pos === "CTR").radius === 300 ? "PASS" : "FAIL"); }
 await call("DELETE", "/api/atc/tower?name=SBBR_CTR&holder=ctr-holder", null, "ctr");
 await call("PUT", "/api/position", { latitude: 10, longitude: 10.1, freq: "122.800" }, "farp");
 console.log("airspace TWR ok inside 15 nm:", (await farMsg("ctl-holder")).success ? "PASS" : "FAIL");

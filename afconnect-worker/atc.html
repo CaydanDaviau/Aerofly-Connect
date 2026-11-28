@@ -630,7 +630,8 @@ var ROLES={
        d:['Runway: line up, takeoff, landing, vectors','Pista: alinhar, decolar, pousar, vetores']},
   APP:{claim:1,asp:50,en:'Approach',pt:'Aproximação',do:['hdg','alt','ils'],
        d:['Radar vectors, altitude, direct, cleared ILS','Vetores, altitude, direto, ILS']},
-  CTR:{asp:0,en:'Center',pt:'Centro',all:1,d:['','']},   /* not claimable yet (needs a region) */
+  CTR:{claim:1,asp:0,en:'Center',pt:'Centro',all:1,   /* region = circle of 100/200/300 nm around the airport, chosen when taking the role */
+       d:['Whole region around the airport: any aircraft inside the circle','Região inteira em torno do aeroporto: qualquer aeronave dentro do círculo']},
   ALL:{owner:1,asp:50,en:'All roles',pt:'Todas as funções',all:1,
        d:['Ground, Tower and Approach in one. Does not take the other slots.','Solo, Torre e Aproximação em um. Não ocupa as outras vagas.']}};
 var CLAIM_ROLES=Object.keys(ROLES).filter(function(k){return ROLES[k].claim});
@@ -735,27 +736,28 @@ var myHid=hidOf(holder),isMember=false,dimOn=false;try{dimOn=localStorage.getIte
 /* who controls an aircraft: the live human role on its frequency, AUTO when none, ALL when untuned */
 function ctrlOf(a){if(!a.freq)return'ALL';
   for(var i=0;i<ac.length;i++){var t=ac[i];if(!t.virtual_tower)continue;var ps=t.positions||[];
-    for(var k=0;k<ps.length;k++)if(ps[k].claimed&&ps[k].freq===a.freq&&(ps[k].pos==='CTR'||nmBetween(t.latitude,t.longitude,a.latitude,a.longitude)<=(AS[ps[k].pos]||50)))return String(t.callsign).replace(/^ATC_/,'')+'_'+ps[k].pos+((ps[k].ctl||ps[k].nick)?' ('+(ps[k].ctl||ps[k].nick)+')':'')}
+    for(var k=0;k<ps.length;k++)if(ps[k].claimed&&ps[k].freq===a.freq&&nmBetween(t.latitude,t.longitude,a.latitude,a.longitude)<=(ps[k].pos==='CTR'?(ps[k].radius||200):(AS[ps[k].pos]||50)))return String(t.callsign).replace(/^ATC_/,'')+'_'+ps[k].pos+((ps[k].ctl||ps[k].nick)?' ('+(ps[k].ctl||ps[k].nick)+')':'')}
   return'AUTO'}
 /* dimmed = tuned to a frequency none of my roles use (never an emergency, tower, or when I talk on All) */
 function isDim(a){return!a.virtual_tower&&!a.emergency&&((dimOn&&!!a.freq&&!isHeard(a.freq))||outsideAsp(a))}
 /* airspace: DEL/GND 5 nm, TWR 15 nm, APP 50 nm around the airport (same numbers as the Worker); CTR = everywhere */
 var aspAc=null,aspVal=null;
 function nmBetween(la1,lo1,la2,lo2){return Math.hypot((la2-la1)*60,(lo2-lo1)*60*Math.cos((la1+la2)/2*Math.PI/180))}
-function myAsp(){   /* my live roles as circles; null = I hold CTR (nothing is outside) */
+function myAsp(){   /* my live roles as circles (Center = its chosen radius) */
   if(aspAc===ac)return aspVal;
-  var out=[],ctr=false;
+  var out=[];
   for(var i=0;i<ac.length;i++){var t=ac[i];if(!t.virtual_tower)continue;var ps=t.positions||[];
     for(var k=0;k<ps.length;k++){var q=ps[k];if(!q.claimed||!q.hid||q.hid!==myHid)continue;
-      if(q.pos==='CTR')ctr=true;else out.push({lat:t.latitude,lon:t.longitude,r:AS[q.pos]||50})}}
-  aspAc=ac;aspVal=ctr?null:out;return aspVal}
+      out.push({lat:t.latitude,lon:t.longitude,r:q.pos==='CTR'?(q.radius||200):(AS[q.pos]||50)})}}
+  aspAc=ac;aspVal=out;return aspVal}
 function outsideAsp(a){if(a.virtual_tower||a.emergency)return false;var m=myAsp();if(!m||!m.length)return false;
   for(var i=0;i<m.length;i++)if(nmBetween(m[i].lat,m[i].lon,a.latitude,a.longitude)<=m[i].r)return false;
   return true}
 function drawAirspace(){   /* selected airport: all three circles, mine highlighted */
   var s=sel&&ac.filter(function(x){return x.icao_address===sel})[0];if(!s||!s.virtual_tower)return;
   var mine={};(s.positions||[]).forEach(function(q){if(q.claimed&&q.hid&&q.hid===myHid)mine[q.pos]=1});
-  var ctr=!!(mine.CTR||mine.ALL),c=proj(s),rings=[['APP 50',50,ctr||mine.APP],['TWR 15',15,ctr||mine.TWR],['GND 5',5,ctr||mine.GND]];
+  var ctr=!!mine.ALL,c=proj(s),rings=[['APP 50',50,ctr||mine.APP],['TWR 15',15,ctr||mine.TWR],['GND 5',5,ctr||mine.GND]];
+  var cp=(s.positions||[]).filter(function(q){return q.pos==='CTR'&&q.claimed})[0];if(cp)rings.unshift(['CTR '+(cp.radius||200),cp.radius||200,ctr||mine.CTR]);
   g.save();g.font='10px ui-monospace,monospace';g.textBaseline='bottom';g.textAlign='center';
   for(var i=0;i<rings.length;i++){var r=rings[i][1]/nmpp,hi=!!rings[i][2];if(r<4)continue;
     g.beginPath();g.arc(c[0],c[1],r,0,6.2832);
@@ -772,7 +774,7 @@ function updateTalk(){var row=$('talkRow'),sel=$('talkOn');if(!myTowers.length){
   sel.innerHTML='<option value="*"'+(talkName==='*'?' selected':'')+'>'+L('All frequencies (reach every aircraft)','Todas as frequências (alcança todas)')+'</option>'+myTowers.map(function(x){return'<option value="'+esc(x.name)+'"'+(x.name===talkName?' selected':'')+'>'+esc(roleLabel(x.name))+(x.freq?' '+esc(x.freq):'')+'</option>'}).join('');row.style.display='';
   var b=$('twList');if(b)b._sig=null}
 $('talkOn').onchange=function(){talkName=this.value;updateTalk();renderTowerBox()};
-var NOTTUNED=function(j){if(j.error==='outside_airspace')return(j.callsign||'')+L(' is outside your airspace ('+j.nm+' nm, '+j.role+' limit '+j.limit+' nm). Only CTR can handle it',' está fora do seu espaço aéreo ('+j.nm+' nm, limite '+j.role+' '+j.limit+' nm). Só o CTR pode atendê-lo');return(j.callsign||'')+L(' is tuned to ',' está sintonizado em ')+j.freq+(talkFreq()?L(' (you are on ',' (você está em ')+talkFreq()+')'+L('. Pick "All frequencies" to reach everyone','.'):'')};
+var NOTTUNED=function(j){if(j.error==='outside_airspace')return(j.callsign||'')+L(' is outside your airspace ('+j.nm+' nm, '+j.role+' limit '+j.limit+' nm). Only a bigger airspace (e.g. CTR) can handle it',' está fora do seu espaço aéreo ('+j.nm+' nm, limite '+j.role+' '+j.limit+' nm). Só um espaço maior (ex.: CTR) pode atendê-lo');return(j.callsign||'')+L(' is tuned to ',' está sintonizado em ')+j.freq+(talkFreq()?L(' (you are on ',' (você está em ')+talkFreq()+')'+L('. Pick "All frequencies" to reach everyone','.'):'')};
 var TAKEN=function(j){return L('Position '+(j.airport||'')+' '+(j.position||'')+' is already staffed by another controller','Posição '+(j.airport||'')+' '+(j.position||'')+' já está ocupada por outro controlador')};
 var MEMBER_MSG=function(){return L('Member tower: enter the ATC Network code first (ATC Network button)','Torre de membro: digite antes o código da ATC Network (botão ATC Network)')};
 var LOCKED=function(j){return L('You are working at '+(j.airport||'another airport')+' - release your role there first','Você está atuando em '+(j.airport||'outro aeroporto')+' - libere sua função lá primeiro')};
@@ -799,6 +801,7 @@ function claimRole(apt,r){var tw=ac.filter(function(a){return a.virtual_tower&&a
   var inp=document.querySelector('#gate [data-f="'+apt+'_'+r+'"]')||document.querySelector('[data-f="'+apt+'_'+r+'"]'),raw=inp?inp.value.trim():'',fq=raw?nf(raw):'';if(!raw){fq=defFreq(apt,r==='ALL'?'TWR':r);if(fq&&inp)inp.value=fq}
   if(raw&&!fq){free();toast(L('Frequency must be 118.000-136.975','Frequência deve ser 118.000-136.975'));return}
   var name=apt+'_'+r,t={name:name,freq:fq,latitude:tw.latitude,longitude:tw.longitude};
+  if(r==='CTR'){var rs=document.querySelector('[data-r="'+name+'"]');t.radius=Number(rs?rs.value:200)||200}
   putTower(t,false,true).then(function(x){return x.json().then(function(j){free();if(!x.ok){errToast(x,j);return}
     myTowers=myTowers.filter(function(o){return o.name!==name});myTowers.push(t);talkName=name;saveTowers();updateTalk();
     toast(L('Role claimed: ','Função assumida: ')+apt+' '+r+(fq?' '+fq:''));logEv(L('You took ','Você assumiu ')+apt+' '+r+(fq?' '+fq:''),'out');observe=false;setMode('work');poll(true)})}).catch(function(){free();toast(L('No answer from the server in 10 s - try again','Sem resposta do servidor em 10 s - tente de novo'))})}
@@ -825,13 +828,13 @@ function renderGate(){var g=$('gate');
     if(!ap.length)h='<div class="m" style="margin:8px 0">'+L('No active airports. Open one below.','Nenhum aeroporto ativo. Abra um abaixo.')+'</div>';
     ap.forEach(function(x){var pl=x.a.positions||[];
       h+='<div class="strip gcard" data-apt="'+esc(x.n)+'"><div class="row"><b>'+esc(x.n)+'</b><span class="m">'+(x.a.owner_hid===myHid?L('yours','seu'):'')+'</span></div><div class="roles">'+
-        CLAIM_ROLES.map(function(r){var p=pl.filter(function(q){return q.pos===r})[0];return'<span class="tag'+(p&&p.claimed?' t':'')+'">'+r+(p&&p.claimed?' ● '+esc(p.ctl||p.nick||''):' ○')+(p&&p.freq?' '+esc(p.freq):'')+'</span>'}).join('')+'</div></div>'});
+        CLAIM_ROLES.map(function(r){var p=pl.filter(function(q){return q.pos===r})[0];return'<span class="tag'+(p&&p.claimed?' t':'')+'">'+r+(p&&p.claimed?' ● '+esc(p.ctl||p.nick||''):' ○')+(p&&p.freq?' '+esc(p.freq):'')+(p&&p.radius?' '+p.radius+'nm':'')+'</span>'}).join('')+'</div></div>'});
     list.innerHTML=h;return}
   var tw=aptOf(gApt),pl=tw.positions||[],canMod=tw.owner_hid===myHid||isMember;
   $('gHead').innerHTML='<button id="gBack">&larr; '+L('Airports','Aeroportos')+'</button> &nbsp;'+esc(gApt)+' <span class="m">'+L('choose your role','escolha sua função')+'</span>';
   CLAIM_ROLES.forEach(function(r){var nm=gApt+'_'+r,p=pl.filter(function(q){return q.pos===r})[0],taken=p&&p.claimed;
-    h+='<div class="strip gcard nc"><div class="row"><span><b>'+L(ROLE_INFO[r][0],ROLE_INFO[r][1])+'</b> <span class="m">'+r+' &middot; '+(taken?L('taken','ocupada')+(p.ctl||p.nick?' &middot; '+esc(p.ctl||p.nick):'')+(p.freq?' '+esc(p.freq):''):L('free','livre'))+'</span></span><span>'+
-      (taken?(canMod?'<button data-kick="'+esc(gApt)+'|'+r+'">'+L('Kick','Expulsar')+'</button>':''):'<input data-f="'+esc(nm)+'" maxlength="7" placeholder="'+esc(defFreq(gApt,r)||'121.900')+'" inputmode="decimal" style="width:70px"> <button data-take="'+esc(gApt)+'|'+r+'">'+L('Take role','Assumir')+'</button>')+
+    h+='<div class="strip gcard nc"><div class="row"><span><b>'+L(ROLE_INFO[r][0],ROLE_INFO[r][1])+'</b> <span class="m">'+r+' &middot; '+(taken?L('taken','ocupada')+(p.ctl||p.nick?' &middot; '+esc(p.ctl||p.nick):'')+(p.freq?' '+esc(p.freq):'')+(p.radius?' '+p.radius+' nm':''):L('free','livre'))+'</span></span><span>'+
+      (taken?(canMod?'<button data-kick="'+esc(gApt)+'|'+r+'">'+L('Kick','Expulsar')+'</button>':''):(r==='CTR'?'<select data-r="'+esc(nm)+'"><option>100</option><option selected>200</option><option>300</option></select> nm ':'')+'<input data-f="'+esc(nm)+'" maxlength="7" placeholder="'+esc(defFreq(gApt,r)||'121.900')+'" inputmode="decimal" style="width:70px"> <button data-take="'+esc(gApt)+'|'+r+'">'+L('Take role','Assumir')+'</button>')+
       '</span></div><div class="desc">'+L(ROLE_DESC[r][0],ROLE_DESC[r][1])+'</div></div>'});
   if(canMod&&ROLES.ALL.owner){var pa=pl.filter(function(q){return q.pos==='ALL'})[0],ta=pa&&pa.claimed&&!(pa.hid&&pa.hid===myHid);
     h+='<div class="strip gcard nc"><div class="row"><span><b>'+L(ROLES.ALL.en.split(' ')[0].toUpperCase(),'TODAS')+'</b> <span class="m">'+L('all roles at once','todas as funções')+(ta?' &middot; '+L('taken','ocupada'):'')+'</span></span><span>'+(ta?'':'<input data-f="'+esc(gApt)+'_ALL" maxlength="7" placeholder="'+esc(defFreq(gApt,'TWR')||'118.300')+'" inputmode="decimal" style="width:70px"> <button data-take="'+esc(gApt)+'|ALL">'+L('Take ALL','Assumir TODAS')+'</button>')+'</span></div><div class="desc">'+L(ROLE_DESC.ALL[0],ROLE_DESC.ALL[1])+'</div></div>'}

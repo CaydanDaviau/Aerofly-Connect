@@ -376,11 +376,13 @@ export default {
 };
 
 const AIRSPACE_NM = { GND: 5, TWR: 15, APP: 50 };
+const CTR_SIZES = [100, 200, 300];   // Center radius choices (nm), centred on the airport it is claimed at
+const aspNm = r => r.pos === "CTR" ? (CTR_SIZES.includes(Number(r.radius)) ? Number(r.radius) : 200) : (AIRSPACE_NM[r.pos] || 50);
 const TOK_TTL_MS = 90 * 86_400_000;
 export class Hub {
   constructor(ctx) {
     this.towers = new Map(); this.creds = new Map(); this.credOn = false; this.wx = new Map(); this.crashes = new Map(); this.ta = new Map(); this.tinfo = new Map(); this.ra = new Map(); this.sepV = new Map();
-    this.voiceStreams = new Map(); this.LATEST = { android: "1.3.9", pc: "2.3.8" }VoiceByPeer = new Map();
+    this.voiceStreams = new Map(); this.latestVoiceByPeer = new Map();
     this.prof = new Map(); this.accts = new Map(); this.toks = new Map(); this.loginFail = new Map(); this.regLog = new Map(); this.locks = new Map(); this.holderKey = new Map(); this.gwLast = new Map(); this.lastClaim = new Map(); this.clients = new Map(); this.msgs = new Map(); this.rwy = new Map(); this.rwyQ = new Map(); this.gfx = new Map(); this.apts = new Map(); this.bots = new Map(); this.botRwy = new Map(); this.botSeq = 0; this.botT = 0; this.botSaved = 0; this.tres = new Map(); this.stands = new Map(); this.violations = []; this.clips = new Map(); this.listeners = new Map(); this.msgSeq = 0; this.since = Date.now(); this.counts = {};
     ctx.blockConcurrencyWhile(async () => {
       for (const [k, v] of await ctx.storage.list({ prefix: "tower:" })) this.towers.set(k.slice(6), v);
@@ -681,18 +683,18 @@ export class Hub {
     const now = Date.now();
     return [...this.towers.values()].some(t => t.holder === holder && POS_NAMES.includes(t.pos) && now - t.at <= POS_TTL_MS);
   }
-  // Airspace: a non-CTR role only handles aircraft inside its circle around the airport (DEL/GND 5 nm, TWR 15 nm, APP 50 nm). CTR handles anything.
+  // Airspace: a role only handles aircraft inside its circle around the airport (GND 5 nm, TWR 15 nm, APP 50 nm, CTR 100/200/300 nm as chosen when claimed).
   airspaceBlock(holder, target) {
     if (!holder || !target || !target.pos) return null;
     const now = Date.now(), roles = [...this.towers.values()].filter(t => t.holder === holder && POS_NAMES.includes(t.pos) && now - t.at <= POS_TTL_MS);
-    if (!roles.length || roles.some(r => r.pos === "CTR")) return null;
+    if (!roles.length) return null;
     const la = Number(target.pos.latitude), lo = Number(target.pos.longitude);
     if (!isFinite(la) || !isFinite(lo)) return null;
     let best = null;
     for (const r of roles) {
       const a = this.towers.get(r.apt) || r, alat = Number(a.latitude), alon = Number(a.longitude);
       if (!alat && !alon) return null;   // no airport position known: do not block
-      const nm = haversineMi(alat, alon, la, lo) / 1.15078, lim = AIRSPACE_NM[r.pos] || 50;
+      const nm = haversineMi(alat, alon, la, lo) / 1.15078, lim = aspNm(r);
       if (nm <= lim) return null;
       if (!best || nm - lim < best.nm - best.limit) best = { nm: Math.round(nm), limit: lim, role: r.pos, airport: r.apt };
     }
@@ -791,12 +793,12 @@ export class Hub {
   // type given: only a staffed position that can answer it counts (COVER chain); no type: any position of the airport.
   humanCovers(c, apt, type) {
     const ok = t => secOf(t) === secOf(c) && t.pos !== "APT" && (!type || !COVER[type] || COVER[type].includes(t.pos || "TWR"));
-    // In flight (tracking, climb, descent) a role only covers aircraft inside its own airspace (CTR: anywhere); farther out the auto-ATC answers.
+    // In flight (tracking, climb, descent) a role only covers aircraft inside its own airspace (CTR: its radius); farther out the auto-ATC answers.
     const air = c.pos.phase === "air" && (!type || type === "climb" || type === "descent");
     const inAsp = t => {
-      if (!air || t.pos === "CTR") return true;
+      if (!air) return true;
       const a = this.towers.get(t.apt) || t;
-      return haversineMi(Number(a.latitude), Number(a.longitude), c.pos.latitude, c.pos.longitude) / 1.15078 <= (AIRSPACE_NM[t.pos] || 50);
+      return haversineMi(Number(a.latitude), Number(a.longitude), c.pos.latitude, c.pos.longitude) / 1.15078 <= aspNm(t);
     };
     return [...this.towers.values()].some(t => ok(t) && ((apt && (t.apt || t.name) === apt && inAsp(t)) || haversineMi(t.latitude, t.longitude, c.pos.latitude, c.pos.longitude) <= TOWER_COVER_MI));
   }
@@ -1047,7 +1049,7 @@ export class Hub {
       const d = haversineMi(lat, lon, base.latitude, base.longitude);
       if (d > rad) continue;
       const e = towerAircraft({ ...base, name: a, pos: "APT", holder: undefined, freq: "" }, d);
-      e.positions = g.roles.map(r => ({ pos: r.pos || "TWR", freq: r.freq || "", ...(r.freq ? this.freqRoster(r.freq, vm) : {}), claimed: !!r.holder, hid: r.holder ? hid(r.holder) : "", ctl: r.holder ? (r.ctl || "") : "", nick: r.holder ? (r.nick || "") : "" }));
+      e.positions = g.roles.map(r => ({ pos: r.pos || "TWR", freq: r.freq || "", ...(r.pos === "CTR" ? { radius: aspNm(r) } : {}), ...(r.freq ? this.freqRoster(r.freq, vm) : {}), claimed: !!r.holder, hid: r.holder ? hid(r.holder) : "", ctl: r.holder ? (r.ctl || "") : "", nick: r.holder ? (r.nick || "") : "" }));
       e.owner_hid = g.anchor && g.anchor.owner ? hid(g.anchor.owner) : "";
       { const ok = g.anchor && g.anchor.owner ? this.holderKey.get(g.anchor.owner) : null; e.owner_stars = ok ? this.starsFor(ok) : null; e.owner_stripes = ok ? this.stripesFor(ok) : null; }
       e.bans = g.anchor && g.anchor.bans ? Object.values(g.anchor.bans).map(b => ({ hid: b.hid, pos: b.pos })) : [];
@@ -1143,8 +1145,9 @@ export class Hub {
     const air = c.pos.phase !== "ground" && c.pos.phase !== "runway", ok = air ? ["TWR", "APP", "CTR"] : ["GND", "TWR"];
     const roles = [...this.towers.values()].filter(t => t.holder && ok.includes(t.pos) && now - t.at <= POS_TTL_MS && secOf(t) === secOf(c));
     const la = Number(c.pos.latitude), lo = Number(c.pos.longitude);
-    const cover = roles.filter(r => { if (r.pos === "CTR") return false; const a = this.towers.get(r.apt) || r; return haversineMi(Number(a.latitude), Number(a.longitude), la, lo) / 1.15078 <= (AIRSPACE_NM[r.pos] || 50); });
-    return new Set((cover.length ? cover : roles.filter(r => r.pos === "CTR")).map(r => r.holder));
+    const within = r => { const a = this.towers.get(r.apt) || r; return haversineMi(Number(a.latitude), Number(a.longitude), la, lo) / 1.15078 <= aspNm(r); };
+    const cover = roles.filter(r => r.pos !== "CTR" && within(r));
+    return new Set((cover.length ? cover : roles.filter(r => r.pos === "CTR" && within(r))).map(r => r.holder));
   }
   // Loss of separation (the red blinking circle on the radar: < 3 nm and < 1000 ft; < 1 nm / 500 ft near an airport): 1 ATC violation on the account of
   // every controller handling either aircraft (once per controller per pair episode; a new episode after 5 min apart).
@@ -1434,8 +1437,8 @@ export class Hub {
       stream.ended = true; stream.at = Date.now();
       const event = JSON.stringify({ push: "voice_stream", event: "end", id, chunks: stream.chunks.length, at: stream.at });
       { const done = new Set(); for (const peer of this.ctx.getWebSockets().reverse()) { const pa = peer.deserializeAttachment() || {}; if (stream.peers.includes(pa.key) && !done.has(pa.key)) { done.add(pa.key); try { peer.send(event); } catch (e) {} } } }
-      this.LATEST = { android: "1.3.9", pc: "2.3.8" }VoiceByPeer.set(a.key, id);
-      for (const peerKey of stream.peers) this.LATEST = { android: "1.3.9", pc: "2.3.8" }VoiceByPeer.set(peerKey, id);
+      this.latestVoiceByPeer.set(a.key, id);
+      for (const peerKey of stream.peers) this.latestVoiceByPeer.set(peerKey, id);
       return;
     }
     if (action === "replay") {
@@ -1922,6 +1925,8 @@ export class Hub {
       if (pn.pos !== "APT" && holder && aptRec && aptRec.pos === "APT" && aptRec.bans && aptRec.bans[holder]) return json({ error: "banned", airport: pn.apt }, 403);
       const freq = normFreq(d.freq);
       if (String(d.freq ?? "").trim() && !freq) return json({ error: "bad_freq" }, 400);
+      const radius = pn.pos === "CTR" ? (d.radius == null || d.radius === "" ? 200 : Number(d.radius)) : 0;
+      if (pn.pos === "CTR" && !CTR_SIZES.includes(radius)) return json({ error: "bad_radius", sizes: CTR_SIZES }, 400);
       if (!old && this.towers.size >= MAX_TOWERS) return json({ error: "too many towers" }, 409);
       // one airport per person (by browser id or IP); group-code members are unrestricted
       const ipt = request.headers.get("X-IP") || "";
@@ -1959,7 +1964,7 @@ export class Hub {
         }
       }
       const atis = old && old.atis;
-      const t = { name, apt: pn.apt, pos: pn.pos, freq, holder: holder || undefined, ctl: holder ? (this.ctlName(request) || undefined) : undefined, nick: holder ? (this.nickOf(key) || undefined) : undefined, oip: (old && old.oip) || ipt || undefined, latitude: lat, longitude: lon, altitude_ft: Number(d.altitude_ft) || 0, at: now, member: request.headers.get("X-Member") === "1", sec: reqSec(request), atis };
+      const t = { name, apt: pn.apt, pos: pn.pos, freq, ...(pn.pos === "CTR" ? { radius } : {}), holder: holder || undefined, ctl: holder ? (this.ctlName(request) || undefined) : undefined, nick: holder ? (this.nickOf(key) || undefined) : undefined, oip: (old && old.oip) || ipt || undefined, latitude: lat, longitude: lon, altitude_ft: Number(d.altitude_ft) || 0, at: now, member: request.headers.get("X-Member") === "1", sec: reqSec(request), atis };
       if (pn.pos === "APT") {   // the creator owns the airport (kept across re-PUTs); bans live on the airport record
         const ow = (old && old.owner) || String(d.owner || "").slice(0, 40);
         if (ow) { t.owner = ow; this.holderKey.set(ow, key); }
@@ -2152,7 +2157,7 @@ export class Hub {
       }
     }
 
-    if (p === "/api/manager/simbrief") {   // import a SimBrief flight plan (LATEST = { android: "1.3.9", pc: "2.3.8" } OFP of a username / pilot id) as bot form fields
+    if (p === "/api/manager/simbrief") {   // import a SimBrief flight plan (latest OFP of a username / pilot id) as bot form fields
       if (request.headers.get("X-Mgr") !== "1") return json({ error: "not_manager" }, 403);
       const u = (url.searchParams.get("user") || "").trim();
       if (!u) return json({ error: "user_required" }, 400);
@@ -2237,7 +2242,7 @@ export class Hub {
     }
 
     if (m === "GET" && p === "/api/health")
-      return json({ status: "ok", LATEST = { android: "1.3.9", pc: "2.3.8" }_android: LATEST.android, latest_pc: LATEST.pc, active_clients: this.clients.size, pilots: [...this.clients.values()].filter(c => c.pos && !c.bot && secOf(c) === reqSec(request)).length, towers: [...this.towers.values()].filter(t => secOf(t) === reqSec(request)).length, mode: reqSec(request), member: request.headers.get("X-Member") === "1", atc: this.atcState(request) === "1", atc_required: this.atcState(request) !== "n", mgr: request.headers.get("X-Mgr") === "1" });
+      return json({ status: "ok", latest_android: LATEST.android, latest_pc: LATEST.pc, active_clients: this.clients.size, pilots: [...this.clients.values()].filter(c => c.pos && !c.bot && secOf(c) === reqSec(request)).length, towers: [...this.towers.values()].filter(t => secOf(t) === reqSec(request)).length, mode: reqSec(request), member: request.headers.get("X-Member") === "1", atc: this.atcState(request) === "1", atc_required: this.atcState(request) !== "n", mgr: request.headers.get("X-Mgr") === "1" });
 
     if (m === "GET" && p === "/api/traffic") {
       const q = url.searchParams;
