@@ -543,15 +543,28 @@ export class Hub {
 
   // Profile: nickname + flight time (airborne) + ATC time (holding a role), per app key. Saved at most once a minute.
   evView(e, me, now) {
-    const sl = (x, i, k) => ({ slot: k + i, ...(k === "p" ? { callsign: x.callsign, dep: x.dep, arr: x.arr } : { apt: x.apt, pos: x.pos }), taken: !!x.who, name: x.name || "", mine: !!me && x.who === me });
+    const sl = (x, i, k) => ({ slot: k + i, ...(k === "p" ? { callsign: x.callsign, dep: x.dep, arr: x.arr } : { apt: x.apt, pos: x.pos }), taken: !!x.who, name: x.name || "", mine: !!me && x.who === me, ...(x.who && e.rec && e.rec[x.who] ? { rec: { flight_s: Math.round(e.rec[x.who].flight_s), atc_s: Math.round(e.rec[x.who].atc_s), flights: e.rec[x.who].flights, landings: e.rec[x.who].landings } } : {}) });
     return { id: e.id, title: e.title, desc: e.desc, start: e.start, end: e.end, apt: e.apt, route: e.route, state: now < e.start ? "upcoming" : now <= e.end ? "live" : "ended", pilots: e.pilots.map((x, i) => sl(x, i, "p")), ctl: e.ctl.map((x, i) => sl(x, i, "c")) };
   }
   pkey(key) { const t = this.toks.get(key); return t ? "a:" + t.acct : key; }
   profPeek(key) { return this.prof.get(this.pkey(key)); }
   profGet(key) { key = this.pkey(key); let p = this.prof.get(key); if (!p) { p = { nick: "", flight_s: 0, atc_s: 0, flights: 0, saved: 0 }; this.prof.set(key, p); } if (!p.flights) p.flights = 0; for (const f of ["landings", "violations", "vpts", "timeouts", "gw", "ops", "app_s", "cviol", "pen", "vio", "dem", "lv_twr", "lv_app"]) if (!p[f]) p[f] = 0; if (!p.lvmig) { p.lvmig = 1; let og = 0; while (og < 2 && Object.keys(OLD_GRADE_REQ[og + 1]).every(k => (p[k] || 0) >= OLD_GRADE_REQ[og + 1][k])) og++; if (og >= 1) p.lv_twr = Math.max(p.lv_twr, TRAIN_LV); if (og >= 2) p.lv_app = Math.max(p.lv_app, TRAIN_LV); } const day = new Date().toISOString().slice(0, 10); if (p.pday !== day) { p.pday = day; p.pen = 0; p.vio = 0; p.warn = 0; } return p; }
+  /** Event recap: while an event runs (plus 15 min), flight time / flights / landings / ATC time of the signed-up account are added to the event. */
+  evCredit(key, field, amt, now) {
+    const pk = this.pkey(key); if (!pk.startsWith("a:") || !(amt > 0)) return;
+    const who = pk.slice(2);
+    for (const e of this.events.values()) {
+      if (now < e.start || now > e.end + 900000) continue;
+      if (!e.pilots.some(x => x.who === who) && !e.ctl.some(x => x.who === who)) continue;
+      const r = (e.rec = e.rec || {})[who] = (e.rec || {})[who] || { flight_s: 0, atc_s: 0, flights: 0, landings: 0 };
+      r[field] = (r[field] || 0) + amt;
+      if (now - (e.recSaved || 0) > 60000) { e.recSaved = now; this.ctx.storage.put("ev:" + e.id, e); }
+    }
+  }
   profAdd(key, field, secs, now) {
     if (!key || !(secs > 0)) return;
     const p = this.profGet(key); p[field] += secs;
+    if (field === "flight_s" || field === "atc_s") this.evCredit(key, field, secs, now);
     if (now - p.saved > 60_000) { p.saved = now; this.ctx.storage.put("prof:" + this.pkey(key), p); }
   }
   // ---- Accounts: name + password (PBKDF2), no email. Token "afa_..." replaces the app key; profile/hours live on the account.
@@ -2376,8 +2389,8 @@ export class Hub {
       }
       if (pos.phase === "air" && c.seen) { const gap = Math.min(Date.now() - c.seen, 10_000) / 1000; this.profAdd(key, "flight_s", gap, Date.now()); c.airS = (c.airS || 0) + gap; }
       else if (c.pos && c.pos.phase === "air" && pos.phase && pos.phase !== "air" && !(Number.isFinite(Number(pos.landing_fpm)) && Number(pos.landing_fpm) <= HARD_LANDING_FPM)) {   // touchdown (not a crash)
-        const pf = this.profGet(key); pf.landings += 1;
-        if ((c.airS || 0) >= FLIGHT_MIN_AIR_S) { pf.flights += 1; this.repAdd(key, REP.flight, Date.now()); }
+        const pf = this.profGet(key); pf.landings += 1; this.evCredit(key, "landings", 1, Date.now());
+        if ((c.airS || 0) >= FLIGHT_MIN_AIR_S) { pf.flights += 1; this.evCredit(key, "flights", 1, Date.now()); this.repAdd(key, REP.flight, Date.now()); }
         c.airS = 0; pf.saved = Date.now(); this.ctx.storage.put("prof:" + this.pkey(key), pf);
       }
       c.pos = pos; c.seen = Date.now(); c.member = request.headers.get("X-Member") === "1"; c.sec = reqSec(request);

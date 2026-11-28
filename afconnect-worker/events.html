@@ -53,12 +53,16 @@ function loc(t){return new Date(t).toLocaleString([],{weekday:'short',day:'2-dig
 function cd(e){var n=Date.now()+nowOff,d=e.start-n;if(d>0){var s=Math.floor(d/1000),dd=Math.floor(s/86400),hh=Math.floor(s%86400/3600),mm=Math.floor(s%3600/60),ss=s%60;return L('Starts in ','Começa em ')+(dd?dd+'d ':'')+(dd||hh?hh+'h ':'')+mm+'m '+(dd?'':ss+'s')}
   if(n<=e.end)return L('Live now','Ao vivo agora');return L('Ended','Encerrado')}
 function stateOf(e){var n=Date.now()+nowOff;return n<e.start?'upcoming':n<=e.end?'live':'ended'}
+function fmtT(sec){sec=Math.round(sec||0);var h=Math.floor(sec/3600),m=Math.floor(sec%3600/60);return h?h+'h '+m+'m':m+' min'}
+function recLine(s,kind){var r=s.rec;if(!r)return'';return'<br><small class="rec">'+(kind==='p'?fmtT(r.flight_s)+' '+L('flown','voados')+' &middot; '+r.flights+' '+L('flights','voos')+' &middot; '+r.landings+' '+L('landings','pousos'):fmtT(r.atc_s)+' '+L('on position','na posição'))+'</small>'}
+function recap(e){var t={f:0,fl:0,ld:0,a:0,np:0,nc:0};e.pilots.forEach(function(s){if(s.rec){t.f+=s.rec.flight_s;t.fl+=s.rec.flights;t.ld+=s.rec.landings;t.np++}});e.ctl.forEach(function(s){if(s.rec){t.a+=s.rec.atc_s;t.nc++}});
+  if(!t.np&&!t.nc)return'';return'<div class="h">'+L('RECAP','RESUMO')+'</div><div class="m" style="color:var(--txt)">'+t.np+' '+L('pilots','pilotos')+' &middot; '+fmtT(t.f)+' &middot; '+t.fl+' '+L('flights','voos')+' &middot; '+t.ld+' '+L('landings','pousos')+'<br>'+t.nc+' '+L('controllers','controladores')+' &middot; '+fmtT(t.a)+' ATC</div>'}
 function slotRow(ev,s,kind){var lbl=kind==='p'?'<b>'+esc(s.callsign)+'</b> <small>'+esc(s.dep||'----')+' &rarr; '+esc(s.arr||'----')+'</small>':'<b>'+esc(s.apt)+' '+esc(s.pos)+'</b>';
   var who=s.taken?'<span class="'+(s.mine?'me':'')+'">'+esc(s.name)+(s.mine?' ('+L('you','você')+')':'')+'</span>':'<small>'+L('free','livre')+'</small>';
   var b='';if(s.mine)b='<button class="s sm" data-act="leave" data-id="'+ev.id+'" data-slot="'+s.slot+'">'+L('Leave','Sair')+'</button>';
   else if(!s.taken&&stateOf(ev)!=='ended')b='<button class="sm" data-act="join" data-id="'+ev.id+'" data-slot="'+s.slot+'">'+L('Sign up','Inscrever')+'</button>';
   if(mc&&showMgr)b+=(s.taken&&!s.mine?' <button class="d sm" data-act="free" data-id="'+ev.id+'" data-slot="'+s.slot+'">'+L('Free','Liberar')+'</button>':'')+' <button class="d sm" data-act="rm" data-id="'+ev.id+'" data-slot="'+s.slot+'">&times;</button>';
-  return'<div class="r"><div class="n">'+lbl+'<br>'+who+'</div><div>'+b+'</div></div>'}
+  return'<div class="r"><div class="n">'+lbl+'<br>'+who+recLine(s,kind)+'</div><div>'+b+'</div></div>'}
 function render(){
   var h='';if(!data.length)h='<div class="c m">'+L('No events yet.','Nenhum evento ainda.')+'</div>';
   data.forEach(function(e){var st=stateOf(e),np=e.pilots.filter(function(x){return x.taken}).length,nc=e.ctl.filter(function(x){return x.taken}).length;
@@ -67,6 +71,7 @@ function render(){
       '<div class="cd" id="cd'+e.id+'">'+cd(e)+'</div>'+
       (e.apt||e.route?'<div class="m">'+(e.apt?esc(e.apt):'')+(e.apt&&e.route?' &middot; ':'')+esc(e.route)+'</div>':'')+
       (e.desc?'<div class="m" style="color:var(--txt)">'+esc(e.desc)+'</div>':'')+
+      (st!=='upcoming'?recap(e):'')+
       (e.pilots.length?'<div class="h">'+L('PILOTS','PILOTOS')+' '+np+'/'+e.pilots.length+'</div>'+e.pilots.map(function(s){return slotRow(e,s,'p')}).join(''):'')+
       (e.ctl.length?'<div class="h">'+L('CONTROLLERS','CONTROLADORES')+' '+nc+'/'+e.ctl.length+'</div>'+e.ctl.map(function(s){return slotRow(e,s,'c')}).join(''):'')+
       (mc&&showMgr?'<div style="margin-top:8px"><button class="d sm" data-act="del" data-id="'+e.id+'">'+L('Delete event','Excluir evento')+'</button></div>':'')+'</div>'});

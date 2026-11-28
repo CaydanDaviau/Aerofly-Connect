@@ -43,4 +43,15 @@ r = await call("POST", "/api/events/signup", { id: rid, slot: "p0" }, ta); t("en
 r = await call("GET", "/api/events", null, "k1"); t("recently ended shown as ended", r.j.events.find(e => e.id === rid).state === "ended");
 r = await call("DELETE", "/api/manager/events?id=" + oid, null, "k1", M); t("delete", r.s === 200);
 r = await call("DELETE", "/api/manager/events?id=" + oid, null, "k1"); t("delete needs manager", r.s === 403);
+// recap: credited only to signed-up accounts while the event runs
+const live = new Date(Date.now() - 600000).toISOString();
+r = await call("PUT", "/api/manager/events", { title: "Live", start: live, duration_h: 2, pilots: [{ callsign: "LIV1" }], ctl: [{ apt: "SBBR", pos: "TWR" }] }, "k1", M); const lid = r.j.id;
+await call("POST", "/api/events/signup", { id: lid, slot: "p0" }, tb); await call("POST", "/api/events/signup", { id: lid, slot: "c0" }, tb);
+const nw = Date.now();
+hub.evCredit(tb, "flight_s", 600, nw); hub.evCredit(tb, "flights", 1, nw); hub.evCredit(tb, "landings", 2, nw); hub.evCredit(tb, "atc_s", 300, nw);
+hub.evCredit(ta, "flight_s", 999, nw);
+hub.evCredit(tb, "flight_s", 999, nw + 5 * 3600000);
+r = await call("GET", "/api/events", null, ta); const lv = r.j.events.find(e => e.id === lid);
+t("recap credited to the signed-up account", lv.pilots[0].rec && lv.pilots[0].rec.flight_s === 600 && lv.pilots[0].rec.flights === 1 && lv.pilots[0].rec.landings === 2 && lv.ctl[0].rec.atc_s === 300);
+t("not credited to others or after the event", !r.j.events.some(e => e.pilots.some(x => x.name === "Ana" && x.rec)) && lv.pilots[0].rec.flight_s === 600);
 console.log(fails ? "FAILS: " + fails : "all pass"); process.exit(fails ? 1 : 0);
