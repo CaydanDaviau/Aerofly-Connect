@@ -1,0 +1,77 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Event replay</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<style>
+html,body{margin:0;height:100%;background:#00414B;color:#E8F6F5;font:13px system-ui,sans-serif}
+#map{position:absolute;inset:0}
+#top{position:absolute;top:8px;left:8px;right:8px;display:flex;gap:8px;align-items:center;pointer-events:none}
+#top .pill{pointer-events:auto;background:rgba(1,44,51,.88);border:1px solid #1E7480;border-radius:16px;padding:6px 12px;font-weight:600}
+#bar{position:absolute;left:8px;right:8px;bottom:22px;background:rgba(1,44,51,.92);border:1px solid #1E7480;border-radius:14px;padding:8px 10px;display:flex;gap:8px;align-items:center}
+#bar button,#bar select{background:#1E7480;color:#E8F6F5;border:0;border-radius:10px;padding:8px 12px;font:600 13px system-ui}
+#sl{flex:1;min-width:60px}
+#clk{min-width:74px;text-align:right;font-variant-numeric:tabular-nums}
+#msg{position:absolute;top:50%;left:0;right:0;text-align:center;color:#8FBCC0}
+</style></head><body>
+<div id="map"></div>
+<div id="top"><div class="pill" id="ttl">Event replay</div></div>
+<div id="msg">Loading...</div>
+<div id="bar"><button id="pp">&#9654;</button><select id="sp"><option value="1">1x</option><option value="5">5x</option><option value="20" selected>20x</option><option value="60">60x</option><option value="180">180x</option></select><input id="sl" type="range" min="0" max="1" step="1" value="0"><span id="clk">--:--:--Z</span></div>
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script>
+var $=function(i){return document.getElementById(i)},qs=new URLSearchParams(location.search),BASE=location.origin;
+var pt=(qs.get('lang')||'en').slice(0,2)==='pt';
+var COL=['#ff9f1c','#2ec4b6','#e71d36','#9b5de5','#00bbf9','#f15bb5','#80ed99','#fee440'];
+var data=null,tr=[],t0=0,t1=0,cur=0,playing=false,last=0,mapReady=false,map;
+function ZT(sec){var d=new Date((data.start/1000+sec)*1000);return d.toISOString().slice(11,19)+'Z'}
+function ang(a,b,f){var d=((b-a+540)%360)-180;return (a+d*f+360)%360}
+function at(p,t){ // p.pts rows [t,lat,lon,alt,hdg,gs]; null when outside the recorded span
+  var a=p.pts;if(!a.length||t<a[0][0]-30||t>a[a.length-1][0]+60)return null;
+  if(t<=a[0][0])return{lat:a[0][1],lon:a[0][2],alt:a[0][3],hdg:a[0][4],gs:a[0][5]};
+  var lo=0,hi=a.length-1;while(hi-lo>1){var m=(lo+hi)>>1;if(a[m][0]<=t)lo=m;else hi=m}
+  var A=a[lo],B=a[hi];if(t>=B[0])return{lat:B[1],lon:B[2],alt:B[3],hdg:B[4],gs:B[5]};
+  if(B[0]-A[0]>120)return{lat:A[1],lon:A[2],alt:A[3],hdg:A[4],gs:A[5]}; // gap: hold position
+  var f=(t-A[0])/(B[0]-A[0]);return{lat:A[1]+(B[1]-A[1])*f,lon:A[2]+(B[2]-A[2])*f,alt:A[3]+(B[3]-A[3])*f,hdg:ang(A[4],B[4],f),gs:A[5]+(B[5]-A[5])*f};
+}
+function frame(){
+  if(!mapReady)return;
+  var pf=[],lf=[];
+  tr.forEach(function(p,i){
+    var s=at(p,cur);if(!s)return;
+    pf.push({type:'Feature',geometry:{type:'Point',coordinates:[s.lon,s.lat]},properties:{c:p.col,l:p.callsign+(p.name?' ('+p.name+')':''),a:s.alt>=5000?'FL'+String(Math.round(s.alt/100)).padStart(3,'0'):Math.round(s.alt)+' ft',h:s.hdg}});
+    var c=[];for(var k=0;k<p.pts.length;k++){var q=p.pts[k];if(q[0]>cur)break;if(q[0]>=cur-900)c.push([q[2],q[1]])}
+    c.push([s.lon,s.lat]);if(c.length>1)lf.push({type:'Feature',geometry:{type:'LineString',coordinates:c},properties:{c:p.col}});
+  });
+  map.getSource('pl').setData({type:'FeatureCollection',features:pf});
+  map.getSource('tl').setData({type:'FeatureCollection',features:lf});
+  $('clk').textContent=ZT(cur);$('sl').value=cur;
+}
+function loop(ts){
+  if(playing){var dt=last?(ts-last)/1000:0;cur+=dt*Number($('sp').value);if(cur>=t1){cur=t1;play(false)}frame()}
+  last=ts;requestAnimationFrame(loop)
+}
+function play(on){playing=on;$('pp').innerHTML=on?'&#10074;&#10074;':'&#9654;';if(on&&cur>=t1)cur=t0}
+$('pp').onclick=function(){play(!playing)};
+$('sl').oninput=function(){cur=Number(this.value);frame()};
+function start(){
+  map=new maplibregl.Map({container:'map',style:'https://tiles.openfreemap.org/styles/liberty',center:[0,20],zoom:2,attributionControl:{compact:true}});
+  map.on('load',function(){
+    map.addSource('tl',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+    map.addSource('pl',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+    map.addLayer({id:'tl',type:'line',source:'tl',paint:{'line-color':['get','c'],'line-width':2.5,'line-opacity':.8}});
+    map.addLayer({id:'pl',type:'circle',source:'pl',paint:{'circle-radius':6,'circle-color':['get','c'],'circle-stroke-width':2,'circle-stroke-color':'#fff'}});
+    map.addLayer({id:'pll',type:'symbol',source:'pl',layout:{'text-field':['concat',['get','l'],'\n',['get','a']],'text-font':['Noto Sans Bold'],'text-size':12,'text-offset':[0,1.3],'text-anchor':'top','text-allow-overlap':true},paint:{'text-color':'#111','text-halo-color':'#fff','text-halo-width':1.6}});
+    mapReady=true;
+    var b=new maplibregl.LngLatBounds(),n=0;tr.forEach(function(p){p.pts.forEach(function(q,i){if(i%6===0){b.extend([q[2],q[1]]);n++}})});
+    if(n)map.fitBounds(b,{padding:60,duration:0,maxZoom:11});
+    frame();
+  });
+}
+fetch(BASE+'/api/events/replay?id='+encodeURIComponent(qs.get('id')||''),{headers:{'X-API-Key':qs.get('key')||'web'}}).then(function(r){return r.json().then(function(j){return{s:r.status,j:j}})}).then(function(r){
+  if(r.s!==200){$('msg').textContent=r.j.error==='no_replay'?(pt?'Sem dados de replay para este evento.':'No replay data for this event.'):'HTTP '+r.s;return}
+  data=r.j;$('msg').style.display='none';$('ttl').textContent=data.title;
+  tr=data.tracks.map(function(p,i){p.col=COL[i%COL.length];return p}).filter(function(p){return p.pts.length>1});
+  if(!tr.length){$('msg').style.display='';$('msg').textContent=pt?'Sem dados de replay para este evento.':'No replay data for this event.';return}
+  tr.forEach(function(p){var a=p.pts[0][0],b=p.pts[p.pts.length-1][0];if(!t0||a<t0)t0=a;if(b>t1)t1=b});
+  cur=t0;$('sl').min=t0;$('sl').max=t1;$('sl').value=t0;start();requestAnimationFrame(loop);
+}).catch(function(e){$('msg').textContent='Error: '+e});
+</script></body></html>

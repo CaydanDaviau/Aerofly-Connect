@@ -54,4 +54,14 @@ hub.evCredit(tb, "flight_s", 999, nw + 5 * 3600000);
 r = await call("GET", "/api/events", null, ta); const lv = r.j.events.find(e => e.id === lid);
 t("recap credited to the signed-up account", lv.pilots[0].rec && lv.pilots[0].rec.flight_s === 600 && lv.pilots[0].rec.flights === 1 && lv.pilots[0].rec.landings === 2 && lv.ctl[0].rec.atc_s === 300);
 t("not credited to others or after the event", !r.j.events.some(e => e.pilots.some(x => x.name === "Ana" && x.rec)) && lv.pilots[0].rec.flight_s === 600);
+// replay: track points recorded every 10 s for signed-up pilots while the event runs
+{ const kk = tb; hub.etrk.clear();
+  for (let i = 0; i < 4; i++) await hub.evTrack(kk, { latitude: -15.8 + i * 0.01, longitude: -47.9, altitude_ft: 3000, heading_true: 90, ground_speed: 200 }, "LIV1", Date.now() + i * 11000);
+  await hub.evTrack(ta, { latitude: 1, longitude: 1 }, "ANA1", Date.now());
+  r = await call("GET", "/api/events/replay?id=" + lid, null, "k1");
+  t("replay has the pilot's track", r.s === 200 && r.j.tracks.length === 1 && r.j.tracks[0].pts.length === 4 && r.j.tracks[0].callsign === "LIV1");
+  t("replay not for unsigned accounts", !r.j.tracks.some(x => x.callsign === "ANA1"));
+  r = await call("GET", "/api/events", null, "k1"); t("event lists replay flag", r.j.events.find(e => e.id === lid).replay === true);
+  r = await call("GET", "/api/events/replay?id=" + id, null, "k1"); t("no replay when nothing recorded", r.s === 404);
+}
 console.log(fails ? "FAILS: " + fails : "all pass"); process.exit(fails ? 1 : 0);

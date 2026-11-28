@@ -71,7 +71,7 @@ function render(){
       '<div class="cd" id="cd'+e.id+'">'+cd(e)+'</div>'+
       (e.apt||e.route?'<div class="m">'+(e.apt?esc(e.apt):'')+(e.apt&&e.route?' &middot; ':'')+esc(e.route)+'</div>':'')+
       (e.desc?'<div class="m" style="color:var(--txt)">'+esc(e.desc)+'</div>':'')+
-      (st!=='upcoming'?recap(e):'')+
+      (st!=='upcoming'?recap(e):'')+(e.replay?'<div class="m"><a style="color:#4FE3D0;font-weight:700" href="/replay?id='+e.id+'&lang='+lang+(tok?'&key='+encodeURIComponent(tok):'')+'">&#9654; '+L('Replay','Replay')+'</a></div>':'')+
       (e.pilots.length?'<div class="h">'+L('PILOTS','PILOTOS')+' '+np+'/'+e.pilots.length+'</div>'+e.pilots.map(function(s){return slotRow(e,s,'p')}).join(''):'')+
       (e.ctl.length?'<div class="h">'+L('CONTROLLERS','CONTROLADORES')+' '+nc+'/'+e.ctl.length+'</div>'+e.ctl.map(function(s){return slotRow(e,s,'c')}).join(''):'')+
       (mc&&showMgr?'<div style="margin-top:8px"><button class="d sm" data-act="del" data-id="'+e.id+'">'+L('Delete event','Excluir evento')+'</button></div>':'')+'</div>'});

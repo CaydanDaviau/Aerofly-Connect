@@ -12,6 +12,7 @@ import MANAGER_HTML from "./manager.js";
 import PLAYERS_HTML from "./players.js";
 import TRAIN_HTML from "./train.js";
 import EVENTS_HTML from "./events.js";
+import REPLAY_HTML from "./replay.js";
 const ROUTE_MAX = 200;   // SimBrief route points kept per flight
 const TTL_MS = 60_000;
 const ASSIGN_TTL_MS = 12 * 3600_000;
@@ -351,6 +352,8 @@ export default {
       return new Response(TRAIN_HTML, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
     if (url.pathname === "/events" || url.pathname === "/events/")
       return new Response(EVENTS_HTML, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+    if (url.pathname === "/replay" || url.pathname === "/replay/")
+      return new Response(REPLAY_HTML, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
     if (url.pathname === "/players" || url.pathname === "/players/")
       return new Response(PLAYERS_HTML, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
     if (url.pathname === "/aipilots" || url.pathname === "/aipilots/")
@@ -390,7 +393,7 @@ const aspNm = r => r.pos === "CTR" ? (CTR_SIZES.includes(Number(r.radius)) ? Num
 const TOK_TTL_MS = 90 * 86_400_000;
 export class Hub {
   constructor(ctx) {
-    this.towers = new Map(); this.creds = new Map(); this.events = new Map(); this.credOn = false; this.wx = new Map(); this.crashes = new Map(); this.ta = new Map(); this.tinfo = new Map(); this.ra = new Map(); this.sepV = new Map();
+    this.towers = new Map(); this.creds = new Map(); this.events = new Map(); this.etrk = new Map(); this.credOn = false; this.wx = new Map(); this.crashes = new Map(); this.ta = new Map(); this.tinfo = new Map(); this.ra = new Map(); this.sepV = new Map();
     this.voiceStreams = new Map(); this.latestVoiceByPeer = new Map();
     this.prof = new Map(); this.accts = new Map(); this.toks = new Map(); this.loginFail = new Map(); this.regLog = new Map(); this.locks = new Map(); this.holderKey = new Map(); this.gwLast = new Map(); this.lastClaim = new Map(); this.clients = new Map(); this.msgs = new Map(); this.rwy = new Map(); this.rwyQ = new Map(); this.gfx = new Map(); this.apts = new Map(); this.bots = new Map(); this.botRwy = new Map(); this.botSeq = 0; this.botT = 0; this.botSaved = 0; this.tres = new Map(); this.stands = new Map(); this.violations = []; this.clips = new Map(); this.listeners = new Map(); this.msgSeq = 0; this.since = Date.now(); this.counts = {};
     ctx.blockConcurrencyWhile(async () => {
@@ -544,11 +547,29 @@ export class Hub {
   // Profile: nickname + flight time (airborne) + ATC time (holding a role), per app key. Saved at most once a minute.
   evView(e, me, now) {
     const sl = (x, i, k) => ({ slot: k + i, ...(k === "p" ? { callsign: x.callsign, dep: x.dep, arr: x.arr } : { apt: x.apt, pos: x.pos }), taken: !!x.who, name: x.name || "", mine: !!me && x.who === me, ...(x.who && e.rec && e.rec[x.who] ? { rec: { flight_s: Math.round(e.rec[x.who].flight_s), atc_s: Math.round(e.rec[x.who].atc_s), flights: e.rec[x.who].flights, landings: e.rec[x.who].landings } } : {}) });
-    return { id: e.id, title: e.title, desc: e.desc, start: e.start, end: e.end, apt: e.apt, route: e.route, state: now < e.start ? "upcoming" : now <= e.end ? "live" : "ended", pilots: e.pilots.map((x, i) => sl(x, i, "p")), ctl: e.ctl.map((x, i) => sl(x, i, "c")) };
+    return { id: e.id, title: e.title, desc: e.desc, start: e.start, end: e.end, apt: e.apt, route: e.route, replay: !!(e.tw && e.tw.length), state: now < e.start ? "upcoming" : now <= e.end ? "live" : "ended", pilots: e.pilots.map((x, i) => sl(x, i, "p")), ctl: e.ctl.map((x, i) => sl(x, i, "c")) };
   }
   pkey(key) { const t = this.toks.get(key); return t ? "a:" + t.acct : key; }
   profPeek(key) { return this.prof.get(this.pkey(key)); }
   profGet(key) { key = this.pkey(key); let p = this.prof.get(key); if (!p) { p = { nick: "", flight_s: 0, atc_s: 0, flights: 0, saved: 0 }; this.prof.set(key, p); } if (!p.flights) p.flights = 0; for (const f of ["landings", "violations", "vpts", "timeouts", "gw", "ops", "app_s", "cviol", "pen", "vio", "dem", "lv_twr", "lv_app"]) if (!p[f]) p[f] = 0; if (!p.lvmig) { p.lvmig = 1; let og = 0; while (og < 2 && Object.keys(OLD_GRADE_REQ[og + 1]).every(k => (p[k] || 0) >= OLD_GRADE_REQ[og + 1][k])) og++; if (og >= 1) p.lv_twr = Math.max(p.lv_twr, TRAIN_LV); if (og >= 2) p.lv_app = Math.max(p.lv_app, TRAIN_LV); } const day = new Date().toISOString().slice(0, 10); if (p.pday !== day) { p.pday = day; p.pen = 0; p.vio = 0; p.warn = 0; } return p; }
+  /** Event replay: a point every 10 s for signed-up pilots while their event runs; one storage key per pilot (evt:<event>:<account>). */
+  async evTrack(key, pos, callsign, now) {
+    const pk = this.pkey(key); if (!pk.startsWith("a:")) return;
+    const who = pk.slice(2), la = Number(pos.latitude), lo = Number(pos.longitude);
+    if (!Number.isFinite(la) || !Number.isFinite(lo)) return;
+    for (const e of this.events.values()) {
+      if (now < e.start || now > e.end + 900000 || !e.pilots.some(x => x.who === who)) continue;
+      const k = e.id + ":" + who;
+      let t = this.etrk.get(k);
+      if (!t) { t = (await this.ctx.storage.get("evt:" + k)) || { pts: [], cs: "" }; t.saved = 0; t.last = 0; this.etrk.set(k, t); }
+      if (now - t.last < 10000) continue;
+      t.last = now; if (callsign) t.cs = callsign;
+      t.pts.push([Math.round((now - e.start) / 1000), +la.toFixed(4), +lo.toFixed(4), Math.round(Number(pos.altitude_ft) || 0), Math.round(Number(pos.heading_true) || 0), Math.round(Number(pos.ground_speed) || 0)]);
+      if (t.pts.length > 2200) t.pts.shift();
+      if (!(e.tw || []).includes(who)) { (e.tw = e.tw || []).push(who); this.ctx.storage.put("ev:" + e.id, e); }
+      if (now - t.saved > 60000) { t.saved = now; this.ctx.storage.put("evt:" + k, { pts: t.pts, cs: t.cs }); }
+    }
+  }
   /** Event recap: while an event runs (plus 15 min), flight time / flights / landings / ATC time of the signed-up account are added to the event. */
   evCredit(key, field, amt, now) {
     const pk = this.pkey(key); if (!pk.startsWith("a:") || !(amt > 0)) return;
@@ -2253,6 +2274,18 @@ export class Hub {
       const list = [...this.events.values()].filter(e => e.end > now - 12 * 3600000).sort((a, b) => a.start - b.start).map(e => this.evView(e, me, now));
       return json({ events: list, now, account: me ? (this.accts.get(me) || {}).display || me : "" });
     }
+    if (p === "/api/events/replay" && m === "GET") {
+      const e = this.events.get(String(new URL(request.url).searchParams.get("id") || ""));
+      if (!e || !(e.tw || []).length || Date.now() < e.start) return json({ error: "no_replay" }, 404);
+      const tracks = [];
+      for (const who of e.tw) {
+        const k = e.id + ":" + who; let t = this.etrk.get(k) || await this.ctx.storage.get("evt:" + k);
+        if (!t || !t.pts.length) continue;
+        const sl = e.pilots.find(x => x.who === who) || {};
+        tracks.push({ callsign: t.cs || sl.callsign || "", name: sl.name || "", pts: t.pts });
+      }
+      return json({ id: e.id, title: e.title, start: e.start, end: e.end, apt: e.apt, tracks });
+    }
     if ((p === "/api/events/signup" || p === "/api/events/leave") && (m === "POST" || m === "PUT")) {
       const d = await request.json().catch(() => ({})), pk = this.pkey(key);
       if (!pk.startsWith("a:")) return json({ error: "account_required" }, 401);
@@ -2279,6 +2312,7 @@ export class Hub {
       const q = new URL(request.url).searchParams;
       if (m === "DELETE") {
         const id = String(q.get("id") || ""); if (!this.events.has(id)) return json({ error: "not_found" }, 404);
+        for (const w of (this.events.get(id).tw || [])) { this.etrk.delete(id + ":" + w); await this.ctx.storage.delete("evt:" + id + ":" + w); }
         this.events.delete(id); await this.ctx.storage.delete("ev:" + id); return json({ success: true });
       }
       if (m === "PUT" || m === "POST") {
@@ -2393,6 +2427,7 @@ export class Hub {
         if ((c.airS || 0) >= FLIGHT_MIN_AIR_S) { pf.flights += 1; this.evCredit(key, "flights", 1, Date.now()); this.repAdd(key, REP.flight, Date.now()); }
         c.airS = 0; pf.saved = Date.now(); this.ctx.storage.put("prof:" + this.pkey(key), pf);
       }
+      await this.evTrack(key, pos, normCallsign(c.plan.callsign), Date.now());
       c.pos = pos; c.seen = Date.now(); c.member = request.headers.get("X-Member") === "1"; c.sec = reqSec(request);
       if (pos.phase === "air" && c.taxi) c.taxi = null;
       const lg = pick(d, "lang"); if (lg === "pt" || lg === "en") c.lang = lg;
