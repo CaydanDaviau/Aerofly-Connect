@@ -1,0 +1,1 @@
+{ "name": "cordova-plugin-afsim", "version": "1.0.0", "description": "Aerofly Connect native bridge", "cordova": { "id": "cordova-plugin-afsim", "platforms": ["ios"] }, "keywords": ["ecosystem:cordova", "cordova-ios"], "license": "MIT" }
