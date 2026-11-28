@@ -44,8 +44,8 @@
       h("div", { class: "card click", onclick: () => window.afc.open("atc") }, h("h2", {}, t("Controller", "Controlador")), h("p", {}, t("See the radar and message pilots (opens in your browser)", "Veja o radar e envie mensagens aos pilotos (abre no navegador)"))),
       h("div", { class: "card click", onclick: () => window.afc.open("train") }, h("h2", {}, t("Training", "Treino")), h("p", {}, t("Practice Tower and Approach with AI traffic (opens in your browser)", "Pratique Torre e Aproximação com tráfego de IA (abre no navegador)"))),
       h("div", { class: "card click", onclick: () => window.afc.open("events") }, h("h2", {}, t("Events", "Eventos")), h("p", {}, t("Scheduled flights and ATC slots: sign up (opens in your browser)", "Voos e posições ATC agendados: inscreva-se (abre no navegador)"))),
-      h("button", { class: "wide", onclick: () => go("profile") }, t("Profile", "Perfil")),
-      h("button", { class: "wide", onclick: () => go("settings") }, t("Settings", "Configurações")),
+      h("button", { class: "corner left", title: t("Settings", "Configurações"), onclick: () => go("settings") }, "\u2699"),
+      h("button", { class: "corner right", title: t("Profile", "Perfil"), onclick: () => go("profile") }, "\uD83D\uDC64"),
     );
   }
 

@@ -131,6 +131,22 @@ public class MainActivity extends Activity {
         return c;
     }
 
+    /** Small round icon button in a top corner of the start screen. */
+    private View cornerIcon(String glyph, String desc, int gravity, View.OnClickListener click) {
+        TextView t = new TextView(this);
+        t.setText(glyph);
+        t.setTextSize(20);
+        t.setTextColor(Ui.TXT);
+        t.setGravity(Gravity.CENTER);
+        t.setContentDescription(desc);
+        t.setBackground(Ui.ripple(this, 0xCC012C33, Ui.STROKE, 20));
+        t.setOnClickListener(click);
+        android.widget.FrameLayout.LayoutParams lp = new android.widget.FrameLayout.LayoutParams(Ui.dp(this, 40), Ui.dp(this, 40), gravity);
+        lp.setMargins(Ui.dp(this, 12), Ui.dp(this, 36), Ui.dp(this, 12), 0);
+        t.setLayoutParams(lp);
+        return t;
+    }
+
     // ---------- Start screen ----------
     private void showStart() {
         stopTicker();
@@ -193,22 +209,16 @@ public class MainActivity extends Activity {
                     @Override public void onClick(View v) { startActivity(new Intent(MainActivity.this, ControllerActivity.class).putExtra("page", "events")); }
                 }), Ui.lp(this, 12));
 
-        Button prof = Ui.button(this, Api.t(this, "Profile", "Perfil"), Ui.SECONDARY);
-        prof.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) { showProfile(); }
-        });
-        root.addView(prof, Ui.lp(this, 12));
-
-        Button set = Ui.button(this, Api.t(this, "Settings", "Configurações"), Ui.SECONDARY);
-        set.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) { showSettings(); }
-        });
-        root.addView(set, Ui.lp(this, 16));
-
         ScrollView sv = new ScrollView(this);
         sv.setFillViewport(true);
         sv.addView(root);
-        setContentView(Ui.withBackground(this, sv, R.drawable.bg_start));
+        android.widget.FrameLayout fl = new android.widget.FrameLayout(this);
+        fl.addView(Ui.withBackground(this, sv, R.drawable.bg_start));
+        fl.addView(cornerIcon("\u2699", Api.t(this, "Settings", "Configurações"), Gravity.TOP | Gravity.START, new View.OnClickListener() {
+            @Override public void onClick(View v) { showSettings(); } }));
+        fl.addView(cornerIcon("\uD83D\uDC64", Api.t(this, "Profile", "Perfil"), Gravity.TOP | Gravity.END, new View.OnClickListener() {
+            @Override public void onClick(View v) { showProfile(); } }));
+        setContentView(fl);
         startMenuTick();
     }
 
