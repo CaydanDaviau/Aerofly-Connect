@@ -1,0 +1,46 @@
+import { Hub, TEST } from "./src/index.js";
+TEST.skipGrades = true;
+const store = new Map();
+const ctx = { storage: { get: async k => store.get(k), put: async (k, v) => store.set(k, v), delete: async k => store.delete(k), list: async ({ prefix }) => new Map([...store].filter(([k]) => k.startsWith(prefix))) }, blockConcurrencyWhile: async f => f(), acceptWebSocket() {}, setWebSocketAutoResponse() {}, getWebSockets: () => [] };
+let hub = new Hub(ctx);
+let fails = 0; const t = (n, c) => { console.log(n + ": " + (c ? "PASS" : "FAIL")); if (!c) fails++; };
+const call = async (method, path, body, key = "k1", hdr = {}) => { const r = await hub.fetch(new Request("https://x" + path, { method, body: body && JSON.stringify(body), headers: { "X-API-Key": key, "X-Member": "0", ...hdr } })); let j = {}; try { j = await r.json(); } catch {} return { s: r.status, j }; };
+const M = { "X-Mgr": "1" };
+const reg = async (n) => (await call("POST", "/api/account/register", { name: n, password: "secret1" }, "dev-" + n)).j.token;
+const ta = await reg("Ana"), tb = await reg("Bruno");
+const start = new Date(Date.now() + 2 * 3600000).toISOString();
+
+let r = await call("PUT", "/api/manager/events", { title: "X", start }, "k1"); t("create needs manager", r.s === 403);
+r = await call("PUT", "/api/manager/events", { start }, "k1", M); t("title required", r.s === 400 && r.j.error === "title_required");
+r = await call("PUT", "/api/manager/events", { title: "X", start: "nope" }, "k1", M); t("bad start", r.s === 400);
+r = await call("PUT", "/api/manager/events", { title: "Brasilia Night", desc: "Fly in", start, duration_h: 3, apt: "sbbr", pilots: [{ callsign: "afs101", dep: "sbbr", arr: "sbgr" }, { callsign: "AFS102", dep: "SBBR", arr: "SBGR" }, { callsign: "" }], ctl: [{ apt: "sbbr", pos: "twr" }, { apt: "SBBR", pos: "XXX" }, { apt: "sbbr", pos: "app" }] }, "k1", M);
+t("create", r.s === 200 && r.j.event.pilots.length === 2 && r.j.event.ctl.length === 2 && r.j.event.apt === "SBBR" && r.j.event.pilots[0].callsign === "AFS101" && r.j.event.state === "upcoming");
+const id = r.j.id;
+r = await call("GET", "/api/events", null, "k1"); t("public list", r.s === 200 && r.j.events.length === 1 && r.j.events[0].title === "Brasilia Night");
+r = await call("POST", "/api/events/signup", { id, slot: "p0" }, "plainkey"); t("signup needs account", r.s === 401 && r.j.error === "account_required");
+r = await call("POST", "/api/events/signup", { id, slot: "p0" }, ta); t("pilot signs up", r.s === 200 && r.j.event.pilots[0].mine && r.j.event.pilots[0].name === "Ana");
+r = await call("POST", "/api/events/signup", { id, slot: "p0" }, tb); t("slot taken", r.s === 409 && r.j.error === "slot_taken");
+r = await call("POST", "/api/events/signup", { id, slot: "p1" }, ta); t("one pilot slot per account", r.s === 409 && r.j.error === "already_signed");
+r = await call("POST", "/api/events/signup", { id, slot: "c0" }, ta); t("same account can also take a controller slot", r.s === 200 && r.j.event.ctl[0].mine);
+r = await call("POST", "/api/events/signup", { id, slot: "c9" }, tb); t("bad slot", r.s === 400);
+r = await call("GET", "/api/events", null, tb); t("others see names, not mine", r.j.events[0].pilots[0].name === "Ana" && !r.j.events[0].pilots[0].mine);
+r = await call("POST", "/api/events/leave", { id, slot: "p0" }, tb); t("cannot free someone else's slot", r.s === 403);
+r = await call("POST", "/api/events/leave", { id, slot: "p0" }, ta); t("leave", r.s === 200 && !r.j.event.pilots[0].taken);
+r = await call("POST", "/api/events/signup", { id, slot: "p0" }, tb); t("freed slot can be taken", r.s === 200);
+r = await call("POST", "/api/manager/events/free", { id, slot: "p0" }, "k1", M); t("manager frees a slot", r.s === 200 && !r.j.event.pilots[0].taken);
+r = await call("POST", "/api/manager/events/free", { id, slot: "p1", remove: true }, "k1", M); t("manager removes a slot", r.j.event.pilots.length === 1);
+r = await call("PUT", "/api/manager/events", { id, title: "Brasilia Night 2", start, pilots: [{ callsign: "AFS103", dep: "SBBR", arr: "SBGR" }] }, "k1", M); t("edit keeps slots, adds new", r.j.event.title === "Brasilia Night 2" && r.j.event.pilots.length === 2);
+// restart keeps events
+hub = new Hub(ctx); await new Promise(x => setTimeout(x, 10));
+r = await call("GET", "/api/events", null, "k1"); t("survives restart", r.j.events.length === 1 && r.j.events[0].ctl[0].taken === true);
+// ended event cannot be joined; old ones disappear from the list
+const past = new Date(Date.now() - 20 * 3600000).toISOString();
+r = await call("PUT", "/api/manager/events", { title: "Old", start: past, duration_h: 1, pilots: [{ callsign: "OLD1" }] }, "k1", M); const oid = r.j.id;
+r = await call("GET", "/api/events", null, "k1"); t("ended >12 h ago hidden", !r.j.events.some(e => e.id === oid));
+const recent = new Date(Date.now() - 3.5 * 3600000).toISOString();
+r = await call("PUT", "/api/manager/events", { title: "Recent", start: recent, duration_h: 1, pilots: [{ callsign: "REC1" }] }, "k1", M); const rid = r.j.id;
+r = await call("POST", "/api/events/signup", { id: rid, slot: "p0" }, ta); t("ended event refuses sign-up", r.s === 409 && r.j.error === "event_over");
+r = await call("GET", "/api/events", null, "k1"); t("recently ended shown as ended", r.j.events.find(e => e.id === rid).state === "ended");
+r = await call("DELETE", "/api/manager/events?id=" + oid, null, "k1", M); t("delete", r.s === 200);
+r = await call("DELETE", "/api/manager/events?id=" + oid, null, "k1"); t("delete needs manager", r.s === 403);
+console.log(fails ? "FAILS: " + fails : "all pass"); process.exit(fails ? 1 : 0);
