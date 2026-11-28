@@ -125,7 +125,7 @@ public class PilotService extends Service {
         }
 
         inst = this;
-        RadioLog.clear(); Phase.reset(); emergency = false; wasAir = false; fqDep = ""; fqArr = ""; contact = "";
+        RadioLog.clear(); Phase.reset(); evAt = 0; evLine = ""; emergency = false; wasAir = false; fqDep = ""; fqArr = ""; contact = "";
         if (Overlay.allowed(this)) { overlay = new Overlay(this); overlay.show(); }
 
         RadioPlayer.start(this, "pilot");   // background radio (only plays if enabled in Settings)
@@ -198,6 +198,7 @@ public class PilotService extends Service {
                     wasAir = airNow;
                     if (Phase.update(lastLat, lastLon, lastAlt, lastGs, lastHdg, pos.optDouble("vertical_speed_ft_min", 0), System.currentTimeMillis())) onPhase();
                     WsLink.ensure(key, wantTraffic(), lastLat, lastLon, System.currentTimeMillis());
+                    evRefresh(key, System.currentTimeMillis());
                     try {
                         // The sim sends no model/livery; the pilot types them in the app. Squawk is assigned by the controller.
                         putIf(pos, "airplane_model", Api.field(this, "model"));
@@ -590,7 +591,53 @@ public class PilotService extends Service {
     }
     /** Controller named in the last handoff ("Departure 119.5"); shown in the overlay status line. */
     static volatile String contact = "";
-    private boolean wasAir;
+
+    /** Event line for the overlay: the next event the signed-in account has a slot in (live, or starting within 24 h). Empty = none. */
+    static volatile String evLine = "";
+    private static volatile long evAt = 0;
+    private static volatile boolean evBusy = false;
+
+    static void evRefresh(final String key, long now) {
+        if (evBusy || now - evAt < 300000) return;   // every 5 min; one GET /api/events
+        evBusy = true; evAt = now;
+        new Thread(new Runnable() {
+            @Override public void run() {
+                String line = "";
+                try {
+                    Api.Resp r = Api.request("GET", "/api/events", null, key);
+                    if (r.code == 200) {
+                        JSONObject j = new JSONObject(r.body);
+                        long t = j.optLong("now", System.currentTimeMillis());
+                        JSONArray ev = j.optJSONArray("events");
+                        for (int i = 0; ev != null && i < ev.length() && line.isEmpty(); i++) {
+                            JSONObject e = ev.getJSONObject(i);
+                            String st = e.optString("state");
+                            if ("ended".equals(st)) continue;
+                            String slot = "";
+                            JSONArray ps = e.optJSONArray("pilots");
+                            for (int k = 0; ps != null && k < ps.length(); k++) {
+                                JSONObject s = ps.getJSONObject(k);
+                                if (s.optBoolean("mine")) slot = s.optString("callsign") + " " + s.optString("dep") + "→" + s.optString("arr");
+                            }
+                            JSONArray cs = e.optJSONArray("ctl");
+                            for (int k = 0; cs != null && k < cs.length(); k++) {
+                                JSONObject s = cs.getJSONObject(k);
+                                if (s.optBoolean("mine")) slot += (slot.isEmpty() ? "" : " + ") + s.optString("apt") + " " + s.optString("pos");
+                            }
+                            if (slot.isEmpty()) continue;
+                            long mins = (e.optLong("start") - t) / 60000;
+                            if ("upcoming".equals(st) && mins > 1440) continue;
+                            String when = "live".equals(st) ? "LIVE"
+                                    : (Api.appCtx == null ? "in " : Api.t(Api.appCtx, "in ", "em ")) +(mins >= 60 ? (mins / 60) + "h " + (mins % 60) + "m" : mins + " min");
+                            line = e.optString("title") + " · " + when + " · " + slot;
+                        }
+                    }
+                } catch (Exception ignored) { }
+                evLine = line;
+                evBusy = false;
+            }
+        }).start();
+    }    private boolean wasAir;
 
     private static void putIf(JSONObject o, String k, String v) throws Exception {
         if (v != null && !v.trim().isEmpty()) o.put(k, v.trim());

@@ -187,6 +187,12 @@ public class MainActivity extends Activity {
                     @Override public void onClick(View v) { startActivity(new Intent(MainActivity.this, ControllerActivity.class).putExtra("page", "train")); }
                 }), Ui.lp(this, 12));
 
+        root.addView(menuCard(Api.t(this, "Events", "Eventos"),
+                Api.t(this, "Scheduled flights and ATC slots: sign up", "Voos e posições ATC agendados: inscreva-se"),
+                new View.OnClickListener() {
+                    @Override public void onClick(View v) { startActivity(new Intent(MainActivity.this, ControllerActivity.class).putExtra("page", "events")); }
+                }), Ui.lp(this, 12));
+
         Button prof = Ui.button(this, Api.t(this, "Profile", "Perfil"), Ui.SECONDARY);
         prof.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { showProfile(); }

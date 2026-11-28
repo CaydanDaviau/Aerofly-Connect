@@ -17,8 +17,9 @@ public class ControllerActivity extends Activity {
     private WebView web;
     private View err;
     private boolean failed;
-    private boolean train;
+    private boolean train, events;
     private String url() {
+        if (events) return BuildConfig.SERVER_URL + "/events?key=" + Api.key(this) + "&lang=" + Api.uiLang(this);
         if (train) return BuildConfig.SERVER_URL + "/train?key=" + Api.key(this) + "&lang=" + Api.uiLang(this);
         return BuildConfig.SERVER_URL + "/atc?key=" + Api.key(this) + "&lang=" + Api.uiLang(this) + (Api.voiceOn(this) ? "" : "&voice=0") + "&mode=" + Api.mode + "&group=" + java.net.URLEncoder.encode(Api.group);
     }
@@ -26,7 +27,8 @@ public class ControllerActivity extends Activity {
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
-        train = "train".equals(getIntent().getStringExtra("page"));
+        events = "events".equals(getIntent().getStringExtra("page"));
+        train = events || "train".equals(getIntent().getStringExtra("page"));   // no radio, no controller extras for /events either
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
         web = new WebView(this);
         web.getSettings().setJavaScriptEnabled(true);

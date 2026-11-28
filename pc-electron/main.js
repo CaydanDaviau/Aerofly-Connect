@@ -36,11 +36,11 @@ function sendOv(s) {
 // ---- map and controller radar in their own windows (or the browser, Settings switch) ----
 function webUrl(what) {
   const c = store.data;
-  return SERVER + (what === "map" ? "/map" : what === "train" ? "/train" : "/atc") + "?key=" + encodeURIComponent(effKey(c)) + "&mode=" + (c.mode === "casual" ? "casual" : "expert") + (c.group ? "&group=" + encodeURIComponent(c.group) : "") + (c.lang ? "&lang=" + c.lang : "");
+  return SERVER + (what === "map" ? "/map" : what === "train" ? "/train" : what === "events" ? "/events" : "/atc") + "?key=" + encodeURIComponent(effKey(c)) + "&mode=" + (c.mode === "casual" ? "casual" : "expert") + (c.group ? "&group=" + encodeURIComponent(c.group) : "") + (c.lang ? "&lang=" + c.lang : "");
 }
 const isSmall = w => { const b = w.getBounds(); return b.width < 420 && b.height < 420; };
 function openWeb(what) {
-  if (store.data.browser || what === "train") { shell.openExternal(webUrl(what)); return; }
+  if (store.data.browser || what === "train" || what === "events") { shell.openExternal(webUrl(what)); return; }
   const cur = what === "map" ? mapWin : ctlWin;
   if (cur && !cur.isDestroyed()) { if (cur.isMinimized()) cur.restore(); cur.show(); cur.focus(); return; }
   const w = new BrowserWindow({ width: what === "map" ? 900 : 1100, height: what === "map" ? 700 : 760, minWidth: 220, minHeight: 160, backgroundColor: "#1a1a1a", autoHideMenuBar: true, icon: path.join(__dirname, "assets", "icon.png"),

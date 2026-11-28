@@ -85,7 +85,7 @@ final class Overlay {
     private ScrollView planScroll;
     private Button bPlanTab, bMiniTab;
     private int logVer = -1;
-    private TextView ctxView, noProc, msgHead, tAlt, tHdg, tGs, tVs, tPos, tPlan, tLink;
+    private TextView evView, ctxView, noProc, msgHead, tAlt, tHdg, tGs, tVs, tPos, tPlan, tLink;
     private final Runnable tick = new Runnable() {
         @Override public void run() {
             if (!expanded) return;
@@ -525,6 +525,14 @@ final class Overlay {
             LinearLayout.LayoutParams ep = new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
             ep.topMargin = dp(3);
+            evView = new TextView(ctx);
+            evView.setTextSize(10);
+            evView.setTextColor(0xFFFFB020);
+            evView.setSingleLine(true);
+            evView.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            evView.setPadding(dp(2), dp(4), dp(2), 0);
+            evView.setVisibility(View.GONE);
+            panel.addView(evView);
             ctxView = new TextView(ctx);
             ctxView.setTextSize(10);
             ctxView.setTextColor(Ui.CYAN);
@@ -967,6 +975,9 @@ final class Overlay {
         tabStyle(bPlanTab, !miniView); tabStyle(bMiniTab, miniView);
         if (expanded && showMini) mini.start(); else mini.stop();
         if (!flightTab) { renderLog(); ctxView.setText(contextLine()); }
+        String evl = PilotService.evLine;
+        evView.setText(evl.isEmpty() ? "" : "★ " + evl);
+        evView.setVisibility(evl.isEmpty() || flightTab ? View.GONE : View.VISIBLE);
         alertView.setText(alertText);
         alertView.setVisibility(alertText.isEmpty() ? View.GONE : View.VISIBLE);
         reqGrid.setVisibility(procOpen && !atisOpen ? View.VISIBLE : View.GONE);
