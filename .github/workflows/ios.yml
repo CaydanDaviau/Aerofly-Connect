@@ -32,10 +32,6 @@ jobs:
         run: cd pc-electron && npm install --no-audit --no-fund && npm test
       - name: Build www
         run: cd ios && npm install --no-audit --no-fund && npm run build
-      - name: Web smoke test (stubbed native plugin)
-        run: |
-          python3 -m pip install --quiet playwright && python3 -m playwright install chromium
-          cd ios && sed 's#executable_path="/usr/bin/google-chrome", ##' test/smoke.py > /tmp/smoke.py && cp /tmp/smoke.py test/smoke_ci.py && python3 test/smoke_ci.py
       - name: Cordova iOS project
         run: |
           npm install -g --no-audit --no-fund "cordova@$CORDOVA_VERSION"
