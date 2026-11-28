@@ -970,6 +970,7 @@ final class Overlay {
         boolean showMini = flightTab && miniView;
         telemCard.setVisibility(miniView ? View.GONE : View.VISIBLE);
         mini.view().setVisibility(miniView ? View.VISIBLE : View.GONE);
+        mini.setControls(!hideTabs);
         planScroll.setVisibility(miniView ? View.GONE : View.VISIBLE);
         tLink.setVisibility(miniView ? View.GONE : View.VISIBLE);
         tabStyle(bPlanTab, !miniView); tabStyle(bMiniTab, miniView);

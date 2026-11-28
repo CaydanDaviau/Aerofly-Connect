@@ -12,6 +12,7 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import java.util.Locale;
@@ -26,11 +27,13 @@ final class MiniMap {
     private boolean ready, running, failed;
     private long trafficPushed;
     private String lastOwn = "";
+    private android.widget.Button bFollow, bHdg;
+    private boolean ctlVisible = true;
 
     private final Runnable feed = new Runnable() {
         @Override public void run() {
             if (!running) return;
-            pushOwn(); pushTraffic();
+            pushOwn(); pushTraffic(); syncButtons();
             h.postDelayed(this, 1000);
         }
     };
@@ -52,6 +55,51 @@ final class MiniMap {
         note.setGravity(android.view.Gravity.CENTER);
         note.setText(Api.t(ctx, "Loading map...", "Carregando mapa..."));
         holder.addView(note, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        bFollow = ctlButton(Api.t(ctx, "Follow", "Seguir"), "document.getElementById('bFollow').click()");
+        bHdg = ctlButton(Api.t(ctx, "North up", "Norte acima"), "document.getElementById('bHdg').click()");
+        LinearLayout row = new LinearLayout(ctx);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.addView(bFollow); row.addView(bHdg);
+        FrameLayout.LayoutParams rl = new FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, android.view.Gravity.BOTTOM | android.view.Gravity.START);
+        rl.setMargins(4, 0, 0, 4);
+        controls = row;
+        holder.addView(row, rl);
+    }
+
+    private LinearLayout controls;
+
+    private android.widget.Button ctlButton(String label, final String js) {
+        android.widget.Button b = new android.widget.Button(ctx);
+        b.setText(label); b.setAllCaps(false); b.setTextSize(9); b.setTextColor(Ui.TXT);
+        b.setPadding(10, 0, 10, 0); b.setMinHeight(0); b.setMinimumHeight(0); b.setMinWidth(0); b.setMinimumWidth(0);
+        b.setBackground(Ui.shape(ctx, 0xCC012C33, Ui.STROKE, 8));
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, (int) (26 * ctx.getResources().getDisplayMetrics().density));
+        p.rightMargin = 4;
+        b.setLayoutParams(p);
+        b.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) {
+            if (web != null && ready) { web.evaluateJavascript(js, null); h.postDelayed(new Runnable() { @Override public void run() { syncButtons(); } }, 120); }
+        } });
+        return b;
+    }
+
+    /** Buttons follow the page's state (a drag switches Follow off by itself). */
+    private void syncButtons() {
+        if (web == null || !ready || !ctlVisible) return;
+        web.evaluateJavascript("(follow?'1':'0')+(hdgUp?'1':'0')", new android.webkit.ValueCallback<String>() {
+            @Override public void onReceiveValue(String v) {
+                if (v == null || v.length() < 4) return;
+                boolean f = v.charAt(1) == '1', hu = v.charAt(2) == '1';
+                bFollow.setBackground(Ui.shape(ctx, f ? 0xFF1E7480 : 0xCC012C33, Ui.STROKE, 8));
+                bHdg.setText(hu ? Api.t(ctx, "Heading up", "Proa acima") : Api.t(ctx, "North up", "Norte acima"));
+                bHdg.setBackground(Ui.shape(ctx, hu ? 0xFF1E7480 : 0xCC012C33, Ui.STROKE, 8));
+            }
+        });
+    }
+
+    /** Shown together with the tabs; hidden when the tabs are hidden (^). */
+    void setControls(boolean on) {
+        ctlVisible = on;
+        controls.setVisibility(on ? View.VISIBLE : View.GONE);
     }
 
     View view() { return holder; }
