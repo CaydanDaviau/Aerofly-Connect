@@ -117,7 +117,7 @@ final class WsLink {
         if (text.equals("pong")) return;
         try {
             if (text.startsWith("{\"push\":\"traffic\"")) {
-                if (PilotService.mapShown) { PilotService.trafficJson = text; PilotService.trafficAt = System.currentTimeMillis(); }
+                if (PilotService.wantTraffic()) { PilotService.trafficJson = text; PilotService.trafficAt = System.currentTimeMillis(); }
                 return;
             }
             if (text.startsWith("{\"push\":\"voice_stream\"")) {

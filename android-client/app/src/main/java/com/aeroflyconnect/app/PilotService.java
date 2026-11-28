@@ -29,6 +29,9 @@ public class PilotService extends Service {
     static volatile double lastLat, lastLon, lastHdg, lastGs, lastAlt, lastVs;
 
     static volatile boolean mapShown;
+    /** The overlay's mini map is showing: traffic is wanted like for the full map. */
+    static volatile boolean miniShown;
+    static boolean wantTraffic() { return mapShown || miniShown; }
     /** Own track, one point per upload, kept 30 min (also while the map is closed); handed to the map page when it opens. */
     private static final java.util.ArrayList<double[]> ownTrace = new java.util.ArrayList<>();
     static synchronized void addTrace(double lat, double lon, long now) {
@@ -194,7 +197,7 @@ public class PilotService extends Service {
                     if (emergency && wasAir && !airNow) emergency = false;   // the server ends it at touchdown too
                     wasAir = airNow;
                     if (Phase.update(lastLat, lastLon, lastAlt, lastGs, lastHdg, pos.optDouble("vertical_speed_ft_min", 0), System.currentTimeMillis())) onPhase();
-                    WsLink.ensure(key, mapShown, lastLat, lastLon, System.currentTimeMillis());
+                    WsLink.ensure(key, wantTraffic(), lastLat, lastLon, System.currentTimeMillis());
                     try {
                         // The sim sends no model/livery; the pilot types them in the app. Squawk is assigned by the controller.
                         putIf(pos, "airplane_model", Api.field(this, "model"));
@@ -233,7 +236,7 @@ public class PilotService extends Service {
                             if (rb == null) routeSent = true;
                             else routeSent = Api.send("PUT", "/api/flightplan/route", rb, key) < 400;
                         }
-                        Api.Resp r = Api.request("PUT", mapShown && !WsLink.live() ? "/api/position?traffic=1" : "/api/position", pos.toString(), key);
+                        Api.Resp r = Api.request("PUT", wantTraffic() && !WsLink.live() ? "/api/position?traffic=1" : "/api/position", pos.toString(), key);
                         int code = r.code;
                         if (code == 423) {   // hard landing: the server grounds this pilot for a while
                             onCrashed(r.body);
@@ -246,7 +249,7 @@ public class PilotService extends Service {
                             showStations(r.body);
                             showTraffic(r.body);
                             showClear(r.body);
-                            if (mapShown && r.body.contains("\"aircraft\"")) { trafficJson = r.body; trafficAt = System.currentTimeMillis(); }
+                            if (wantTraffic() && r.body.contains("\"aircraft\"")) { trafficJson = r.body; trafficAt = System.currentTimeMillis(); }
                         }
                         else { failCount++; serverState = "HTTP " + code; }
                     } catch (Exception e) {

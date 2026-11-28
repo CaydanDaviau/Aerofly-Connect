@@ -76,6 +76,7 @@ final class Overlay {
     private LinearLayout radioPane, flightPane, logList, msgCard;
     private ScrollView logScroll;
     private Button tabRadio, tabFlight, bMap, bRepeat;
+    private MiniMap mini;
     private boolean flightTab;
     private int logVer = -1;
     private TextView ctxView, noProc, msgHead, tAlt, tHdg, tGs, tVs, tPos, tPlan, tLink;
@@ -147,6 +148,7 @@ final class Overlay {
                 h.removeCallbacksAndMessages(null);
                 typing = false;
                 atisOpen = false;
+                if (mini != null) { mini.destroy(); mini = null; }
                 if (micRec) { micRec = false; if (micLive) LiveVoice.stopTx(); else Mic.stop(); }
                 try { ctx.unregisterComponentCallbacks(cfgCb); } catch (Exception ignored) { }
                 if (root != null) { try { wm.removeView(root); } catch (Exception ignored) { } root = null; }
@@ -639,7 +641,7 @@ final class Overlay {
                     dp(34), dp(34),   // explicit sizes per state: a wrap-content window stayed bubble-sized and clipped the panel
                     WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
-                            | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                            | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
                     PixelFormat.TRANSLUCENT);
             lp.gravity = Gravity.TOP | Gravity.START;
             lp.x = Api.prefs(ctx).getInt("ov_x", dp(12));
@@ -765,9 +767,17 @@ final class Overlay {
         card.addView(tPos);
         flightPane.addView(card);
 
+        DisplayMetrics dm = new DisplayMetrics();
+        wm.getDefaultDisplay().getRealMetrics(dm);
+        int mh = Math.max(dp(80), Math.min(dp(140), dm.heightPixels - dp(300)));
+        mini = new MiniMap(ctx, mh, dp(10));
+        LinearLayout.LayoutParams mmp = (LinearLayout.LayoutParams) mini.view().getLayoutParams();
+        mmp.topMargin = dp(4);
+        flightPane.addView(mini.view(), mmp);
+
         tPlan = new TextView(ctx);
         tPlan.setTextSize(11); tPlan.setTextColor(Ui.TXT);
-        tPlan.setMaxLines(4);
+        tPlan.setMaxLines(2);
         tPlan.setEllipsize(android.text.TextUtils.TruncateAt.END);
         tPlan.setPadding(dp(8), dp(6), dp(8), dp(6));
         tPlan.setBackground(Ui.shape(ctx, Ui.FIELD, Ui.STROKE, 10));
@@ -818,7 +828,7 @@ final class Overlay {
         if (!rt.isEmpty()) sb.append("\n").append(rt);
         tPlan.setText(sb.toString());
         tLink.setText("Sim: " + PilotService.simState + "  \u00B7  " + Api.t(ctx, "Server: ", "Servidor: ") + PilotService.serverState);
-        bMap.setText(PilotService.mapShown ? Api.t(ctx, "Hide map", "Ocultar mapa") : Api.t(ctx, "Show map", "Mostrar mapa"));
+        bMap.setText(PilotService.mapShown ? Api.t(ctx, "Close full map", "Fechar mapa completo") : Api.t(ctx, "Open full map", "Abrir mapa completo"));
     }
 
     private String contextLine() {
@@ -876,6 +886,7 @@ final class Overlay {
         if (root == null) return;
         if (!e) endTyping();
         expanded = e;
+        if (!e && mini != null) mini.stop();
         h.removeCallbacks(tick);
         if (e) h.postDelayed(tick, 1000);
         bubble.setVisibility(e ? View.GONE : View.VISIBLE);
@@ -920,6 +931,7 @@ final class Overlay {
         radioPane.setVisibility(flightTab ? View.GONE : View.VISIBLE);
         flightPane.setVisibility(flightTab ? View.VISIBLE : View.GONE);
         tabStyle(tabRadio, !flightTab); tabStyle(tabFlight, flightTab);
+        if (expanded && flightTab) mini.start(); else mini.stop();
         if (!flightTab) { renderLog(); ctxView.setText(contextLine()); }
         alertView.setText(alertText);
         alertView.setVisibility(alertText.isEmpty() ? View.GONE : View.VISIBLE);
