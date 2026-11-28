@@ -358,7 +358,7 @@ final class Overlay {
             bWilco = small(Api.t(ctx, "Read back", "Colacionar"), Ui.PRIMARY);
             bWilco.setMinHeight(dp(34)); bWilco.setMinimumHeight(dp(34));
             bUnable = small(Api.t(ctx, "Unable", "Impossível"), Ui.DANGER);
-            bWilco.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { reply("wilco"); } });
+            bWilco.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { PipReply.Item cur = PipReply.current(); reply(cur != null && !instruction(cur.text) ? "roger" : "wilco"); } });
             bUnable.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { reply("unable"); } });
             LinearLayout.LayoutParams wl = new LinearLayout.LayoutParams(0, dp(34), 1.7f); wl.leftMargin = dp(1); wl.rightMargin = dp(1);
             msgRow.addView(bWilco, wl);

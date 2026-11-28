@@ -964,7 +964,7 @@ export class Hub {
       const pd = st.pend;
       if (pd) {
         const pm = this.msgs.get(pd.id);
-        if (!pm || pm.status === "wilco" || pm.status === "unable") st.pend = null;
+        if (!pm || pm.status === "wilco" || pm.status === "roger" || pm.status === "unable") st.pend = null;
         else if (!pd.asked && c.replied && now - pd.at > 20_000) { pd.asked = true; say(ph.confirm(pd.text), false); }
       }
       { const a = st.alt, vs = Number(p.vertical_speed_ft_min) || 0;
@@ -1765,7 +1765,7 @@ export class Hub {
       const msg = this.msgs.get(String(d.id || ""));
       const me = this.clients.get(key);
       if (!msg || !me || !me.pos || me.pos.icao_address !== msg.icao) return json({ error: "message not found" }, 404);
-      if (!["wilco", "unable"].includes(d.reply)) return json({ error: "reply must be wilco or unable" }, 400);
+      if (!["wilco", "roger", "unable"].includes(d.reply)) return json({ error: "reply must be wilco, roger or unable" }, 400);
       msg.status = d.reply; msg.replied = Date.now(); me.replied = true;
       if (d.reply === "unable" && msg.instr && me.st) {   // an alternative instruction, and the same call again in 3 minutes
         const lng = me.lang === "pt" ? "pt" : "en", ut = PHRASE[lng].unable[msg.instr];
