@@ -78,7 +78,9 @@ final class Overlay {
     private Button tabRadio, tabFlight, bRepeat;
     private MiniMap mini;
     private boolean flightTab;
-    private static boolean miniView = true;
+    private static boolean miniView = true, hideTabs = false;
+    private LinearLayout tabsRow, segRow;
+    private TextView bHide;
     private LinearLayout telemCard;
     private ScrollView planScroll;
     private Button bPlanTab, bMiniTab;
@@ -260,10 +262,22 @@ final class Overlay {
             min.setOnClickListener(new View.OnClickListener() {
                 @Override public void onClick(View v) { autoExpanded = false; setExpanded(false); }
             });
+            bHide = new TextView(ctx);
+            bHide.setTextSize(13);
+            bHide.setTextColor(Ui.TXT);
+            bHide.setGravity(Gravity.CENTER);
+            bHide.setBackground(Ui.ripple(ctx, Ui.FIELD, Ui.STROKE, 10));
+            bHide.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View v) { hideTabs = !hideTabs; refresh(); }
+            });
+            LinearLayout.LayoutParams hbp = new LinearLayout.LayoutParams(dp(28), dp(22));
+            hbp.rightMargin = dp(4);
+            head.addView(bHide, hbp);
             head.addView(min, new LinearLayout.LayoutParams(dp(28), dp(22)));
             panel.addView(head);
 
             LinearLayout tabs = new LinearLayout(ctx);
+            tabsRow = tabs;
             tabs.setOrientation(LinearLayout.HORIZONTAL);
             tabs.setBackground(Ui.shape(ctx, Ui.FIELD, Ui.STROKE, 8));
             tabs.setPadding(dp(2), dp(2), dp(2), dp(2));
@@ -805,6 +819,7 @@ final class Overlay {
         flightPane.addView(tLink);
 
         LinearLayout seg = new LinearLayout(ctx);
+        segRow = seg;
         seg.setOrientation(LinearLayout.HORIZONTAL);
         seg.setBackground(Ui.shape(ctx, Ui.FIELD, Ui.STROKE, 8));
         bPlanTab = small(Api.t(ctx, "Flight plan", "Plano de voo"), Ui.SECONDARY);
@@ -941,6 +956,9 @@ final class Overlay {
         radioPane.setVisibility(flightTab ? View.GONE : View.VISIBLE);
         flightPane.setVisibility(flightTab ? View.VISIBLE : View.GONE);
         tabStyle(tabRadio, !flightTab); tabStyle(tabFlight, flightTab);
+        bHide.setText(hideTabs ? "\u2304" : "\u2303");
+        tabsRow.setVisibility(hideTabs ? View.GONE : View.VISIBLE);
+        segRow.setVisibility(hideTabs ? View.GONE : View.VISIBLE);
         boolean showMini = flightTab && miniView;
         telemCard.setVisibility(miniView ? View.GONE : View.VISIBLE);
         mini.view().setVisibility(miniView ? View.VISIBLE : View.GONE);

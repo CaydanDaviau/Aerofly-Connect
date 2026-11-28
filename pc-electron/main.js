@@ -27,7 +27,12 @@ function createOverlay() {
   ov.on("closed", () => { ov = null; });
 }
 function closeOverlay() { if (ov && !ov.isDestroyed()) ov.destroy(); ov = null; ovTyping = false; }
-function sendOv(s) { if (ov && !ov.isDestroyed()) ov.webContents.send("overlay:state", s ? s.atc : null); }
+function sendOv(s) {
+  if (!ov || ov.isDestroyed()) return;
+  if (!s || !s.atc) { ov.webContents.send("overlay:state", null); return; }
+  const f = store.data.flight || {}, o = s.own || {};
+  ov.webContents.send("overlay:state", { ...s.atc, tel: s.own ? { alt: o.alt, hdg: o.hdg, gs: o.gs, vs: o.vs, lat: o.lat, lon: o.lon } : null, plan: { dep: f.dep, arr: f.arr, deprwy: f.deprwy, arrrwy: f.arrrwy, cruise: f.cruise, route: f.route }, mapUrl: webUrl("map") });
+}
 // ---- map and controller radar in their own windows (or the browser, Settings switch) ----
 function webUrl(what) {
   const c = store.data;

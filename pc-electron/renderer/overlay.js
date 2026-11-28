@@ -2,7 +2,7 @@
   const root = document.getElementById("root");
   let voiceOn = true; try { voiceOn = localStorage.getItem("afc_voice") !== "0"; } catch (e) {}
   let ptt = null, lastVoice = null, actx = null, rxs = {}, hint = { text: "", until: 0 };
-  let S = null, open = false, autoExp = false, lastPend = "", lastAlert = "", collapseT = null, atisOpen = false, atisWhich = "", atisT = null, holdT = null, held = false;
+  let S = null, open = false, autoExp = false, lastPend = "", lastAlert = "", collapseT = null, atisOpen = false, atisWhich = "", atisT = null, holdT = null, held = false, tab = "radio", view = "mini", hideTabs = false;
   const T = (en, pt) => (S && S.lang === "pt" ? pt : en);
   function h(tag, a, ...kids) {
     const e = document.createElement(tag);
@@ -25,7 +25,8 @@
   // ---- panel parts ----
   const ct = h("span", { class: "ct" }), minB = h("button", { class: "hd2", onclick: () => { open = false; autoExp = false; draw(); } }, "–");
   const volB = h("button", { class: "hd2", onclick: () => { voiceOn = !voiceOn; try { localStorage.setItem("afc_voice", voiceOn ? "1" : "0"); } catch (e) {} if (!voiceOn) for (const k in rxs) delete rxs[k]; draw(); } }, "");
-  const hd = h("div", { class: "hd" }, h("b", {}, "ATC"), ct, volB, minB); dragable(hd, null);
+  const hideB = h("button", { class: "hd2", onclick: () => { hideTabs = !hideTabs; draw(); } }, "⌃");
+  const hd = h("div", { class: "hd" }, h("b", {}, "ATC"), ct, volB, hideB, minB); dragable(hd, null);
   const ta = h("div", { class: "ta" });
   const msg = h("div", { class: "msg" }), more = h("div", { class: "more" });
   const bW = h("button", { class: "ok", onclick: () => S.pending && window.ov.reply(S.pending.id, "wilco") }, "Wilco");
@@ -70,8 +71,18 @@
   const cIn = h("input", { maxlength: "200", autocomplete: "off", spellcheck: "false", onfocus: () => window.ov.typing(true), onblur: () => window.ov.typing(false), onkeydown: e => { if (e.key === "Enter") sendChat(); } });
   const bS = h("button", { class: "fix", onclick: sendChat }, "➤"); const cRow = h("div", { class: "row" }, cIn, bS);
   const st = h("div", { class: "st" });
-  const panel = h("div", { class: "panel" }, hd, ta, msg, more, ans, grid, altRow, rowEA, atisWrap, pttRow, h("div", { class: "sec", id: "fsec" }), fRow, quick, cRow, st);
+  const radioPane = h("div", {}, ta, msg, more, ans, grid, altRow, rowEA, atisWrap, pttRow, h("div", { class: "sec", id: "fsec" }), fRow, quick, cRow);
+  // Flight tab: telemetry + plan (Flight plan view) or the minimap (Minimap view)
+  const tRadio = h("button", { onclick: () => { tab = "radio"; draw(); } }), tFlight = h("button", { onclick: () => { tab = "flight"; draw(); } });
+  const tabsRow = h("div", { class: "tabs" }, tRadio, tFlight);
+  const vPlan = h("button", { onclick: () => { view = "plan"; draw(); } }), vMini = h("button", { onclick: () => { view = "mini"; draw(); } });
+  const segRow = h("div", { class: "tabs" }, vPlan, vMini);
+  const tel = h("div", { class: "tel" }), plan = h("div", { class: "plan" }), mini = h("iframe", { class: "mini" }), link = h("div", { class: "st" });
+  const flightPane = h("div", {}, segRow, tel, mini, plan);
+  let miniSrc = "";
+  const panel = h("div", { class: "panel" }, hd, tabsRow, radioPane, flightPane, st);
   const fsec = panel.querySelector("#fsec");
+  const INSTR = /\d|cleared|taxi|hold|climb|descend|squawk|contact|proceed|turn|line up|pushback|autoriz|vire|suba|desça/i;
 
   function sendChat() { const v = cIn.value.trim(); if (!v) return; window.ov.chat(v); cIn.value = ""; cIn.blur(); }
   function curIcao() { return S && S[atisWhich] ? S[atisWhich] : ""; }
@@ -187,6 +198,25 @@
     fsec.textContent = "FREQ"; if (document.activeElement !== fIn) fIn.value = S.freq || "";
     fIn.placeholder = "ALL"; bAll.className = "fix" + (S.freq ? "" : " ok");
     quick.replaceChildren(...S.quick.map(q => h("button", { onclick: () => window.ov.freq("set", q.freq) }, q.pos + " " + q.freq)));
+    // tabs
+    tRadio.textContent = T("Radio", "Rádio"); tFlight.textContent = T("Flight", "Voo");
+    tRadio.className = tab === "radio" ? "on" : ""; tFlight.className = tab === "flight" ? "on" : "";
+    vPlan.textContent = T("Flight plan", "Plano de voo"); vMini.textContent = T("Minimap", "Minimapa");
+    vPlan.className = view === "plan" ? "on" : ""; vMini.className = view === "mini" ? "on" : "";
+    tabsRow.style.display = hideTabs ? "none" : ""; segRow.style.display = hideTabs || tab !== "flight" ? "none" : "";
+    hideB.textContent = hideTabs ? "⌄" : "⌃";
+    radioPane.style.display = tab === "radio" ? "" : "none"; flightPane.style.display = tab === "flight" ? "" : "none";
+    if (tab === "flight") {
+      const t = S.tel, p = S.plan || {}, c = (k, v) => [h("div", {}, h("i", {}, k), h("b", {}, v))];
+      tel.style.display = view === "plan" ? "" : "none"; plan.style.display = view === "plan" ? "" : "none";
+      tel.replaceChildren(...(t ? [...c(T("ALTITUDE", "ALTITUDE"), Math.round(t.alt) + " ft"), ...c(T("HDG TRUE", "PROA VERD."), String(Math.round(t.hdg) % 360).padStart(3, "0") + "°"), ...c(T("GROUND SPEED", "VEL. SOLO"), Math.round(t.gs) + " kt"), ...c("V/S", Math.round(t.vs || 0) + " fpm"), h("div", { class: "pos" }, t.lat.toFixed(4) + "  " + t.lon.toFixed(4))] : [T("Waiting for the sim...", "Aguardando o simulador...")]));
+      plan.textContent = (p.dep || "----") + (p.deprwy ? " " + p.deprwy : "") + "  →  " + (p.arr || "----") + (p.arrrwy ? " " + p.arrrwy : "") + (p.cruise ? "\n" + T("Cruise ", "Cruzeiro ") + p.cruise : "") + (p.route ? "\n" + p.route : "");
+      const want = view === "mini" ? (S.mapUrl || "") : "about:blank";
+      mini.style.display = view === "mini" ? "" : "none";
+      if (want && want !== miniSrc && (view === "mini" || miniSrc)) { miniSrc = want; mini.src = want; }
+    } else if (miniSrc) { miniSrc = ""; mini.src = "about:blank"; }
+    // Wilco -> Read back for instructions, Roger for information
+    if (p) bW.textContent = INSTR.test(p.text) ? T("Read back", "Colacionar") : T("Roger", "Ciente");
     const hn = hint.text && Date.now() < hint.until ? hint.text : ""; st.textContent = hn || S.status; st.className = "st" + (hn || S.status ? " f" : "");
     cIn.placeholder = T("Message to ATC", "Mensagem ao ATC");
   }

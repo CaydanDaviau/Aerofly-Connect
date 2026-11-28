@@ -187,7 +187,7 @@ const n180 = a => { a = ((a % 360) + 360) % 360; return a > 180 ? a - 360 : a; }
 // ---- Auto-ATC (basic clearances for pilots when no human controller covers the airport) ----
 // Newest released app versions: bump when a new APK / PC build is published; clients older than this show an update notice.
 const FLIGHT_MIN_AIR_S = 180;   // airborne at least 3 min, then touchdown (no crash) = flight completed
-const LATEST = { android: "1.3.8", pc: "2.3.7" };
+const LATEST = { android: "1.3.9", pc: "2.3.8" };
 const REQ_TYPES = ["clearance", "pushback", "taxi", "takeoff", "land", "climb", "descent", "mayday", "mayday_cancel"];
 const MAYDAY_MS = 30 * 60_000, MAYDAY_NEAR_MI = 30;
 const REQ_LOCK_MS = { takeoff: 90_000, land: 120_000 };
@@ -380,7 +380,7 @@ const TOK_TTL_MS = 90 * 86_400_000;
 export class Hub {
   constructor(ctx) {
     this.towers = new Map(); this.creds = new Map(); this.credOn = false; this.wx = new Map(); this.crashes = new Map(); this.ta = new Map(); this.tinfo = new Map(); this.ra = new Map(); this.sepV = new Map();
-    this.voiceStreams = new Map(); this.latestVoiceByPeer = new Map();
+    this.voiceStreams = new Map(); this.LATEST = { android: "1.3.9", pc: "2.3.8" }VoiceByPeer = new Map();
     this.prof = new Map(); this.accts = new Map(); this.toks = new Map(); this.loginFail = new Map(); this.regLog = new Map(); this.locks = new Map(); this.holderKey = new Map(); this.gwLast = new Map(); this.lastClaim = new Map(); this.clients = new Map(); this.msgs = new Map(); this.rwy = new Map(); this.rwyQ = new Map(); this.gfx = new Map(); this.apts = new Map(); this.bots = new Map(); this.botRwy = new Map(); this.botSeq = 0; this.botT = 0; this.botSaved = 0; this.tres = new Map(); this.stands = new Map(); this.violations = []; this.clips = new Map(); this.listeners = new Map(); this.msgSeq = 0; this.since = Date.now(); this.counts = {};
     ctx.blockConcurrencyWhile(async () => {
       for (const [k, v] of await ctx.storage.list({ prefix: "tower:" })) this.towers.set(k.slice(6), v);
@@ -1434,8 +1434,8 @@ export class Hub {
       stream.ended = true; stream.at = Date.now();
       const event = JSON.stringify({ push: "voice_stream", event: "end", id, chunks: stream.chunks.length, at: stream.at });
       { const done = new Set(); for (const peer of this.ctx.getWebSockets().reverse()) { const pa = peer.deserializeAttachment() || {}; if (stream.peers.includes(pa.key) && !done.has(pa.key)) { done.add(pa.key); try { peer.send(event); } catch (e) {} } } }
-      this.latestVoiceByPeer.set(a.key, id);
-      for (const peerKey of stream.peers) this.latestVoiceByPeer.set(peerKey, id);
+      this.LATEST = { android: "1.3.9", pc: "2.3.8" }VoiceByPeer.set(a.key, id);
+      for (const peerKey of stream.peers) this.LATEST = { android: "1.3.9", pc: "2.3.8" }VoiceByPeer.set(peerKey, id);
       return;
     }
     if (action === "replay") {
@@ -2152,7 +2152,7 @@ export class Hub {
       }
     }
 
-    if (p === "/api/manager/simbrief") {   // import a SimBrief flight plan (latest OFP of a username / pilot id) as bot form fields
+    if (p === "/api/manager/simbrief") {   // import a SimBrief flight plan (LATEST = { android: "1.3.9", pc: "2.3.8" } OFP of a username / pilot id) as bot form fields
       if (request.headers.get("X-Mgr") !== "1") return json({ error: "not_manager" }, 403);
       const u = (url.searchParams.get("user") || "").trim();
       if (!u) return json({ error: "user_required" }, 400);
@@ -2237,7 +2237,7 @@ export class Hub {
     }
 
     if (m === "GET" && p === "/api/health")
-      return json({ status: "ok", latest_android: LATEST.android, latest_pc: LATEST.pc, active_clients: this.clients.size, pilots: [...this.clients.values()].filter(c => c.pos && !c.bot && secOf(c) === reqSec(request)).length, towers: [...this.towers.values()].filter(t => secOf(t) === reqSec(request)).length, mode: reqSec(request), member: request.headers.get("X-Member") === "1", atc: this.atcState(request) === "1", atc_required: this.atcState(request) !== "n", mgr: request.headers.get("X-Mgr") === "1" });
+      return json({ status: "ok", LATEST = { android: "1.3.9", pc: "2.3.8" }_android: LATEST.android, latest_pc: LATEST.pc, active_clients: this.clients.size, pilots: [...this.clients.values()].filter(c => c.pos && !c.bot && secOf(c) === reqSec(request)).length, towers: [...this.towers.values()].filter(t => secOf(t) === reqSec(request)).length, mode: reqSec(request), member: request.headers.get("X-Member") === "1", atc: this.atcState(request) === "1", atc_required: this.atcState(request) !== "n", mgr: request.headers.get("X-Mgr") === "1" });
 
     if (m === "GET" && p === "/api/traffic") {
       const q = url.searchParams;
