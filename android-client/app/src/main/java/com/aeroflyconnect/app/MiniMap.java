@@ -142,6 +142,8 @@ final class MiniMap {
                 }
             });
             holder.addView(web, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+            controls.bringToFront();   // the page was added after the buttons and would cover them
+            controls.setElevation(20f);
             web.loadUrl(url());
         } catch (Throwable t) {
             web = null;
