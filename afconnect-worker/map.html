@@ -11,6 +11,10 @@ body{font:13px system-ui,sans-serif}
 #bar button.on{background:#1a73e8}
 #info{position:absolute;left:8px;bottom:22px;background:rgba(20,24,30,.82);color:#fff;border-radius:8px;padding:5px 9px;font:12px ui-monospace,monospace}
 body.pip #bar,body.pip #info,body.pip .maplibregl-ctrl-attrib{display:none!important}
+body.pip .maplibregl-popup-content{padding:4px 18px 4px 6px!important;font-size:9px!important;border-radius:6px}
+body.pip .maplibregl-popup-content div{font-size:9px!important;line-height:1.25!important}
+body.pip .maplibregl-popup-content div:first-child{font-size:10px!important}
+body.pip .maplibregl-popup-close-button{font-size:13px;padding:0 4px;line-height:1}
 </style></head><body>
 <div id="map"></div>
 <div id="bar">
@@ -425,7 +429,7 @@ function showPlanePopup(a,lngLat){
   row(box,'Landing:',a.landing_fpm!=null?fpmStr(a.landing_fpm):'');
   row(box,'Squawk:',a.assigned_squawk||'');
   if(popup)popup.remove();
-  popup=new maplibregl.Popup({closeButton:true,maxWidth:'220px',offset:14}).setLngLat(lngLat).setDOMContent(box).addTo(map);
+  popup=new maplibregl.Popup({closeButton:true,maxWidth:document.body.classList.contains('pip')?'135px':'220px',offset:14}).setLngLat(lngLat).setDOMContent(box).addTo(map);
   var pp=popup;pp.on('close',function(){if(popup===pp){popup=null;routeId=null;tapRoute=null;tapTaxi=null;showRoute();showTaxi()}});
   routeId=null;tapRoute=null;tapTaxi=null;showRoute();showTaxi();
   if(a.has_taxi&&!a.self){var tid=String(a.icao_address||'');routeId=routeId||null;
